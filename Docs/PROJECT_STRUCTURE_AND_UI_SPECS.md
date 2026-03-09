@@ -30,19 +30,6 @@
 ```
 agent-hub/
 │
-├── .github/                            # GitHub collaboration config
-│   ├── workflows/
-│   │   ├── ci-backend.yml              # Python lint + test on PR
-│   │   ├── ci-frontend.yml             # JS lint + build on PR
-│   │   ├── deploy-staging.yml          # Auto-deploy to staging on merge to develop
-│   │   └── deploy-prod.yml             # Deploy to prod on merge to main
-│   ├── PULL_REQUEST_TEMPLATE.md        # Standardized PR template
-│   ├── ISSUE_TEMPLATE/
-│   │   ├── bug_report.yml
-│   │   ├── feature_request.yml
-│   │   └── task.yml
-│   └── CODEOWNERS                      # Auto-assign reviewers per folder
-│
 ├── backend/                            # Python + FastAPI + ADK
 │   ├── pyproject.toml                  # uv project config + deps
 │   ├── uv.lock                         # Deterministic lockfile
@@ -313,37 +300,11 @@ agent-hub/
 ├── docs/                               # Documentation
 │   ├── architecture.png                # System architecture diagram
 │   ├── api-reference.md                # REST + WebSocket API docs
-│   ├── setup-guide.md                  # Getting started for new developers
-│   ├── contributing.md                 # Code style, PR process, branch naming
-│   └── demo-script.md                  # 4-min demo video script
-│
+│   └── setup-guide.md                  # Getting started for new developers
 ├── .gitignore
 ├── .editorconfig                       # Consistent indent/encoding across editors
 ├── LICENSE
 └── README.md                           # Project overview + quick start
-```
-
-### CODEOWNERS (Auto-Assign Reviewers)
-
-```
-# .github/CODEOWNERS
-# Backend team
-/backend/                       @backend-lead
-/backend/app/agents/            @ai-lead
-/backend/app/tools/             @ai-lead
-
-# Frontend team
-/dashboard/                     @frontend-lead
-/dashboard/src/components/ui/   @frontend-lead
-/dashboard/src/components/genui/ @frontend-lead @ai-lead
-
-# Infra
-/deploy/                        @devops-lead
-/.github/workflows/             @devops-lead
-
-# Clients
-/desktop-client/                @backend-lead
-/chrome-extension/              @frontend-lead
 ```
 
 ---
@@ -353,8 +314,8 @@ agent-hub/
 ### Branch Model
 
 ```
-main                    ← Production (deploy-prod.yml triggers)
-  └── develop           ← Integration branch (deploy-staging.yml triggers)
+main                    ← Production
+  └── dev           ← Integration branch
        ├── feat/chat-ui           ← Feature branches
        ├── feat/persona-api
        ├── feat/mcp-store
@@ -371,14 +332,6 @@ main                    ← Production (deploy-prod.yml triggers)
 | `chore/` | Config, CI, deps | `chore/update-adk-version` |
 | `refactor/` | Code restructure | `refactor/split-chat-store` |
 | `docs/` | Documentation | `docs/api-reference` |
-
-### PR Rules
-
-- All PRs target `develop` (not `main`)
-- Require 1 approval from CODEOWNER
-- CI must pass (lint + build)
-- Squash merge only (clean history)
-- PR title follows conventional commits: `feat: add persona voice preview`
 
 ### Parallel Workstreams (Multi-Person)
 
