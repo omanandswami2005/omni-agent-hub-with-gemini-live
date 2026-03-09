@@ -1,3 +1,3 @@
-Reconnection	Must implement yourself (exponential backoff)	Built-in auto-reconnect	Socket.IO
-Room/namespace broadcasting	Must implement yourself	Built-in rooms and namespaces	Socket.IO
-Cross-client event routing	Must implement yourself (message type dispatch)	Built-in event names	Socket.IO
+Reconnection	Must implement yourself (exponential backoff).
+Room/namespace broadcasting	Must implement yourself.
+Cross-client event routing	Must implement yourself (message type dispatch).

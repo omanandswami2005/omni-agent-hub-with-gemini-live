@@ -478,9 +478,9 @@ gemini-live-sdk/
     └── worklet-registry.js # Blob URL worklet loader
 ```
 
-#### Transport Layer — socket.io (❌ Incompatible)
+#### Transport Layer — socket.io (❌ Incompatible) → Raw WebSocket (✅ Chosen)
 
-The SDK uses **socket.io-client** (NOT raw WebSocket). Our backend uses FastAPI with raw WebSockets. Socket.io has a custom protocol layer (packet framing, event namespacing, heartbeat) that raw WS servers don't understand.
+The SDK uses **socket.io-client** (NOT raw WebSocket). Socket.io has a custom protocol layer (packet framing, event namespacing, heartbeat) that raw WS servers don't understand.
 
 ```javascript
 // SDK's transport — socket.io
@@ -493,11 +493,23 @@ this.socket = io(this.config.endpoint, {
   timeout: 20000
 });
 
-// Our backend — raw WebSocket
+// Our backend — raw WebSocket (FINAL DECISION)
 const ws = new WebSocket(`wss://host/ws/live/${sessionId}`);
 ```
 
 **Conclusion**: Cannot use `GeminiLiveClient` directly. Must write our own WebSocket transport layer.
+
+> **DECISION: Raw WebSocket over Socket.IO** — Evaluated both in depth. Raw WS wins for Omni because:
+> 1. **Zero abstraction leaks** — binary audio frames visible directly in DevTools, no packet framing to decode
+> 2. **ADK sample compatibility** — all Google ADK bidi-demos/Live API samples use raw WS; copy-paste directly
+> 3. **5 diverse clients** — raw WS is natively supported on ESP32, Chrome extension service worker, Python `websockets`, browser `WebSocket` API — no per-client library compatibility issues
+> 4. **FastAPI native** — `@app.websocket()` built-in, no separate ASGI app mount needed
+> 5. **Binary audio is first-class** — WS protocol natively distinguishes binary frames (audio) from text frames (JSON)
+>
+> **What we build ourselves (Day 1 infra, ~100 lines server + ~60 lines per client):**
+> - `ConnectionManager` class: user device registry, room broadcast, auth on first message, disconnect cleanup
+> - `useWebSocket` hook: exponential backoff reconnection (delays: 1s, 2s, 4s, 8s, 16s)
+> - Cross-client event routing via message `type` field dispatch
 
 #### Audio Recorder (✅ Reusable Pattern)
 
@@ -2308,6 +2320,7 @@ gcloud run deploy agent-hub \
 | **Ruff** over flake8/pylint | flake8, pylint, black, isort | Ruff: replaces flake8+pylint+black+isort in one tool, 100x faster |
 | **pystray** over Electron | Electron, Tauri, PyQt | pystray: 50 lines for a tray app vs 5000+ for Electron; we need a lightweight agent, not a GUI app |
 | **Manifest V3 + vanilla JS** | Plasmo, CRXJS | No build step, no framework overhead; extension is thin — just WebSocket + chrome APIs |
+| **Raw WebSocket** over Socket.IO | Socket.IO (`python-socketio` + `socket.io-client`) | Raw WS: zero overhead on binary audio, all ADK/Gemini samples use it, FastAPI native `@app.websocket()`, works on ESP32/Chrome ext/Python without extra libs. Socket.IO rooms/reconnection are nice but we build a thin `ConnectionManager` (~100 lines) + exponential backoff hook (~60 lines) on Day 1 and never touch again. |
 
 ### Project Structure
 
@@ -2813,6 +2826,7 @@ Ordered by judge-impact per hour of effort:
 | **Database** | Firestore | Serverless + real-time + GCP native. Judges see "Google Cloud" usage. Free tier for hackathon. |
 | **Auth** | Firebase Auth | Google sign-in in 10 lines. GCP native. Shows security awareness. |
 | **Audio Transport** | Binary WebSocket frames | 33% smaller than base64-in-JSON. Lower latency. Technically impressive in code review. |
+| **Realtime Transport** | Raw WebSocket (not Socket.IO) | Native binary/text frame distinction, all ADK samples use raw WS, FastAPI `@app.websocket()` built-in, works across all 5 client types without extra libs. Build `ConnectionManager` + reconnection on Day 1. |
 | **Session (dev)** | InMemorySessionService | Zero setup for local development |
 | **Session (prod)** | Firestore-backed custom service | Survives Cloud Run restarts. Judges test the deployed URL. |
 | **Audio Model** | `gemini-2.5-flash-native-audio-preview` | Proactive audio + affective dialog. Most advanced voice model. Shows latest Gemini capability. |
