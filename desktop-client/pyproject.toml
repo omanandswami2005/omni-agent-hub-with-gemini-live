@@ -1,0 +1,29 @@
+[project]
+name = "omni-desktop-client"
+version = "0.1.0"
+description = "Omni desktop agent — screen capture, mouse/keyboard control, file access"
+requires-python = ">=3.12"
+dependencies = [
+    "websockets>=14.0",
+    "pillow>=11.0",
+    "pyautogui>=0.9.54",
+    "mss>=9.0",
+    "pynput>=1.7",
+    "sounddevice>=0.5",
+    "numpy>=2.0",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "httpx>=0.28",
+    "rich>=13.9",
+    "typer>=0.15",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.9"]
+
+[project.scripts]
+omni-desktop = "src.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
