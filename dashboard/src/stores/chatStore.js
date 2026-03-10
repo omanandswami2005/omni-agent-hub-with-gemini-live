@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export const useChatStore = create((set, get) => ({
+export const useChatStore = create((set, _get) => ({
   messages: [],
   transcript: { input: '', output: '' },
   agentState: 'idle', // idle, listening, processing, speaking, error

@@ -54,7 +54,7 @@ After implementing, verify:
 ✅ No new files outside established folder structure
 ✅ Vertex AI / GCP integration uses correct SDKs and patterns
 ✅ At least one test written and passing
-✅ Linting passes (ruff check backend/, npm run lint in dashboard/)
+✅ Linting passes (ruff check backend/, pnpm run lint in dashboard/)
 ```
 
 ---
@@ -266,7 +266,7 @@ After implementing, verify:
   - Error recovery with clear error messages
 - [ ] **10.2** — Implement `backend/app/tools/code_exec.py` as ADK tool:
   - `execute_code(code, language="python")` — exposed to agents
-  - `install_package(package_name)` — install pip/npm packages in sandbox
+  - `install_package(package_name)` — install pip/pnpm packages in sandbox
   - Returns structured result: `{stdout, stderr, exit_code, files_created}`
 - [ ] **10.3** — Register as default tool for Coder (Dev) and Analyst (Nova) personas
 - [ ] **10.4** — Write test: `backend/tests/test_tools/test_code_exec.py` — test code execution with mock E2B client (success, error, timeout scenarios)
@@ -448,7 +448,7 @@ After implementing, verify:
 
 ### Task 19: Dashboard Bootstrap & Theme System
 
-- [ ] **19.1** — Install all npm dependencies: `npm install` in `dashboard/`
+- [ ] **19.1** — Install all dependencies: `pnpm install` in `dashboard/`
 - [ ] **19.2** — Initialize shadcn/ui: `npx shadcn@latest init` (configure for Vite + Tailwind CSS 4)
 - [ ] **19.3** — Add shadcn/ui primitives: `npx shadcn@latest add button input card dialog dropdown-menu tabs tooltip badge avatar select switch slider skeleton scroll-area separator sheet popover command`
 - [ ] **19.4** — Verify `dashboard/src/styles/globals.css` has correct oklch CSS variables for light/dark themes matching spec
@@ -459,7 +459,7 @@ After implementing, verify:
 **Dependencies**: None (can start in parallel with backend tasks)
 **Files**: `dashboard/src/styles/globals.css`, `dashboard/src/stores/themeStore.js`, `dashboard/src/components/layout/ThemeToggle.jsx`
 **Research Refs**: PS Section 4 (Design System — OKLCH colors, typography, spacing), PS Section 5 (Component Library — shadcn init)
-**Verify**: `npm run dev` launches, dark/light theme switches correctly, shadcn components render
+**Verify**: `pnpm run dev` launches, dark/light theme switches correctly, shadcn components render
 
 ---
 

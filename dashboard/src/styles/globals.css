@@ -60,3 +60,34 @@ body {
   background-color: var(--background);
   color: var(--foreground);
 }
+
+/* VoiceOrb keyframes */
+@keyframes breathe {
+
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+
+  50% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
+}
+
+@keyframes wave {
+
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  25% {
+    transform: scale(1.08);
+  }
+
+  75% {
+    transform: scale(0.95);
+  }
+}

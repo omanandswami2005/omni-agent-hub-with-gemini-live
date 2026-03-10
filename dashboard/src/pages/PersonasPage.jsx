@@ -6,7 +6,7 @@ import PersonaList from '@/components/persona/PersonaList';
 import { usePersonaStore } from '@/stores/personaStore';
 
 export default function PersonasPage() {
-  const { personas, activePersonaId, setActivePersona } = usePersonaStore();
+  const { personas, activePersona, setActivePersona } = usePersonaStore();
 
   return (
     <div className="space-y-6">
@@ -18,8 +18,8 @@ export default function PersonasPage() {
       </div>
       <PersonaList
         personas={personas}
-        activeId={activePersonaId}
-        onSelect={(p) => setActivePersona(p.id)}
+        activeId={activePersona?.id}
+        onSelect={(p) => setActivePersona(p)}
       />
     </div>
   );

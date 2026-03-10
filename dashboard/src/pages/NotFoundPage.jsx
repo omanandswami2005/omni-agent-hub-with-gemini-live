@@ -2,7 +2,7 @@
  * Page: NotFoundPage — 404 page.
  */
 
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 export default function NotFoundPage() {
   return (

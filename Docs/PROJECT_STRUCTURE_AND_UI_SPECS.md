@@ -1378,7 +1378,7 @@ uv run uvicorn app.main:app --reload --port 8000
 
 # Terminal 2 — Frontend
 cd dashboard
-npm run dev    # Vite at http://localhost:5173
+pnpm run dev    # Vite at http://localhost:5173
 
 # Terminal 3 — (Optional) Desktop Client
 cd desktop-client

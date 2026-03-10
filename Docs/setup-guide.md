@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - **Python 3.12+** with [uv](https://docs.astral.sh/uv/) package manager
-- **Node.js 20+** with npm
+- **Node.js 20+** with [pnpm](https://pnpm.io/) package manager
 - **Google Cloud** project with Vertex AI enabled
 - **Firebase** project (Authentication + Firestore)
 - **E2B** account for sandbox code execution
@@ -36,8 +36,8 @@ uv run uvicorn app.main:app --reload       # Start at http://localhost:8000
 
 ```bash
 cd dashboard
-npm install                                # Install dependencies
-npm run dev                                # Start at http://localhost:5173
+pnpm install                                # Install dependencies
+pnpm run dev                                # Start at http://localhost:5173
 ```
 
 ### 4. Desktop Client (Optional)

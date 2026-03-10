@@ -2,7 +2,7 @@
  * GenUI: DiffViewer — Side-by-side or unified diff display.
  */
 
-export default function DiffViewer({ before = '', after = '', language = 'text' }) {
+export default function DiffViewer({ before = '', after = '', language: _language = 'text' }) {
   return (
     <div className="grid grid-cols-2 gap-2 rounded-lg border border-border text-sm">
       <div className="border-r border-border p-4">

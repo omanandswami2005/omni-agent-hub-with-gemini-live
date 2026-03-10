@@ -5,10 +5,10 @@
 import { useState } from 'react';
 import MCPStoreGrid from '@/components/mcp/MCPStoreGrid';
 import MCPCategoryNav from '@/components/mcp/MCPCategoryNav';
-import { useMCPStore } from '@/stores/mcpStore';
+import { useMcpStore } from '@/stores/mcpStore';
 
 export default function MCPStorePage() {
-  const { servers } = useMCPStore();
+  const { servers } = useMcpStore();
   const [category, setCategory] = useState('All');
 
   const filtered = category === 'All' ? servers : servers.filter((s) => s.category === category);

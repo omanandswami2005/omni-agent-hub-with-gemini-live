@@ -2283,12 +2283,12 @@ uv add websockets                           # WebSocket client utils
 uv add ruff                                 # Linting + formatting
 
 # === Frontend Setup ===
-npm create vite@latest dashboard -- --template react   # React JS (not TS!)
+pnpm create vite@latest dashboard -- --template react   # React JS (not TS!)
 cd dashboard
-npm install
-npm install -D tailwindcss @tailwindcss/vite           # Styling
-npm install zustand recharts lucide-react               # State, charts, icons
-npm install firebase                                   # Auth + Firestore client
+pnpm install
+pnpm install -D tailwindcss @tailwindcss/vite           # Styling
+pnpm install zustand recharts lucide-react               # State, charts, icons
+pnpm install firebase                                   # Auth + Firestore client
 
 # === Desktop Client Setup ===
 cd .. && uv init desktop-client && cd desktop-client

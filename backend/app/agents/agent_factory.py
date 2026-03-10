@@ -15,6 +15,10 @@ from google.adk.agents import Agent
 from google.genai import types
 
 from app.models.persona import PersonaResponse
+from app.tools.code_exec import get_code_exec_tools
+from app.tools.cross_client import get_cross_client_tools
+from app.tools.image_gen import get_image_gen_tools
+from app.tools.rag import get_rag_tools
 from app.tools.search import get_search_tool
 from app.utils.logging import get_logger
 
@@ -26,6 +30,15 @@ TEXT_MODEL = "gemini-2.5-flash"
 
 # Persona IDs that get Google Search grounding by default
 _SEARCH_PERSONA_IDS = {"assistant", "researcher", "analyst"}
+
+# Persona IDs that get code execution tools
+_CODE_EXEC_PERSONA_IDS = {"coder", "analyst"}
+
+# Persona IDs that get image generation tools
+_IMAGE_GEN_PERSONA_IDS = {"creative", "assistant"}
+
+# Persona IDs that get RAG document tools
+_RAG_PERSONA_IDS = {"researcher", "analyst"}
 
 
 def _build_speech_config(voice_name: str) -> types.SpeechConfig:
@@ -41,9 +54,17 @@ def _build_speech_config(voice_name: str) -> types.SpeechConfig:
 
 def _default_tools_for_persona(persona_id: str) -> list:
     """Return default tools for a persona based on its ID."""
-    tools = []
+    tools: list = []
     if persona_id in _SEARCH_PERSONA_IDS:
         tools.append(get_search_tool())
+    if persona_id in _CODE_EXEC_PERSONA_IDS:
+        tools.extend(get_code_exec_tools())
+    if persona_id in _IMAGE_GEN_PERSONA_IDS:
+        tools.extend(get_image_gen_tools())
+    if persona_id in _RAG_PERSONA_IDS:
+        tools.extend(get_rag_tools())
+    # All personas get cross-client action tools
+    tools.extend(get_cross_client_tools())
     return tools
 
 

@@ -136,34 +136,31 @@ class TestAgentFactorySearchIntegration:
         from app.agents.agent_factory import _default_tools_for_persona
 
         tools = _default_tools_for_persona("researcher")
-        assert len(tools) == 1
-        assert isinstance(tools[0], GoogleSearchTool)
+        assert any(isinstance(t, GoogleSearchTool) for t in tools)
 
     def test_assistant_gets_search_tool(self):
         from app.agents.agent_factory import _default_tools_for_persona
 
         tools = _default_tools_for_persona("assistant")
-        assert len(tools) == 1
-        assert isinstance(tools[0], GoogleSearchTool)
+        assert any(isinstance(t, GoogleSearchTool) for t in tools)
 
     def test_analyst_gets_search_tool(self):
         from app.agents.agent_factory import _default_tools_for_persona
 
         tools = _default_tools_for_persona("analyst")
-        assert len(tools) == 1
-        assert isinstance(tools[0], GoogleSearchTool)
+        assert any(isinstance(t, GoogleSearchTool) for t in tools)
 
     def test_creative_does_not_get_search_tool(self):
         from app.agents.agent_factory import _default_tools_for_persona
 
         tools = _default_tools_for_persona("creative")
-        assert len(tools) == 0
+        assert not any(isinstance(t, GoogleSearchTool) for t in tools)
 
     def test_coder_does_not_get_search_tool(self):
         from app.agents.agent_factory import _default_tools_for_persona
 
         tools = _default_tools_for_persona("coder")
-        assert len(tools) == 0
+        assert not any(isinstance(t, GoogleSearchTool) for t in tools)
 
 
 # ── create_agent passes tools through ────────────────────────────────
@@ -187,8 +184,7 @@ class TestCreateAgentWithSearchTools:
             is_default=True,
         )
         agent = create_agent(persona)
-        assert len(agent.tools) == 1
-        assert isinstance(agent.tools[0], GoogleSearchTool)
+        assert any(isinstance(t, GoogleSearchTool) for t in agent.tools)
 
     def test_creative_agent_has_no_tools(self):
         from app.agents.agent_factory import create_agent
@@ -205,7 +201,7 @@ class TestCreateAgentWithSearchTools:
             is_default=True,
         )
         agent = create_agent(persona)
-        assert len(agent.tools) == 0
+        assert not any(isinstance(t, GoogleSearchTool) for t in agent.tools)
 
 
 # ── Module exports ───────────────────────────────────────────────────
