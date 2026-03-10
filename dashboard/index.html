@@ -1,15 +1,93 @@
 <!doctype html>
 <html lang="en" class="dark">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#1a1a2e" />
-    <link rel="manifest" href="/manifest.json" />
-    <title>Omni — Speak anywhere. Act everywhere.</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Primary Meta Tags -->
+  <title>Omni — Speak anywhere. Act everywhere.</title>
+  <meta name="title" content="Omni — Speak anywhere. Act everywhere." />
+  <meta name="description"
+    content="Omni is a multi-client AI agent hub powered by Gemini Live. Voice-control your desktop, browser, and devices from a single conversational interface with real-time audio streaming." />
+  <meta name="keywords"
+    content="AI agent, Gemini Live, voice control, multi-client, real-time audio, desktop automation, MCP, Google ADK" />
+  <meta name="author" content="Omni Team" />
+  <meta name="robots" content="index, follow" />
+  <meta name="theme-color" content="#1a1a2e" />
+
+  <!-- Canonical URL -->
+  <link rel="canonical" href="https://omni.dev/" />
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://omni.dev/" />
+  <meta property="og:title" content="Omni — Speak anywhere. Act everywhere." />
+  <meta property="og:description"
+    content="Multi-client AI agent hub powered by Gemini Live. Voice-control your desktop, browser, and devices from one conversational interface." />
+  <meta property="og:image" content="https://omni.dev/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:site_name" content="Omni" />
+  <meta property="og:locale" content="en_US" />
+
+  <!-- Twitter -->
+  <meta property="twitter:card" content="summary_large_image" />
+  <meta property="twitter:url" content="https://omni.dev/" />
+  <meta property="twitter:title" content="Omni — Speak anywhere. Act everywhere." />
+  <meta property="twitter:description"
+    content="Multi-client AI agent hub powered by Gemini Live. Voice-control your desktop, browser, and devices from one conversational interface." />
+  <meta property="twitter:image" content="https://omni.dev/og-image.png" />
+
+  <!-- Structured Data (JSON-LD) -->
+  <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Omni",
+        "description": "Multi-client AI agent hub powered by Gemini Live. Voice-control your desktop, browser, and devices from a single conversational interface with real-time audio streaming.",
+        "url": "https://omni.dev/",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Web, Windows, macOS, Linux",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "featureList": [
+          "Real-time voice interaction via Gemini Live",
+          "Multi-client support (web, desktop, browser extension)",
+          "AI persona management",
+          "MCP tool integration",
+          "Desktop automation",
+          "Code sandbox execution"
+        ]
+      }
+    </script>
+
+  <!-- Favicons -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192.png" />
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json" />
+
+  <!-- Preconnect to critical origins -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="dns-prefetch" href="https://firebaseinstallations.googleapis.com" />
+  <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com" />
+</head>
+
+<body>
+  <noscript>
+    <div style="padding: 2rem; text-align: center; font-family: system-ui, sans-serif;">
+      <h1>Omni</h1>
+      <p>Omni requires JavaScript to run. Please enable JavaScript in your browser settings.</p>
+    </div>
+  </noscript>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+
 </html>

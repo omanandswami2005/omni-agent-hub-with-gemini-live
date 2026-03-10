@@ -3,6 +3,7 @@
  */
 
 import { useState } from 'react';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import ThemeToggle from '@/components/layout/ThemeToggle';
 import { useAuthStore } from '@/stores/authStore';
 import { useAuth } from '@/hooks/useAuth';
@@ -17,6 +18,7 @@ const SHORTCUTS = [
 ];
 
 export default function SettingsPage() {
+  useDocumentTitle('Settings');
   const [tab, setTab] = useState('General');
   const user = useAuthStore((s) => s.user);
   const { signOut } = useAuth();

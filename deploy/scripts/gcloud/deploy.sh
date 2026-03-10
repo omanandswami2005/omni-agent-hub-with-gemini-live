@@ -10,6 +10,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="${SCRIPT_DIR}/../../.."
 PROJECT_ID="${1:-$(gcloud config get-value project 2>/dev/null)}"
 REGION="${2:-us-central1}"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/omni/backend"
@@ -24,7 +25,7 @@ echo
 # --- 1. Build & push Docker image ---
 if [[ -z "${SKIP_BUILD:-}" ]]; then
   echo "=== Building backend image ==="
-  docker build -t "${IMAGE}:${TAG}" "${SCRIPT_DIR}/../../backend/"
+  docker build -t "${IMAGE}:${TAG}" "${ROOT_DIR}/backend/"
 
   echo "=== Authenticating Docker with Artifact Registry ==="
   gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
@@ -38,7 +39,7 @@ fi
 # --- 2. Terraform apply ---
 if [[ -z "${SKIP_TF:-}" ]]; then
   echo "=== Running Terraform ==="
-  cd "${SCRIPT_DIR}/../terraform"
+  cd "${ROOT_DIR}/deploy/terraform"
 
   terraform init -input=false
   terraform apply -auto-approve \

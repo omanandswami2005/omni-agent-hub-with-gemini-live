@@ -9,12 +9,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="${SCRIPT_DIR}/../../.."
 PROJECT_ID="${1:-$(gcloud config get-value project 2>/dev/null)}"
 
 echo "=== Seeding Firestore for project: ${PROJECT_ID} ==="
 
 # Run the seed script using the backend's Python environment
-cd "${SCRIPT_DIR}/../../backend"
+cd "${ROOT_DIR}/backend"
 
 uv run python -c "
 import os

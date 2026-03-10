@@ -3,10 +3,12 @@
  */
 
 import { useEffect } from 'react';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import ClientList from '@/components/clients/ClientList';
 import { useClientStore } from '@/stores/clientStore';
 
 export default function ClientsPage() {
+  useDocumentTitle('Connected Clients');
   const { clients, loading, fetchClients, watchClients, stopWatching } = useClientStore();
 
   useEffect(() => {

@@ -17,7 +17,8 @@ export default defineConfig({
         manualChunks: {
           "vendor-react": ["react", "react-dom", "react-router"],
           "vendor-firebase": ["firebase/app", "firebase/auth", "firebase/firestore"],
-          "vendor-ui": ["recharts", "react-markdown", "remark-gfm", "cmdk", "sonner"],
+          "vendor-charts": ["recharts"],
+          "vendor-ui": ["cmdk", "sonner", "lucide-react", "react-markdown", "remark-gfm"],
           "vendor-state": ["zustand", "clsx", "tailwind-merge", "date-fns"],
         },
       },

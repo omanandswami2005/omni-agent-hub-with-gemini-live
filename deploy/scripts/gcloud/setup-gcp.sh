@@ -45,7 +45,7 @@ REGION="${2:-us-central1}"
 SA_NAME="omni-backend"
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 BUCKET_NAME="${PROJECT_ID}-omni-artifacts"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../" && pwd)"
 SA_KEY_PATH="${REPO_ROOT}/backend/firebase-sa.json"
 
 if [[ -z "$PROJECT_ID" ]]; then

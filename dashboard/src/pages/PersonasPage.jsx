@@ -3,12 +3,14 @@
  */
 
 import { useState, useEffect } from 'react';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import PersonaList from '@/components/persona/PersonaList';
 import PersonaEditor from '@/components/persona/PersonaEditor';
 import { usePersonaStore } from '@/stores/personaStore';
 import { useMcpStore } from '@/stores/mcpStore';
 
 export default function PersonasPage() {
+  useDocumentTitle('Personas');
   const { personas, activePersona, setActivePersona, fetchPersonas, createPersona, updatePersona, deletePersona, loading } = usePersonaStore();
   const mcpCatalog = useMcpStore((s) => s.catalog);
   const [editing, setEditing] = useState(null); // null = closed, undefined = new, persona = edit

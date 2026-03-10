@@ -6,7 +6,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${SCRIPT_DIR}/../.."
+ROOT_DIR="${SCRIPT_DIR}/../../.."
 
 echo "=== Setting up Omni development environment ==="
 
@@ -46,4 +46,4 @@ echo "=== Setup complete ==="
 echo "Next steps:"
 echo "  1. Edit .env with your GCP project, Firebase, and E2B keys"
 echo "  2. cd backend && uv run uvicorn app.main:app --reload"
-echo "  3. cd dashboard && npm run dev"
+echo "  3. cd dashboard && pnpm run dev"

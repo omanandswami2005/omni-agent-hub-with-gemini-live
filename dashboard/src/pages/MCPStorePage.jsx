@@ -3,12 +3,14 @@
  */
 
 import { useState, useEffect } from 'react';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import MCPStoreGrid from '@/components/mcp/MCPStoreGrid';
 import MCPCategoryNav from '@/components/mcp/MCPCategoryNav';
 import MCPDetail from '@/components/mcp/MCPDetail';
 import { useMcpStore } from '@/stores/mcpStore';
 
 export default function MCPStorePage() {
+  useDocumentTitle('MCP Store');
   const { catalog, loading, fetchCatalog, fetchEnabled, toggleMCP } = useMcpStore();
   const [category, setCategory] = useState('All');
   const [selected, setSelected] = useState(null);

@@ -3,10 +3,12 @@
  */
 
 import { useEffect } from 'react';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import SessionList from '@/components/session/SessionList';
 import { useSessionStore } from '@/stores/sessionStore';
 
 export default function SessionsPage() {
+  useDocumentTitle('Sessions');
   const { sessions, activeSessionId, loading, loadSessions, switchSession, deleteSession } = useSessionStore();
 
   useEffect(() => {

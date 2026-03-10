@@ -3,6 +3,7 @@
  */
 
 import { useCallback } from 'react';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import ChatPanel from '@/components/chat/ChatPanel';
 import GenUIRenderer from '@/components/genui/GenUIRenderer';
 import PersonaCard from '@/components/persona/PersonaCard';
@@ -16,6 +17,7 @@ import { usePersonaStore } from '@/stores/personaStore';
 import { useClientStore } from '@/stores/clientStore';
 
 export default function DashboardPage() {
+    useDocumentTitle('Dashboard');
     const { sendText, sendAudio, isConnected } = useWebSocket();
     const { startRecording, stopRecording, isRecording, volume: captureVolume } = useAudioCapture({
         onAudioData: sendAudio,
