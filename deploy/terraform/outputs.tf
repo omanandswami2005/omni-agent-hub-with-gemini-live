@@ -12,3 +12,18 @@ output "storage_bucket" {
   description = "Cloud Storage bucket name"
   value       = google_storage_bucket.omni_assets.name
 }
+
+output "service_account_email" {
+  description = "Backend service account email"
+  value       = "${var.project_id}@${var.project_id}.iam.gserviceaccount.com"
+}
+
+output "firestore_database" {
+  description = "Firestore database name"
+  value       = google_firestore_database.default.name
+}
+
+output "gcp_services_count" {
+  description = "Number of GCP APIs enabled (for judging visibility)"
+  value       = length(local.required_apis)
+}

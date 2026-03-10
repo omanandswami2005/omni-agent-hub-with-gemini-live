@@ -135,3 +135,79 @@ resource "google_firestore_database" "default" {
   location_id = var.region
   type        = "FIRESTORE_NATIVE"
 }
+
+# --- Enabled GCP APIs ---
+# Managed declaratively to ensure reproducibility
+locals {
+  required_apis = [
+    "aiplatform.googleapis.com",
+    "generativelanguage.googleapis.com",
+    "firestore.googleapis.com",
+    "firebase.googleapis.com",
+    "identitytoolkit.googleapis.com",
+    "storage.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "run.googleapis.com",
+    "secretmanager.googleapis.com",
+    "iam.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "cloudtrace.googleapis.com",
+    "monitoring.googleapis.com",
+    "logging.googleapis.com",
+  ]
+}
+
+resource "google_project_service" "apis" {
+  for_each = toset(local.required_apis)
+  service  = each.value
+
+  disable_on_destroy = false
+}
+
+# --- Cloud Monitoring Uptime Check ---
+resource "google_monitoring_uptime_check_config" "backend_health" {
+  display_name = "omni-backend-health"
+  timeout      = "10s"
+  period       = "300s"
+
+  http_check {
+    path         = "/health"
+    port         = 443
+    use_ssl      = true
+    validate_ssl = true
+  }
+
+  monitored_resource {
+    type = "uptime_url"
+    labels = {
+      project_id = var.project_id
+      host       = trimprefix(google_cloud_run_v2_service.backend.uri, "https://")
+    }
+  }
+
+  depends_on = [google_project_service.apis]
+}
+
+# --- Cloud Monitoring Alert Policy (high latency) ---
+resource "google_monitoring_alert_policy" "high_latency" {
+  display_name = "Omni Backend High Latency"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Cloud Run request latency > 5s"
+
+    condition_threshold {
+      filter          = "resource.type = \"cloud_run_revision\" AND metric.type = \"run.googleapis.com/request_latencies\""
+      duration        = "60s"
+      comparison      = "COMPARISON_GT"
+      threshold_value = 5000
+
+      aggregations {
+        alignment_period   = "60s"
+        per_series_aligner = "ALIGN_PERCENTILE_99"
+      }
+    }
+  }
+
+  depends_on = [google_project_service.apis]
+}

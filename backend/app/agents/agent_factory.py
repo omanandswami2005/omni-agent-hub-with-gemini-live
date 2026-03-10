@@ -15,6 +15,7 @@ from google.adk.agents import Agent
 from google.genai import types
 
 from app.models.persona import PersonaResponse
+from app.tools.search import get_search_tool
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -22,6 +23,9 @@ logger = get_logger(__name__)
 # Live-capable native audio model
 LIVE_MODEL = "gemini-2.5-flash-native-audio"
 TEXT_MODEL = "gemini-2.5-flash"
+
+# Persona IDs that get Google Search grounding by default
+_SEARCH_PERSONA_IDS = {"assistant", "researcher", "analyst"}
 
 
 def _build_speech_config(voice_name: str) -> types.SpeechConfig:
@@ -33,6 +37,14 @@ def _build_speech_config(voice_name: str) -> types.SpeechConfig:
             ),
         ),
     )
+
+
+def _default_tools_for_persona(persona_id: str) -> list:
+    """Return default tools for a persona based on its ID."""
+    tools = []
+    if persona_id in _SEARCH_PERSONA_IDS:
+        tools.append(get_search_tool())
+    return tools
 
 
 def create_agent(persona: PersonaResponse) -> Agent:
@@ -49,17 +61,20 @@ def create_agent(persona: PersonaResponse) -> Agent:
     Agent
         A configured ADK agent ready for use as a sub-agent of the root.
     """
+    tools = _default_tools_for_persona(persona.id)
+
     agent = Agent(
         name=persona.id,
         model=LIVE_MODEL,
         instruction=persona.system_instruction or f"You are {persona.name}.",
-        # Tools will be attached by the MCP manager at session start
+        tools=tools,
     )
     logger.info(
         "agent_created",
         persona_id=persona.id,
         name=persona.name,
         voice=persona.voice,
+        tool_count=len(tools),
     )
     return agent
 
