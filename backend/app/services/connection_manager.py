@@ -129,6 +129,16 @@ class ConnectionManager:
             return bool(user_conns)
         return client_type in user_conns
 
+    def get_other_clients_online(
+        self, user_id: str, current_client_type: ClientType
+    ) -> list[ClientType]:
+        """Return list of OTHER client types that are online (excluding current)."""
+        user_conns = self._connections.get(user_id, {})
+        return [
+            ct for ct in user_conns.keys()
+            if ct != current_client_type
+        ]
+
     @property
     def total_connections(self) -> int:
         return sum(len(v) for v in self._connections.values())

@@ -35,6 +35,7 @@ ROOT_INSTRUCTION = (
 
 def build_root_agent(
     personas: list[PersonaResponse] | None = None,
+    mcp_tools: list | None = None,
 ) -> Agent:
     """Construct the root ADK agent with persona sub-agents.
 
@@ -43,6 +44,8 @@ def build_root_agent(
     personas:
         Persona configs to register as sub-agents.  Falls back to the
         five built-in defaults when *None*.
+    mcp_tools:
+        Additional MCP tools to include in the root agent.
 
     Returns
     -------
@@ -52,7 +55,7 @@ def build_root_agent(
     if personas is None:
         personas = get_default_personas()
 
-    sub_agents = [create_agent(p) for p in personas]
+    sub_agents = [create_agent(p, mcp_tools) for p in personas]
     names = [a.name for a in sub_agents]
 
     root = Agent(
@@ -60,6 +63,7 @@ def build_root_agent(
         model=LIVE_MODEL,
         instruction=ROOT_INSTRUCTION,
         sub_agents=sub_agents,
+        tools=mcp_tools or [],
     )
-    logger.info("root_agent_built", sub_agents=names)
+    logger.info("root_agent_built", sub_agents=names, mcp_tool_count=len(mcp_tools or []))
     return root

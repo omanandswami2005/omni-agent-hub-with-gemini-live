@@ -68,7 +68,10 @@ def _default_tools_for_persona(persona_id: str) -> list:
     return tools
 
 
-def create_agent(persona: PersonaResponse) -> Agent:
+def create_agent(
+    persona: PersonaResponse,
+    extra_tools: list | None = None,
+) -> Agent:
     """Build an ADK ``Agent`` from a persona configuration.
 
     Parameters
@@ -76,6 +79,8 @@ def create_agent(persona: PersonaResponse) -> Agent:
     persona:
         A :class:`PersonaResponse` with at least ``id``, ``name``,
         ``voice``, and ``system_instruction``.
+    extra_tools:
+        Additional tools to include (e.g., MCP tools from get_mcp_manager().get_tools()).
 
     Returns
     -------
@@ -83,6 +88,8 @@ def create_agent(persona: PersonaResponse) -> Agent:
         A configured ADK agent ready for use as a sub-agent of the root.
     """
     tools = _default_tools_for_persona(persona.id)
+    if extra_tools:
+        tools.extend(extra_tools)
 
     agent = Agent(
         name=persona.id,

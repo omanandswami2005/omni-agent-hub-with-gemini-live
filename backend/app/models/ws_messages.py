@@ -55,6 +55,7 @@ class AuthMessage(BaseModel):
 
     type: Literal["auth"] = "auth"
     token: str
+    client_type: str = "web"  # web, mobile, desktop, chrome
 
 
 class TextMessage(BaseModel):
@@ -77,6 +78,19 @@ class MCPToggleMessage(BaseModel):
     type: Literal["mcp_toggle"] = "mcp_toggle"
     mcp_id: str
     enabled: bool
+
+
+class SessionSuggestionMessage(BaseModel):
+    """Server suggests user to switch to another device for uninterrupted session."""
+    type: Literal["session_suggestion"] = "session_suggestion"
+    available_clients: list[str]  # e.g., ["desktop", "mobile"]
+    message: str
+
+
+class JoinSessionMessage(BaseModel):
+    """Client responds to session suggestion - join other session or continue new."""
+    type: Literal["join_session"] = "join_session"
+    join: bool  # True = join existing, False = start new
 
 
 class ControlMessage(BaseModel):

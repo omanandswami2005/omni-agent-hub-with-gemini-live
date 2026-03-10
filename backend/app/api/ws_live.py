@@ -49,6 +49,7 @@ from app.services.agent_engine_service import get_agent_engine_service
 from app.services.connection_manager import get_connection_manager
 from app.services.event_bus import EventBus, get_event_bus
 from app.services.memory_service import get_memory_service
+from app.services.mcp_manager import get_mcp_manager
 from app.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -81,22 +82,29 @@ def _build_adk_session_service():
 
 
 _adk_session_service = _build_adk_session_service()
-_runner: Runner | None = None
 APP_NAME = "omni-hub"
 
 AUDIO_INPUT_MIME = "audio/pcm;rate=16000"
 
 
-def _get_runner() -> Runner:
-    global _runner
-    if _runner is None:
-        root = build_root_agent()
-        _runner = Runner(
-            app_name=APP_NAME,
-            agent=root,
-            session_service=_adk_session_service,
-        )
-    return _runner
+async def _get_runner(user_id: str) -> Runner:
+    """Create a runner with user-specific MCP tools.
+    
+    Each user gets their own runner instance with their enabled MCP tools.
+    """
+    mcp_mgr = get_mcp_manager()
+    mcp_tools: list = []
+    try:
+        mcp_tools = await mcp_mgr.get_tools(user_id)
+    except Exception:
+        logger.warning("mcp_tools_load_failed", user_id=user_id, exc_info=True)
+    
+    root = build_root_agent(mcp_tools=mcp_tools)
+    return Runner(
+        app_name=APP_NAME,
+        agent=root,
+        session_service=_adk_session_service,
+    )
 
 
 def _build_run_config(voice: str = "Aoede") -> RunConfig:
@@ -122,13 +130,14 @@ def _build_run_config(voice: str = "Aoede") -> RunConfig:
 # ── Authentication helper ─────────────────────────────────────────────
 
 
-async def _authenticate_ws(websocket: WebSocket) -> AuthenticatedUser | None:
+async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, ClientType] | None:
     """Wait for the first JSON frame and validate it as an auth message.
 
-    Returns ``AuthenticatedUser`` on success, or ``None`` after sending
+    Returns ``(AuthenticatedUser, client_type)`` on success, or ``None`` after sending
     an error and closing the socket.
     """
     from firebase_admin import auth as firebase_auth
+    from app.models.client import ClientType
 
     try:
         raw = await asyncio.wait_for(websocket.receive_text(), timeout=10)
@@ -152,7 +161,14 @@ async def _authenticate_ws(websocket: WebSocket) -> AuthenticatedUser | None:
         await _send_auth_error(websocket, "Invalid or expired token")
         return None
 
-    return AuthenticatedUser(decoded)
+    # Parse client_type from message, default to WEB
+    client_type_str = data.get("client_type", "web").lower()
+    try:
+        client_type = ClientType(client_type_str)
+    except ValueError:
+        client_type = ClientType.WEB
+
+    return AuthenticatedUser(decoded), client_type
 
 
 async def _send_auth_error(websocket: WebSocket, error: str) -> None:
@@ -208,7 +224,20 @@ async def _upstream(
                         role="user",
                     )
                     queue.send_content(content)
-                # Other control messages (persona_switch, mcp_toggle)
+                elif msg_type == "mcp_toggle":
+                    # Handle MCP toggle during live session
+                    mcp_id = data.get("mcp_id")
+                    enabled = data.get("enabled", False)
+                    if mcp_id:
+                        mcp_mgr = get_mcp_manager()
+                        from app.models.mcp import MCPToggle
+                        toggle = MCPToggle(mcp_id=mcp_id, enabled=enabled)
+                        try:
+                            await mcp_mgr.toggle_mcp(user_id, toggle)
+                            logger.info("mcp_toggle_during_session", user_id=user_id, mcp_id=mcp_id, enabled=enabled)
+                        except Exception:
+                            logger.warning("mcp_toggle_failed", user_id=user_id, mcp_id=mcp_id, exc_info=True)
+                # Other control messages (persona_switch)
                 # are handled at the API layer, not pushed to ADK
     except WebSocketDisconnect:
         logger.info("ws_upstream_disconnected", user_id=user_id)
@@ -348,16 +377,22 @@ async def ws_live(websocket: WebSocket) -> None:
     """Bidirectional audio streaming with Gemini via ADK."""
     await websocket.accept()
 
-    # Phase 1 — Authenticate
-    user = await _authenticate_ws(websocket)
+    # Phase 1 — Authenticate (includes client_type detection)
+    user, client_type = await _authenticate_ws(websocket)
     if user is None:
         return
 
-    session_id = f"{user.uid}_live"
     mgr = get_connection_manager()
-
+    
+    # Check if OTHER client types are already online (for session continuity)
+    other_clients = mgr.get_other_clients_online(user.uid, client_type)
+    
     # Phase 2 — Register connection + prepare ADK session
-    await mgr.connect(websocket, user.uid, ClientType.WEB)
+    await mgr.connect(websocket, user.uid, client_type)
+    
+    # Use a unified session ID for cross-device continuity
+    # All devices share the same session for this user
+    session_id = f"{user.uid}_main"
 
     # Ensure ADK session exists
     session = await _adk_session_service.get_session(
@@ -378,9 +413,18 @@ async def ws_live(websocket: WebSocket) -> None:
     await websocket.send_text(auth_ok.model_dump_json())
     await websocket.send_text(connected.model_dump_json())
 
+    # If other clients are online, suggest session continuation
+    if other_clients:
+        from app.models.ws_messages import SessionSuggestionMessage
+        suggestion = SessionSuggestionMessage(
+            available_clients=[str(ct) for ct in other_clients],
+            message=f"You're already active on {', '.join(str(ct) for ct in other_clients)}. Join that session for uninterrupted context?"
+        )
+        await websocket.send_text(suggestion.model_dump_json())
+
     # Phase 3 — Bidi streaming
     queue = LiveRequestQueue()
-    runner = _get_runner()
+    runner = await _get_runner(user.uid)
 
     try:
         await asyncio.gather(

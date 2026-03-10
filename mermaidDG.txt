@@ -1,0 +1,271 @@
+graph TB
+    subgraph Clients["Client Layer"]
+        WEB["🌐 Web Dashboard\nReact 19 + Vite\nFirebase Hosting"]
+        CHROME["🔌 Chrome Extension\nManifest V3"]
+        DESKTOP["🖥️ Desktop Client\nPython + pyautogui"]
+        MOBILE["📱 Mobile PWA"]
+    end
+
+    subgraph Auth["Auth Layer"]
+        FB_AUTH["🔐 Firebase Auth\nJWT Verification"]
+    end
+
+    subgraph Backend["Backend — Cloud Run"]
+        FASTAPI["⚡ FastAPI + Uvicorn\nPython 3.12"]
+        WS_LIVE["/ws/live\nBidi Audio WebSocket"]
+        WS_EVENTS["/ws/events\nDashboard Push Events"]
+        REST_API["/api/v1\nREST Endpoints"]
+        CORS["CORS Middleware"]
+        RATE["Rate Limiter"]
+        EVENT_BUS["EventBus\nPub/Sub Fan-out"]
+        CONN_MGR["Connection Manager\nWS Registry"]
+    end
+
+    subgraph AgentLayer["Agent Engine — ADK"]
+        RUNNER["ADK Runner\nrun_live()"]
+        ROOT["omni_root\nRouter Agent"]
+        subgraph Personas["Persona Sub-Agents"]
+            CLAIRE["Claire\nAssistant · Aoede"]
+            DEV["Dev\nCoder · Charon"]
+            SAGE["Sage\nResearcher · Kore"]
+            NOVA["Nova\nAnalyst · Puck"]
+            MUSE["Muse\nCreative · Leda"]
+        end
+        TASK_ARCH["Task Architect\nDAG Orchestrator"]
+    end
+
+    subgraph Tools["ADK Tools"]
+        CODE_EXEC["⚙️ Code Exec Tool"]
+        SEARCH_TOOL["🔍 Google Search Tool"]
+        IMAGE_TOOL["🎨 Image Gen Tool"]
+        RAG_TOOL["📚 RAG Tool"]
+        CROSS_CLIENT["↔️ Cross-Client Tool"]
+        DESKTOP_TOOL["🖥️ Desktop Control Tool"]
+        MCP["🔌 MCP Toolsets\nBrave / GitHub / Playwright"]
+    end
+
+    subgraph VertexAI["Vertex AI — GCP"]
+        GEMINI_LIVE["🎙️ Gemini Live API\ngemini-live-2.5-flash-native-audio"]
+        GEMINI_TEXT["💬 Gemini 2.5 Flash\nText / Eval"]
+        IMAGEN["🖼️ Imagen 4\nimagen-4.0-generate-001"]
+        AE_SESSIONS["🗂️ Agent Engine Sessions\nVertexAiSessionService"]
+        AE_MEMORY["🧠 Agent Engine Memory Bank\nmemories.generate/retrieve"]
+        AE_SANDBOX["💻 Agent Engine Sandboxes\nsandboxes.execute_code"]
+        RAG_ENGINE["📖 Vertex AI RAG Engine\nCorpus + Retrieval"]
+        GROUNDING["🌐 Google Search Grounding\nInline Citations"]
+    end
+
+    subgraph GCP["GCP Infrastructure"]
+        FIRESTORE["🔥 Cloud Firestore\nSessions · Personas · Memory Facts"]
+        GCS["🪣 Cloud Storage\nImages · Artifacts"]
+        SECRET_MGR["🔑 Secret Manager"]
+        CLOUD_LOG["📊 Cloud Logging"]
+        CLOUD_TRACE["🔭 Cloud Trace"]
+    end
+
+    subgraph External["External Services"]
+        E2B["🧪 E2B Sandbox\nCode Exec Fallback"]
+    end
+
+    %% Client → Auth
+    WEB & CHROME & DESKTOP & MOBILE -->|Firebase JWT| FB_AUTH
+    FB_AUTH -->|Verified User| FASTAPI
+
+    %% Client → Backend
+    WEB -->|"Binary PCM + JSON\n/ws/live"| WS_LIVE
+    WEB -->|"/ws/events"| WS_EVENTS
+    WEB & CHROME & DESKTOP & MOBILE -->|REST| REST_API
+
+    %% Backend internal
+    WS_LIVE --> RUNNER
+    WS_LIVE --> EVENT_BUS
+    WS_EVENTS --> EVENT_BUS
+    WS_LIVE --> CONN_MGR
+    FASTAPI --> CORS & RATE
+
+    %% ADK
+    RUNNER --> ROOT
+    ROOT --> CLAIRE & DEV & SAGE & NOVA & MUSE
+    ROOT --> TASK_ARCH
+
+    %% Tools → Vertex AI
+    CODE_EXEC -->|Primary| AE_SANDBOX
+    CODE_EXEC -->|Fallback| E2B
+    SEARCH_TOOL --> GROUNDING
+    IMAGE_TOOL --> IMAGEN
+    RAG_TOOL --> RAG_ENGINE
+
+    %% Persona Tools
+    DEV & NOVA --> CODE_EXEC & MCP
+    SAGE & NOVA --> SEARCH_TOOL & RAG_TOOL
+    CLAIRE & MUSE --> IMAGE_TOOL
+    CLAIRE & DEV & SAGE & NOVA & MUSE --> CROSS_CLIENT
+    DESKTOP --> DESKTOP_TOOL
+
+    %% Runner → Gemini Live
+    RUNNER -->|Bidi Stream| GEMINI_LIVE
+
+    %% Sessions + Memory
+    RUNNER -->|Session Persistence| AE_SESSIONS
+    WS_LIVE -->|On Session Close| AE_MEMORY
+    AE_SESSIONS -.->|Fallback| FIRESTORE
+
+    %% GCP Storage
+    AE_MEMORY -.->|Fallback| FIRESTORE
+    IMAGE_TOOL --> GCS
+    REST_API --> FIRESTORE
+
+    %% Observability
+    FASTAPI --> CLOUD_LOG & CLOUD_TRACE
+    SECRET_MGR -.-> FASTAPI
+
+
+
+
+
+
+
+
+
+
+
+graph TD
+    subgraph Input["User Input"]
+        VOICE["🎙️ Voice / Audio\n16kHz PCM"]
+        TEXT["💬 Text Message"]
+        IMAGE_IN["📷 Image Input"]
+    end
+
+    subgraph WS["WebSocket Layer"]
+        QUEUE["LiveRequestQueue\nADK Input Buffer"]
+    end
+
+    subgraph Runner["ADK Runner"]
+        RUN_LIVE["runner.run_live()\nBidi Streaming"]
+        SESSION["Session State\nVertexAiSessionService\n↳ InMemory fallback"]
+    end
+
+    subgraph Root["omni_root — Router Agent"]
+        ROUTER_LLM["Gemini Live\ngemini-live-2.5-flash\n-native-audio"]
+        PERSONA_DISPATCH{"Route to\nPersona?"}
+        COMPLEX_DISPATCH{"Complex\nMulti-Step Task?"}
+    end
+
+    subgraph PersonaAgents["Persona Sub-Agents  (each has own Gemini Live stream)"]
+        direction LR
+        subgraph CLAIRE_BOX["Claire — Assistant"]
+            CLAIRE_LLM["Gemini Live"]
+            CLAIRE_TOOLS["🔍 Search\n🎨 Image Gen\n↔️ Cross-Client"]
+        end
+        subgraph DEV_BOX["Dev — Coder"]
+            DEV_LLM["Gemini Live"]
+            DEV_TOOLS["⚙️ Code Exec\n🔌 MCP GitHub\n↔️ Cross-Client"]
+        end
+        subgraph SAGE_BOX["Sage — Researcher"]
+            SAGE_LLM["Gemini Live"]
+            SAGE_TOOLS["🔍 Search\n📚 RAG\n↔️ Cross-Client"]
+        end
+        subgraph NOVA_BOX["Nova — Analyst"]
+            NOVA_LLM["Gemini Live"]
+            NOVA_TOOLS["⚙️ Code Exec\n🔍 Search\n📚 RAG\n↔️ Cross-Client"]
+        end
+        subgraph MUSE_BOX["Muse — Creative"]
+            MUSE_LLM["Gemini Live"]
+            MUSE_TOOLS["🎨 Image Gen\n↔️ Cross-Client"]
+        end
+    end
+
+    subgraph TaskArchitect["Task Architect — Dynamic Pipeline"]
+        DECOMPOSE["Gemini: Decompose\nRequest → Sub-Tasks"]
+        BLUEPRINT["PipelineBlueprint\nDAG of Stages"]
+        subgraph Stages["ADK Pipeline Execution"]
+            SEQ["SequentialAgent"]
+            PAR["ParallelAgent"]
+            LOOP_AGT["LoopAgent"]
+        end
+        STAGE_AGENTS["Dynamic Sub-Agents\nper Stage"]
+    end
+
+    subgraph ToolExecution["Tool Execution Layer"]
+        direction TB
+        AE_SANDBOX["Agent Engine Sandbox\n(Primary)"]
+        E2B_FB["E2B Sandbox\n(Fallback)"]
+        GROUNDING["Google Search\nGrounding"]
+        IMAGEN_API["Imagen 4 API"]
+        RAG_API["RAG Engine\nCorpus Retrieval"]
+        MCP_TOOLS["MCP Toolsets\nBrave / GitHub / Playwright"]
+        CROSS_WS["Cross-Client\nWebSocket Actions"]
+    end
+
+    subgraph MemoryLayer["Memory & Session Layer"]
+        AE_MEMORY_BANK["Agent Engine\nMemory Bank"]
+        AE_SESSIONS_SVC["Agent Engine\nSessions API"]
+        FIRESTORE_MEM["Firestore\nFact Store (fallback)"]
+    end
+
+    subgraph Output["Response Output"]
+        AUDIO_OUT["🔊 Audio PCM 24kHz"]
+        TEXT_OUT["💬 Text / Transcript"]
+        GENUI_OUT["🖥️ GenUI Components"]
+        TOOL_USE_OUT["🔧 Tool Call Events"]
+    end
+
+    %% Input flow
+    VOICE & TEXT & IMAGE_IN --> QUEUE
+    QUEUE --> RUN_LIVE
+    RUN_LIVE <--> SESSION
+
+    %% Runner → Root Agent
+    RUN_LIVE --> ROUTER_LLM
+    ROUTER_LLM --> PERSONA_DISPATCH
+    ROUTER_LLM --> COMPLEX_DISPATCH
+
+    %% Routing
+    PERSONA_DISPATCH -->|"assistant"| CLAIRE_BOX
+    PERSONA_DISPATCH -->|"coder"| DEV_BOX
+    PERSONA_DISPATCH -->|"researcher"| SAGE_BOX
+    PERSONA_DISPATCH -->|"analyst"| NOVA_BOX
+    PERSONA_DISPATCH -->|"creative"| MUSE_BOX
+    COMPLEX_DISPATCH -->|"≥ 2 sub-tasks"| TaskArchitect
+
+    %% Tool wiring
+    CLAIRE_TOOLS --> GROUNDING & IMAGEN_API & CROSS_WS
+    DEV_TOOLS --> AE_SANDBOX & MCP_TOOLS & CROSS_WS
+    SAGE_TOOLS --> GROUNDING & RAG_API & CROSS_WS
+    NOVA_TOOLS --> AE_SANDBOX & GROUNDING & RAG_API & CROSS_WS
+    MUSE_TOOLS --> IMAGEN_API & CROSS_WS
+
+    %% Code exec fallback
+    AE_SANDBOX -->|"Exception"| E2B_FB
+
+    %% Task Architect internal
+    DECOMPOSE --> BLUEPRINT
+    BLUEPRINT --> Stages
+    Stages --> STAGE_AGENTS
+
+    %% Memory
+    SESSION -->|"Session persist"| AE_SESSIONS_SVC
+    SESSION -->|"On close → generate"| AE_MEMORY_BANK
+    AE_MEMORY_BANK -.->|"Fallback"| FIRESTORE_MEM
+
+    %% Output
+    CLAIRE_LLM & DEV_LLM & SAGE_LLM & NOVA_LLM & MUSE_LLM --> AUDIO_OUT
+    CLAIRE_LLM & DEV_LLM & SAGE_LLM & NOVA_LLM & MUSE_LLM --> TEXT_OUT
+    CROSS_WS --> GENUI_OUT
+    DEV_TOOLS & NOVA_TOOLS --> TOOL_USE_OUT
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
