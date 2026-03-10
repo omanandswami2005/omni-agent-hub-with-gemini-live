@@ -142,6 +142,21 @@ class ToolResponseMessage(BaseModel):
     success: bool = True
 
 
+class AgentActivityMessage(BaseModel):
+    """Real-time agent activity: sub-agent calls, reasoning, MCP invocations.
+    
+    This provides transparency into what the async agent is doing behind the scenes.
+    """
+    type: Literal["agent_activity"] = "agent_activity"
+    activity_type: str  # "sub_agent_call", "reasoning", "mcp_call", "tool_call", "waiting"
+    title: str  # Short description
+    details: str = ""  # More info
+    status: str = "started"  # started, in_progress, completed, failed
+    timestamp: str = ""  # ISO timestamp
+    parent_agent: str = ""  # Which agent is doing this
+    progress: float = 0.0  # 0.0 to 1.0 for progress indication
+
+
 class ErrorMessage(BaseModel):
     type: Literal["error"] = "error"
     code: str

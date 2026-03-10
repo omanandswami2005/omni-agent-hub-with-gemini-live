@@ -44,3 +44,15 @@ async def get_mcp_detail(mcp_id: str):
     if config is None:
         raise HTTPException(status_code=404, detail=f"MCP '{mcp_id}' not found")
     return config
+
+
+@router.get("/capabilities", response_model=list[dict])
+async def list_capabilities(user: CurrentUser):
+    """Return available tools/capabilities for enabled MCPs and sandboxes.
+
+    This endpoint shows what tools are available when MCPs are enabled.
+    Note: E2B sandbox capabilities are predefined. Other MCPs don't have
+    a standard discovery API, so tool discovery is limited.
+    """
+    mgr = get_mcp_manager()
+    return mgr.get_available_capabilities(user.uid)

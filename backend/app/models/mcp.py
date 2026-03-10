@@ -16,6 +16,7 @@ class MCPCategory(StrEnum):
     DEV = "dev"
     COMMUNICATION = "communication"
     FINANCE = "finance"
+    SANDBOX = "sandbox"  # For E2B sandbox
     OTHER = "other"
 
 
@@ -33,6 +34,7 @@ class MCPConfig(BaseModel):
     env: dict[str, str] = {}
     icon: str = ""
     enabled: bool = False
+    is_sandbox: bool = False  # True for E2B sandbox (not an MCP server)
 
 
 class MCPCatalogItem(BaseModel):
@@ -44,6 +46,7 @@ class MCPCatalogItem(BaseModel):
     category: MCPCategory = MCPCategory.OTHER
     icon: str = ""
     enabled: bool = False
+    is_sandbox: bool = False  # True for E2B sandbox
 
 
 class MCPToggle(BaseModel):

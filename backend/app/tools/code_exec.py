@@ -121,3 +121,13 @@ install_package_tool = FunctionTool(install_package)
 def get_code_exec_tools() -> list[FunctionTool]:
     """Return all code-execution related tools as a list."""
     return [execute_code_tool, install_package_tool]
+
+
+def get_e2b_tools() -> list[FunctionTool]:
+    """Return E2B sandbox tools for MCP integration.
+
+    These tools are returned when a user enables the E2B Sandbox in their
+    MCP settings. The tools allow the agent to execute code in a secure
+    sandboxed environment.
+    """
+    return get_code_exec_tools()

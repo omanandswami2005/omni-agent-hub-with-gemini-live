@@ -16,7 +16,7 @@ from google.adk.tools.mcp_tool.mcp_toolset import (
 )
 from mcp.client.stdio import StdioServerParameters
 
-from app.models.mcp import MCPCatalogItem, MCPConfig, MCPToggle, TransportType
+from app.models.mcp import MCPCatalogItem, MCPConfig, MCPToggle, TransportType, MCPCategory
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -26,11 +26,20 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 MCP_CATALOG: list[MCPConfig] = [
+    # E2B Sandbox - special sandbox capability (not an MCP server)
+    MCPConfig(
+        id="e2b-sandbox",
+        name="E2B Sandbox",
+        description="Sandboxed code execution. Run Python, Node.js with file system access and package installation.",
+        category=MCPCategory.SANDBOX,
+        is_sandbox=True,
+        icon="sandbox",
+    ),
     MCPConfig(
         id="brave-search",
         name="Brave Search",
         description="Web search via the Brave Search API.",
-        category="search",
+        category=MCPCategory.SEARCH,
         transport=TransportType.STDIO,
         command="npx",
         args=["-y", "@anthropic/mcp-brave-search"],
@@ -159,6 +168,7 @@ class MCPManager:
                 category=m.category,
                 icon=m.icon,
                 enabled=enabled.get(m.id, False),
+                is_sandbox=m.is_sandbox,
             )
             for m in MCP_CATALOG
         ]
@@ -248,6 +258,12 @@ class MCPManager:
         """Return all ADK tools from enabled MCPs for a user."""
         tools: list = []
         for mcp_id in self.get_enabled_ids(user_id):
+            # Handle E2B sandbox specially - it provides code execution tools
+            if mcp_id == "e2b-sandbox":
+                from app.tools.code_exec import get_e2b_tools
+                tools.extend(get_e2b_tools())
+                continue
+
             key = (user_id, mcp_id)
             toolset = self._toolsets.get(key)
             if toolset is not None:
@@ -259,6 +275,64 @@ class MCPManager:
                         "mcp_get_tools_failed", mcp_id=mcp_id, exc_info=True
                     )
         return tools
+
+    # ------------------------------------------------------------------
+    # Available capabilities (for UI display)
+    # ------------------------------------------------------------------
+
+    def get_available_capabilities(self, user_id: str | None = None) -> list[dict]:
+        """Return available tools/capabilities with descriptions.
+
+        This includes MCP tools and built-in capabilities like E2B sandbox.
+        Since E2B doesn't have a discovery API, we define its capabilities here.
+        """
+        capabilities = []
+
+        # E2B Sandbox capabilities (defined, not discovered)
+        e2b_capabilities = [
+            {
+                "id": "e2b_execute_code",
+                "name": "Execute Code",
+                "description": "Run Python, Node.js, or other code in a secure sandbox",
+                "category": "sandbox",
+                "mcp_id": "e2b-sandbox",
+                "is_sandbox": True,
+            },
+            {
+                "id": "e2b_run_command",
+                "name": "Run Shell Command",
+                "description": "Execute shell commands in the sandbox (git, npm, pip, etc.)",
+                "category": "sandbox",
+                "mcp_id": "e2b-sandbox",
+                "is_sandbox": True,
+            },
+            {
+                "id": "e2b_upload_file",
+                "name": "Upload File",
+                "description": "Upload files to the sandbox for code to use",
+                "category": "sandbox",
+                "mcp_id": "e2b-sandbox",
+                "is_sandbox": True,
+            },
+            {
+                "id": "e2b_download_file",
+                "name": "Download File",
+                "description": "Download generated files from the sandbox",
+                "category": "sandbox",
+                "mcp_id": "e2b-sandbox",
+                "is_sandbox": True,
+            },
+        ]
+
+        # Check if E2B is enabled for user
+        enabled = self._user_enabled.get(user_id, {}) if user_id else {}
+        if enabled.get("e2b-sandbox", False):
+            capabilities.extend(e2b_capabilities)
+
+        # TODO: Add MCP tool discovery - would need to connect to each MCP
+        # and call list_tools() - not currently supported by MCP spec
+
+        return capabilities
 
     # ------------------------------------------------------------------
     # Cleanup
