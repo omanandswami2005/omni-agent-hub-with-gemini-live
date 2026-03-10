@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from google.adk.tools import FunctionTool
 
+from app.services.agent_engine_service import get_agent_engine_service
 from app.services.e2b_service import ExecutionResult, get_e2b_service
 from app.utils.logging import get_logger
 
@@ -37,6 +38,16 @@ async def execute_code(
     Returns:
         A dict with stdout, stderr, error, and any rich results.
     """
+    ae = get_agent_engine_service()
+    if ae.enabled:
+        try:
+            result = await ae.execute_code(sandbox_key=sandbox_id, code=code)
+            result.setdefault("error", None)
+            result.setdefault("results", [])
+            return result
+        except Exception:
+            logger.warning("agent_engine_code_exec_failed_fallback_e2b", exc_info=True)
+
     svc = get_e2b_service()
     result: ExecutionResult = await svc.execute_code(
         sandbox_id,
@@ -54,6 +65,7 @@ async def execute_code(
         "stderr": result.stderr,
         "error": result.error,
         "results": result.results,
+        "provider": "e2b",
     }
 
 
@@ -70,6 +82,15 @@ async def install_package(
     Returns:
         A dict with stdout, stderr, and any error.
     """
+    ae = get_agent_engine_service()
+    if ae.enabled:
+        try:
+            result = await ae.install_package(sandbox_key=sandbox_id, package=package)
+            result.setdefault("error", None)
+            return result
+        except Exception:
+            logger.warning("agent_engine_package_install_failed_fallback_e2b", exc_info=True)
+
     svc = get_e2b_service()
     result: ExecutionResult = await svc.execute_command(
         sandbox_id,
@@ -85,6 +106,7 @@ async def install_package(
         "stdout": result.stdout,
         "stderr": result.stderr,
         "error": result.error,
+        "provider": "e2b",
     }
 
 

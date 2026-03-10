@@ -52,6 +52,15 @@ def _reset_singleton():
     mod._service = old
 
 
+@pytest.fixture(autouse=True)
+def _disable_agent_engine_in_tool_tests():
+    """Default these tests to the E2B fallback path unless overridden."""
+    ae = MagicMock()
+    ae.enabled = False
+    with patch("app.tools.code_exec.get_agent_engine_service", return_value=ae):
+        yield
+
+
 # ── execute_code tool ────────────────────────────────────────────────
 
 
@@ -105,6 +114,24 @@ class TestExecuteCode:
         args, _ = mock_service.execute_code.call_args
         assert args[0] == "default"
 
+    @pytest.mark.asyncio
+    async def test_uses_agent_engine_when_enabled(self):
+        ae = MagicMock()
+        ae.enabled = True
+        ae.execute_code = AsyncMock(
+            return_value={
+                "stdout": "from-agent-engine",
+                "stderr": "",
+                "error": None,
+                "results": [],
+                "provider": "agent_engine",
+            }
+        )
+        with patch("app.tools.code_exec.get_agent_engine_service", return_value=ae):
+            result = await execute_code("print('x')", sandbox_id="s1")
+        assert result["provider"] == "agent_engine"
+        ae.execute_code.assert_awaited_once_with(sandbox_key="s1", code="print('x')")
+
 
 # ── install_package tool ─────────────────────────────────────────────
 
@@ -144,6 +171,18 @@ class TestInstallPackage:
             await install_package("requests", sandbox_id="u:s")
         args, _ = mock_service.execute_command.call_args
         assert args[0] == "u:s"
+
+    @pytest.mark.asyncio
+    async def test_install_package_uses_agent_engine_when_enabled(self):
+        ae = MagicMock()
+        ae.enabled = True
+        ae.install_package = AsyncMock(
+            return_value={"stdout": "ok", "stderr": "", "error": None, "provider": "agent_engine"}
+        )
+        with patch("app.tools.code_exec.get_agent_engine_service", return_value=ae):
+            result = await install_package("pandas", sandbox_id="s2")
+        assert result["provider"] == "agent_engine"
+        ae.install_package.assert_awaited_once_with(sandbox_key="s2", package="pandas")
 
 
 # ── FunctionTool instances ───────────────────────────────────────────

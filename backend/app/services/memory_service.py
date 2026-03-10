@@ -20,6 +20,8 @@ import json
 import time
 import uuid
 
+from app.config import get_settings
+from app.services.agent_engine_service import get_agent_engine_service
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -88,6 +90,12 @@ class MemoryService:
     def __init__(self) -> None:
         self._firestore = None
         self._genai_client = None
+        self._agent_engine = get_agent_engine_service()
+
+    @property
+    def _use_agent_engine_memory(self) -> bool:
+        settings_enabled = get_settings().USE_AGENT_ENGINE_MEMORY_BANK
+        return settings_enabled and self._agent_engine.enabled
 
     def _get_db(self):
         if self._firestore is None:
@@ -110,6 +118,14 @@ class MemoryService:
         if not facts:
             return 0
 
+        if self._use_agent_engine_memory:
+            stored = 0
+            for fact in facts:
+                await self._agent_engine.create_memory_fact(user_id=user_id, fact=fact)
+                stored += 1
+            logger.info("memories_stored_agent_engine", user_id=user_id, count=stored)
+            return stored
+
         db = self._get_db()
         batch = db.batch()
         col = db.collection("memories").document(user_id).collection("facts")
@@ -127,6 +143,9 @@ class MemoryService:
 
     async def get_all_facts(self, user_id: str) -> list[str]:
         """Return all stored facts for a user."""
+        if self._use_agent_engine_memory:
+            return await self._agent_engine.retrieve_memories(user_id=user_id)
+
         db = self._get_db()
         col = db.collection("memories").document(user_id).collection("facts")
         docs = col.order_by("created_at").stream()
@@ -139,6 +158,9 @@ class MemoryService:
 
     async def clear_facts(self, user_id: str) -> int:
         """Delete all facts for a user. Returns count deleted."""
+        if self._use_agent_engine_memory:
+            return await self._agent_engine.purge_user_memories(user_id=user_id)
+
         db = self._get_db()
         col = db.collection("memories").document(user_id).collection("facts")
         deleted = 0
@@ -191,6 +213,13 @@ class MemoryService:
         If *context* is provided, uses Gemini to filter for relevance.
         Otherwise returns all stored facts (up to 50).
         """
+        if self._use_agent_engine_memory:
+            query = context.strip() or None
+            return await self._agent_engine.retrieve_memories(
+                user_id=user_id,
+                query=query,
+            )
+
         all_facts = await self.get_all_facts(user_id)
         if not all_facts:
             return []
@@ -230,6 +259,16 @@ class MemoryService:
         return (
             f"You remember the following about this user from past sessions:\n{lines}\n\n"
             "Use this context when relevant, but do not repeat it verbatim."
+        )
+
+    async def sync_from_session(self, user_id: str, session_id: str) -> None:
+        """Generate memories from an Agent Engine session when enabled."""
+        if not self._use_agent_engine_memory:
+            return
+        session_name = self._agent_engine.build_session_resource_name(session_id)
+        await self._agent_engine.generate_memories_from_session(
+            session_name=session_name,
+            user_id=user_id,
         )
 
 

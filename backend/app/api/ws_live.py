@@ -29,6 +29,7 @@ from google.genai import types
 
 from app.agents.personas import get_default_personas
 from app.agents.root_agent import build_root_agent
+from app.config import settings
 from app.middleware.auth_middleware import AuthenticatedUser, _get_firebase_app
 from app.models.client import ClientType
 from app.models.ws_messages import (
@@ -44,8 +45,10 @@ from app.models.ws_messages import (
     TranscriptionDirection,
     TranscriptionMessage,
 )
+from app.services.agent_engine_service import get_agent_engine_service
 from app.services.connection_manager import get_connection_manager
 from app.services.event_bus import EventBus, get_event_bus
+from app.services.memory_service import get_memory_service
 from app.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -57,7 +60,27 @@ router = APIRouter()
 
 # ── Module-level singletons (initialised lazily) ─────────────────────
 
-_adk_session_service = InMemorySessionService()
+
+def _build_adk_session_service():
+    if not settings.USE_AGENT_ENGINE_SESSIONS:
+        return InMemorySessionService()
+
+    try:
+        from google.adk.sessions import VertexAiSessionService
+
+        ae = get_agent_engine_service()
+        agent_engine_id = ae.get_reasoning_engine_id()
+        return VertexAiSessionService(
+            project=settings.GOOGLE_CLOUD_PROJECT,
+            location=settings.GOOGLE_CLOUD_LOCATION,
+            agent_engine_id=agent_engine_id,
+        )
+    except Exception:
+        logger.warning("vertex_ai_session_service_init_failed_fallback_in_memory", exc_info=True)
+        return InMemorySessionService()
+
+
+_adk_session_service = _build_adk_session_service()
 _runner: Runner | None = None
 APP_NAME = "omni-hub"
 
@@ -369,6 +392,11 @@ async def ws_live(websocket: WebSocket) -> None:
         logger.exception("ws_live_error", user_id=user.uid)
     finally:
         # Phase 4 — Cleanup
+        try:
+            await get_memory_service().sync_from_session(user.uid, session_id)
+        except Exception:
+            logger.warning("memory_bank_sync_failed", user_id=user.uid, session_id=session_id, exc_info=True)
+
         queue.close()
         await mgr.disconnect(user.uid, ClientType.WEB)
         logger.info("ws_live_closed", user_id=user.uid, session_id=session_id)

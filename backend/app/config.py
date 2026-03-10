@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     GOOGLE_GENAI_USE_VERTEXAI: bool = True
     GOOGLE_API_KEY: str = ""  # Alternative to Vertex AI for local dev
 
+    # --- Vertex AI Agent Engine ---
+    AGENT_ENGINE_NAME: str = ""  # projects/.../locations/.../reasoningEngines/...
+    USE_AGENT_ENGINE_SESSIONS: bool = True
+    USE_AGENT_ENGINE_MEMORY_BANK: bool = True
+    USE_AGENT_ENGINE_CODE_EXECUTION: bool = True
+    AGENT_ENGINE_SESSION_TTL: str = "604800s"  # 7 days
+    AGENT_ENGINE_SANDBOX_TTL: str = "86400s"  # 24 hours
+
     # --- Firebase ---
     FIREBASE_PROJECT_ID: str = ""
     FIREBASE_SERVICE_ACCOUNT: str = ""  # Path to service account JSON

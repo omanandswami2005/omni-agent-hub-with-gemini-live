@@ -46,6 +46,7 @@ def svc(mock_firestore, mock_genai_client):
     service = MemoryService()
     service._firestore = mock_firestore
     service._genai_client = mock_genai_client
+    service._agent_engine = MagicMock(enabled=False)
     return service
 
 
