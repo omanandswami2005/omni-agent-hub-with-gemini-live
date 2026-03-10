@@ -1,5 +1,6 @@
 """FastAPI application factory + lifespan."""
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -28,6 +29,22 @@ async def lifespan(app: FastAPI):
     )
     yield
     logger.info("backend_shutting_down")
+
+    # Cancel any lingering async tasks (e.g. WebSocket handlers)
+    loop = asyncio.get_running_loop()
+    pending = [
+        t for t in asyncio.all_tasks(loop)
+        if t is not asyncio.current_task() and not t.done()
+    ]
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    # Shut down the default thread-pool executor to prevent the
+    # KeyboardInterrupt hang caused by orphaned asyncio.to_thread threads
+    # (e.g. Google GenAI credential loading via concurrent.futures).
+    await loop.shutdown_default_executor()
 
 
 def create_app() -> FastAPI:

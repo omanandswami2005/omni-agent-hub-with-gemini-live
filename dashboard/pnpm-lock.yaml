@@ -75,6 +75,9 @@ importers:
       globals:
         specifier: ^15.0.0
         version: 15.15.0
+      picomatch:
+        specifier: ^4.0.3
+        version: 4.0.3
       prettier:
         specifier: ^3.4.0
         version: 3.8.1

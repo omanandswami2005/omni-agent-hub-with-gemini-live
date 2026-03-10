@@ -432,6 +432,8 @@ async def ws_live(websocket: WebSocket) -> None:
             _downstream(websocket, runner, user.uid, session_id, queue, run_config),
             return_exceptions=True,
         )
+    except asyncio.CancelledError:
+        logger.info("ws_live_cancelled", user_id=user.uid)
     except Exception:
         logger.exception("ws_live_error", user_id=user.uid)
     finally:
