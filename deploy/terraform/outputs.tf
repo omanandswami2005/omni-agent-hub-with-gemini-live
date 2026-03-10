@@ -15,7 +15,7 @@ output "storage_bucket" {
 
 output "service_account_email" {
   description = "Backend service account email"
-  value       = "${var.project_id}@${var.project_id}.iam.gserviceaccount.com"
+  value       = google_service_account.backend.email
 }
 
 output "firestore_database" {
@@ -26,4 +26,9 @@ output "firestore_database" {
 output "gcp_services_count" {
   description = "Number of GCP APIs enabled (for judging visibility)"
   value       = length(local.required_apis)
+}
+
+output "hosting_url" {
+  description = "Firebase Hosting URL for the dashboard"
+  value       = "https://${google_firebase_hosting_site.dashboard.site_id}.web.app"
 }

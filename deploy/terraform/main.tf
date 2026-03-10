@@ -55,7 +55,7 @@ resource "google_cloud_run_v2_service" "backend" {
 
   template {
     containers {
-      image = "${var.region}-docker.pkg.dev/${var.project_id}/omni/backend:latest"
+      image = "${var.region}-docker.pkg.dev/${var.project_id}/omni/backend:${var.image_tag}"
 
       ports {
         container_port = 8080
@@ -84,7 +84,7 @@ resource "google_cloud_run_v2_service" "backend" {
       resources {
         limits = {
           cpu    = "2"
-          memory = "1Gi"
+          memory = "2Gi"
         }
       }
     }
@@ -95,6 +95,8 @@ resource "google_cloud_run_v2_service" "backend" {
     }
 
     session_affinity = true # Important for WebSocket connections
+
+    service_account = google_service_account.backend.email
   }
 
   traffic {
@@ -210,4 +212,65 @@ resource "google_monitoring_alert_policy" "high_latency" {
   }
 
   depends_on = [google_project_service.apis]
+}
+
+# --- Service Account & IAM Bindings ---
+resource "google_service_account" "backend" {
+  account_id   = "omni-backend"
+  display_name = "Omni Backend Service Account"
+}
+
+resource "google_project_iam_member" "backend_firestore" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.backend.email}"
+}
+
+resource "google_project_iam_member" "backend_storage" {
+  project = var.project_id
+  role    = "roles/storage.objectAdmin"
+  member  = "serviceAccount:${google_service_account.backend.email}"
+}
+
+resource "google_project_iam_member" "backend_secrets" {
+  project = var.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.backend.email}"
+}
+
+resource "google_project_iam_member" "backend_vertex" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.backend.email}"
+}
+
+resource "google_project_iam_member" "backend_firebase" {
+  project = var.project_id
+  role    = "roles/firebase.admin"
+  member  = "serviceAccount:${google_service_account.backend.email}"
+}
+
+resource "google_project_iam_member" "backend_logging" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.backend.email}"
+}
+
+resource "google_project_iam_member" "backend_tracing" {
+  project = var.project_id
+  role    = "roles/cloudtrace.agent"
+  member  = "serviceAccount:${google_service_account.backend.email}"
+}
+
+# --- Firebase Hosting (Dashboard SPA) ---
+resource "google_firebase_hosting_site" "dashboard" {
+  provider = google-beta
+  project  = var.project_id
+  site_id  = "${var.project_id}-dashboard"
+}
+
+resource "google_firebase_hosting_channel" "live" {
+  provider   = google-beta
+  site_id    = google_firebase_hosting_site.dashboard.site_id
+  channel_id = "live"
 }

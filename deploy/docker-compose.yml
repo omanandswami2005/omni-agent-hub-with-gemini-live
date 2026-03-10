@@ -1,7 +1,7 @@
 # Omni — Local Development Docker Compose
 #
 # Usage: docker compose up
-# Runs backend API with hot-reload, accessible at localhost:8080
+# Runs backend API + dashboard + Firestore emulator
 
 services:
   backend:
@@ -14,15 +14,52 @@ services:
       - ../.env
     environment:
       - ENVIRONMENT=development
+      - FIRESTORE_EMULATOR_HOST=firestore:8086
     volumes:
       - ../backend/app:/app/app:ro # Mount for hot-reload
+    depends_on:
+      firestore:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
+    networks:
+      - omni
 
-  # Dashboard dev server (optional — usually run via `npm run dev`)
-  # dashboard:
-  #   build:
-  #     context: ../dashboard
-  #   ports:
-  #     - "5173:5173"
-  #   volumes:
-  #     - ../dashboard/src:/app/src:ro
+  dashboard:
+    build:
+      context: ../dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - omni
+
+  firestore:
+    image: google/cloud-sdk:slim
+    command: >
+      gcloud emulators firestore start
+      --host-port=0.0.0.0:8086
+      --project=omni-local
+    ports:
+      - "8086:8086"
+    restart: unless-stopped
+    networks:
+      - omni
+
+networks:
+  omni:
+    driver: bridge

@@ -10,6 +10,20 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    target: "es2022",
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "react-router"],
+          "vendor-firebase": ["firebase/app", "firebase/auth", "firebase/firestore"],
+          "vendor-ui": ["recharts", "react-markdown", "remark-gfm", "cmdk", "sonner"],
+          "vendor-state": ["zustand", "clsx", "tailwind-merge", "date-fns"],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 200,
+  },
   server: {
     port: 5173,
     proxy: {

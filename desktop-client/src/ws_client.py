@@ -1,45 +1,167 @@
-"""WebSocket client for desktop-to-server communication."""
+"""WebSocket client for desktop-to-server communication.
 
-# TODO: Implement:
-#   - Raw WebSocket connection using `websockets` library
-#   - Auth via token query param (same as dashboard)
-#   - Binary audio frames (sounddevice capture → 16kHz PCM)
-#   - JSON control messages (capabilities registration, cross-client actions)
-#   - Exponential backoff reconnection
-#   - Heartbeat/ping-pong
-#   - Handle incoming CrossClientMessage actions (screenshot, click, type, etc.)
+Connects to the Omni backend via raw WebSocket, authenticates with a
+Firebase token, and dispatches incoming cross-client actions to the
+appropriate handler (screenshot, click, type, file ops, etc.).
+"""
+
+from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from typing import Any, Callable, Coroutine
+from urllib.parse import urlencode
+
+import websockets
+from websockets.asyncio.client import ClientConnection
 
 logger = logging.getLogger(__name__)
+
+# Reconnection backoff
+_INITIAL_BACKOFF = 1.0
+_MAX_BACKOFF = 30.0
+_BACKOFF_FACTOR = 2.0
 
 
 class DesktopWSClient:
     """Raw WebSocket client for Omni server connection."""
 
-    def __init__(self, server_url: str, token: str):
+    def __init__(self, server_url: str, token: str) -> None:
         self.server_url = server_url
         self.token = token
-        self.ws = None
+        self.ws: ClientConnection | None = None
+        self.connected: bool = False
+        self._should_run: bool = False
+        self._handlers: dict[str, Callable[..., Coroutine[Any, Any, Any]]] = {}
+
+    # ── Public API ────────────────────────────────────────────────────
+
+    def register_handler(
+        self,
+        action: str,
+        handler: Callable[..., Coroutine[Any, Any, Any]],
+    ) -> None:
+        """Register an async handler for a cross-client action name."""
+        self._handlers[action] = handler
+
+    async def connect(self) -> None:
+        """Establish WebSocket connection with auth token as query param."""
+        params = urlencode({"token": self.token, "client_type": "desktop"})
+        url = f"{self.server_url}?{params}"
+        self.ws = await websockets.connect(url, max_size=10 * 1024 * 1024)
+        self.connected = True
+        logger.info("Connected to %s", self.server_url)
+
+        # Register capabilities
+        await self.send_json({
+            "type": "register",
+            "client_type": "desktop",
+            "capabilities": [
+                "capture_screen",
+                "click",
+                "type_text",
+                "hotkey",
+                "scroll",
+                "open_app",
+                "read_file",
+                "write_file",
+                "list_directory",
+            ],
+        })
+
+    async def run(self) -> None:
+        """Connect and listen with auto-reconnect on failure."""
+        self._should_run = True
+        backoff = _INITIAL_BACKOFF
+
+        while self._should_run:
+            try:
+                await self.connect()
+                backoff = _INITIAL_BACKOFF  # reset on success
+                await self._listen()
+            except (
+                websockets.ConnectionClosed,
+                OSError,
+                ConnectionRefusedError,
+            ) as exc:
+                self.connected = False
+                self.ws = None
+                if not self._should_run:
+                    break
+                logger.warning(
+                    "Connection lost (%s). Reconnecting in %.1fs…",
+                    exc,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * _BACKOFF_FACTOR, _MAX_BACKOFF)
+
+    async def send_audio(self, pcm_data: bytes) -> None:
+        """Send raw PCM16 audio as a binary frame."""
+        if self.ws and self.connected:
+            await self.ws.send(pcm_data)
+
+    async def send_json(self, message: dict) -> None:
+        """Send a JSON control message as a text frame."""
+        if self.ws and self.connected:
+            await self.ws.send(json.dumps(message))
+
+    async def send_response(self, action: str, result: Any) -> None:
+        """Send an action response back to the server."""
+        await self.send_json({
+            "type": "action_response",
+            "action": action,
+            "result": result,
+        })
+
+    async def disconnect(self) -> None:
+        """Gracefully close connection and stop reconnection."""
+        self._should_run = False
         self.connected = False
+        if self.ws:
+            await self.ws.close()
+            self.ws = None
+        logger.info("Disconnected from server")
 
-    async def connect(self):
-        """Establish WebSocket connection with auth."""
-        pass
+    # ── Internal ──────────────────────────────────────────────────────
 
-    async def send_audio(self, pcm_data: bytes):
-        """Send raw PCM16 audio as binary frame."""
-        pass
-
-    async def send_json(self, message: dict):
-        """Send JSON control message as text frame."""
-        pass
-
-    async def listen(self):
+    async def _listen(self) -> None:
         """Listen for incoming messages and dispatch to handlers."""
-        pass
+        if not self.ws:
+            return
+        async for raw in self.ws:
+            if isinstance(raw, bytes):
+                # Binary frame — audio playback data; ignore for now
+                continue
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.warning("Received non-JSON text frame")
+                continue
+            await self._dispatch(msg)
 
-    async def disconnect(self):
-        """Gracefully close connection."""
-        pass
+    async def _dispatch(self, msg: dict) -> None:
+        """Route an incoming message to the appropriate handler."""
+        msg_type = msg.get("type", "")
+
+        if msg_type == "cross_client_action":
+            action = msg.get("action", "")
+            payload = msg.get("payload", {})
+            handler = self._handlers.get(action)
+            if handler:
+                try:
+                    result = await handler(**payload) if payload else await handler()
+                    await self.send_response(action, result)
+                except Exception as exc:
+                    logger.error("Handler error for %s: %s", action, exc)
+                    await self.send_response(action, {"error": str(exc)})
+            else:
+                logger.warning("No handler for action: %s", action)
+                await self.send_response(action, {"error": f"Unknown action: {action}"})
+
+        elif msg_type == "ping":
+            await self.send_json({"type": "pong"})
+
+        else:
+            logger.debug("Unhandled message type: %s", msg_type)

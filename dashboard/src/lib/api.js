@@ -1,22 +1,42 @@
 /**
  * REST API client for backend HTTP endpoints.
+ * Auto-attaches Firebase auth token, handles 401 refresh + retry and 429 rate limits.
  */
+
+import { useAuthStore } from '@/stores/authStore';
+import { auth } from '@/lib/firebase';
 
 const BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 async function request(path, options = {}) {
-    const { token, ...fetchOptions } = options;
+    const { token: explicitToken, ...fetchOptions } = options;
+    const token = explicitToken || useAuthStore.getState().token;
     const headers = {
         'Content-Type': 'application/json',
         ...(token && { Authorization: `Bearer ${token}` }),
         ...options.headers,
     };
 
-    const res = await fetch(`${BASE_URL}${path}`, { ...fetchOptions, headers });
+    let res = await fetch(`${BASE_URL}${path}`, { ...fetchOptions, headers });
+
+    // 401 — try refreshing the token once and retry
+    if (res.status === 401 && auth.currentUser) {
+        const freshToken = await auth.currentUser.getIdToken(true);
+        useAuthStore.getState().setUser(auth.currentUser, freshToken);
+        headers.Authorization = `Bearer ${freshToken}`;
+        res = await fetch(`${BASE_URL}${path}`, { ...fetchOptions, headers });
+    }
+
+    if (res.status === 429) {
+        throw new Error('Rate limited — please slow down and try again.');
+    }
+
     if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || `API error ${res.status}`);
     }
+
+    if (res.status === 204) return null;
     return res.json();
 }
 

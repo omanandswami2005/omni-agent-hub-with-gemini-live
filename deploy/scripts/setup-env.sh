@@ -5,35 +5,40 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="${SCRIPT_DIR}/../.."
+
 echo "=== Setting up Omni development environment ==="
 
 # Backend
 echo "--- Backend (Python) ---"
-cd ../backend
+cd "${ROOT_DIR}/backend"
 if command -v uv &> /dev/null; then
   uv sync
 else
   echo "Install uv first: curl -LsSf https://astral.sh/uv/install.sh | sh"
   exit 1
 fi
-cd ..
 
 # Dashboard
 echo "--- Dashboard (Node.js) ---"
-cd ../dashboard
-npm install
-cd ..
+cd "${ROOT_DIR}/dashboard"
+if command -v pnpm &> /dev/null; then
+  pnpm install
+else
+  echo "Install pnpm first: npm install -g pnpm"
+  exit 1
+fi
 
 # Desktop client
 echo "--- Desktop Client (Python) ---"
-cd ../desktop-client
+cd "${ROOT_DIR}/desktop-client"
 uv sync
-cd ..
 
 # Environment file
-if [ ! -f ../.env ]; then
+if [ ! -f "${ROOT_DIR}/.env" ]; then
   echo "--- Creating .env from .env.example ---"
-  cp ../.env.example ../.env
+  cp "${ROOT_DIR}/.env.example" "${ROOT_DIR}/.env"
   echo "⚠️  Edit .env with your actual values"
 fi
 
