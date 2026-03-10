@@ -1,31 +1,56 @@
-"""Application settings — loaded from environment variables."""
+"""Application settings — loaded from environment variables via Pydantic Settings."""
 
-from pydantic_settings import BaseSettings
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    APP_NAME: str = "omni-agent-hub"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
 
-    # Google Cloud
+    # --- Application ---
+    APP_NAME: str = "omni-agent-hub"
+    APP_VERSION: str = "0.1.0"
+    ENVIRONMENT: str = "development"  # development | staging | production
+    BACKEND_PORT: int = 8000
+    LOG_LEVEL: str = "INFO"
+
+    # --- Google Cloud / Vertex AI ---
     GOOGLE_CLOUD_PROJECT: str = ""
     GOOGLE_CLOUD_LOCATION: str = "us-central1"
     GOOGLE_GENAI_USE_VERTEXAI: bool = True
+    GOOGLE_API_KEY: str = ""  # Alternative to Vertex AI for local dev
 
-    # Firebase
+    # --- Firebase ---
     FIREBASE_PROJECT_ID: str = ""
+    FIREBASE_SERVICE_ACCOUNT: str = ""  # Path to service account JSON
 
-    # E2B
+    # --- E2B Sandbox ---
     E2B_API_KEY: str = ""
 
-    # App
-    BACKEND_PORT: int = 8000
-    FRONTEND_URL: str = "http://localhost:5173"
+    # --- CORS ---
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
 
-    # GCS
+    # --- GCS (Cloud Storage) ---
     GCS_BUCKET_NAME: str = "omni-artifacts"
 
-    model_config = {"env_file": ".env", "extra": "ignore"}
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT == "production"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
 
-settings = Settings()
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()

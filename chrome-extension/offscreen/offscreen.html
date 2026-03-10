@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Omni Offscreen</title>
+</head>
+<body>
+  <!-- Offscreen document for audio capture/playback.
+       Chrome Manifest V3 service workers cannot access MediaStream APIs,
+       so audio must be handled in an offscreen document. -->
+  <script src="offscreen.js"></script>
+</body>
+</html>

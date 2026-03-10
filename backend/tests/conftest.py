@@ -1,6 +1,13 @@
-"""Pytest fixtures — mock Firebase, mock ADK, test client."""
+"""Pytest fixtures — FastAPI test client, mock Firebase, mock ADK."""
 
-# TODO: Add fixtures:
-#   - mock_firebase_auth → skip token verification
-#   - mock_adk_runner → fake ADK responses
-#   - test_client → FastAPI TestClient
+import pytest
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+
+@pytest.fixture
+def client():
+    """Synchronous test client for FastAPI."""
+    with TestClient(app) as c:
+        yield c

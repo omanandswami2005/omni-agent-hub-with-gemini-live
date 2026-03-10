@@ -1,0 +1,28 @@
+# Omni — Local Development Docker Compose
+#
+# Usage: docker compose up
+# Runs backend API with hot-reload, accessible at localhost:8080
+
+services:
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - ../.env
+    environment:
+      - ENVIRONMENT=development
+    volumes:
+      - ../backend/app:/app/app:ro # Mount for hot-reload
+    restart: unless-stopped
+
+  # Dashboard dev server (optional — usually run via `npm run dev`)
+  # dashboard:
+  #   build:
+  #     context: ../dashboard
+  #   ports:
+  #     - "5173:5173"
+  #   volumes:
+  #     - ../dashboard/src:/app/src:ro

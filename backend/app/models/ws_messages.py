@@ -2,70 +2,180 @@
 
 Client ↔ Server message contracts. Frontend mocks these during development.
 Binary frames (audio) are NOT represented here — they bypass JSON parsing.
+
+Discriminated union ``WSMessage`` lets callers parse any JSON frame into the
+correct Pydantic model automatically via ``WSMessage.model_validate_json(raw)``.
 """
 
-from pydantic import BaseModel
+from __future__ import annotations
+
+from enum import StrEnum
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field
+
+# ── Enums ─────────────────────────────────────────────────────────────
 
 
-# === Client → Server ===
+class AgentState(StrEnum):
+    """Server-side agent status."""
+
+    IDLE = "idle"
+    LISTENING = "listening"
+    PROCESSING = "processing"
+    SPEAKING = "speaking"
+    ERROR = "error"
+
+
+class ContentType(StrEnum):
+    """Payload kind inside an ``AgentResponse``."""
+
+    TEXT = "text"
+    AUDIO = "audio"
+    GENUI = "genui"
+    TRANSCRIPTION = "transcription"
+
+
+class TranscriptionDirection(StrEnum):
+    INPUT = "input"
+    OUTPUT = "output"
+
+
+class ToolStatus(StrEnum):
+    STARTED = "started"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+# ── Client → Server ──────────────────────────────────────────────────
+
 
 class AuthMessage(BaseModel):
-    type: str = "auth"
+    """First message the client must send after WS connect."""
+
+    type: Literal["auth"] = "auth"
     token: str
 
 
 class TextMessage(BaseModel):
-    type: str = "text"
+    type: Literal["text"] = "text"
     content: str
 
 
 class ImageMessage(BaseModel):
-    type: str = "image"
-    data: str  # base64 JPEG
+    type: Literal["image"] = "image"
+    data_base64: str
     mime_type: str = "image/jpeg"
 
 
+class PersonaSwitchMessage(BaseModel):
+    type: Literal["persona_switch"] = "persona_switch"
+    persona_id: str
+
+
+class MCPToggleMessage(BaseModel):
+    type: Literal["mcp_toggle"] = "mcp_toggle"
+    mcp_id: str
+    enabled: bool
+
+
 class ControlMessage(BaseModel):
-    type: str = "control"
-    action: str  # switch_persona, start_voice, stop_voice
-    persona_id: str = ""
+    """Generic control envelope (start/stop voice, etc.)."""
+
+    type: Literal["control"] = "control"
+    action: str
+    payload: dict | None = None
 
 
-# === Server → Client ===
+# ── Server → Client ──────────────────────────────────────────────────
 
-class ResponseMessage(BaseModel):
-    type: str = "response"
-    content: str
-    genui: dict | None = None  # Optional GenUI component data
+
+class AuthResponse(BaseModel):
+    type: Literal["auth_response"] = "auth_response"
+    status: str  # "ok" | "error"
+    user_id: str = ""
+    session_id: str = ""
+    error: str = ""
+
+
+class AgentResponse(BaseModel):
+    """Text / GenUI payload from the agent."""
+
+    type: Literal["response"] = "response"
+    content_type: ContentType = ContentType.TEXT
+    data: str = ""
+    genui: dict | None = None
 
 
 class TranscriptionMessage(BaseModel):
-    type: str = "transcription"
-    direction: str  # "input" | "output"
+    type: Literal["transcription"] = "transcription"
+    direction: TranscriptionDirection
     text: str
-    finished: bool
+    finished: bool = False
 
 
-class StatusMessage(BaseModel):
-    type: str = "status"
-    state: str  # idle, listening, processing, speaking, error
-    detail: str = ""
+class ToolCallMessage(BaseModel):
+    type: Literal["tool_call"] = "tool_call"
+    tool_name: str
+    arguments: dict = {}
+    status: ToolStatus = ToolStatus.STARTED
 
 
-class ToolMessage(BaseModel):
-    type: str  # "tool_start" | "tool_end"
-    tool: str
+class ToolResponseMessage(BaseModel):
+    type: Literal["tool_response"] = "tool_response"
+    tool_name: str
+    result: str = ""
     success: bool = True
 
 
+class ErrorMessage(BaseModel):
+    type: Literal["error"] = "error"
+    code: str
+    description: str = ""
+
+
+class StatusMessage(BaseModel):
+    type: Literal["status"] = "status"
+    state: AgentState = AgentState.IDLE
+    detail: str = ""
+
+
+class PersonaChangedMessage(BaseModel):
+    type: Literal["persona_changed"] = "persona_changed"
+    persona_id: str
+    persona_name: str = ""
+    voice: str = ""
+
+
+class ConnectedMessage(BaseModel):
+    type: Literal["connected"] = "connected"
+    session_id: str
+    resumed_from: str = ""
+
+
 class CrossClientMessage(BaseModel):
-    type: str = "cross_client"
+    type: Literal["cross_client"] = "cross_client"
     action: str
-    target: str  # "web" | "desktop" | "chrome_ext" | "all"
+    target: str = ""
     data: dict = {}
 
 
-class ErrorMessage(BaseModel):
-    type: str = "error"
-    code: str
-    message: str
+# ── Discriminated Union ──────────────────────────────────────────────
+
+ClientMessage = Annotated[
+    AuthMessage | TextMessage | ImageMessage | PersonaSwitchMessage | MCPToggleMessage | ControlMessage,
+    Field(discriminator="type"),
+]
+"""Any JSON frame the **client** may send (excluding binary audio)."""
+
+ServerMessage = Annotated[
+    AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage,
+    Field(discriminator="type"),
+]
+"""Any JSON frame the **server** may send (excluding binary audio)."""
+
+WSMessage = Annotated[
+    AuthMessage | TextMessage | ImageMessage | PersonaSwitchMessage | MCPToggleMessage | ControlMessage | AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage,
+    Field(discriminator="type"),
+]
+"""Parse any WS JSON frame: ``TypeAdapter(WSMessage).validate_json(raw)``."""

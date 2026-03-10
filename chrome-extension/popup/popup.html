@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Omni</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="header">
+      <h1>Omni</h1>
+      <span id="status-dot" class="status-dot offline"></span>
+    </header>
+    <main class="main">
+      <div id="transcript" class="transcript"></div>
+      <button id="voice-btn" class="voice-btn" title="Hold to talk">
+        <span class="orb"></span>
+      </button>
+    </main>
+    <footer class="footer">
+      <input id="text-input" type="text" placeholder="Type a message..." />
+      <button id="send-btn" class="send-btn">→</button>
+    </footer>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
