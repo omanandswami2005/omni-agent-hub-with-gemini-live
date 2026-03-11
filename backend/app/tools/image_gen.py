@@ -74,6 +74,10 @@ def _get_client() -> genai.Client:
 
 IMAGEN_MODEL = "imagen-4.0-generate-001"
 GEMINI_IMAGE_MODEL = "gemini-2.0-flash-preview-image-generation"
+# Nano Banana 2 — best interleaved TEXT+IMAGE model.  Supports thinking,
+# 4K output, and Google Search grounding.  Fall back to the legacy model
+# above if the preview is unavailable in your region.
+GEMINI_IMAGE_MODEL_V2 = "gemini-2.5-flash-preview-image-generation"
 
 
 async def generate_image(
@@ -175,7 +179,7 @@ async def generate_rich_image(
     """
     client = _get_client()
     response = client.models.generate_content(
-        model=GEMINI_IMAGE_MODEL,
+        model=GEMINI_IMAGE_MODEL_V2,
         contents=[prompt],
         config=types.GenerateContentConfig(
             response_modalities=["TEXT", "IMAGE"],
@@ -220,7 +224,7 @@ async def generate_rich_image(
 
     logger.info(
         "rich_image_generated",
-        model=GEMINI_IMAGE_MODEL,
+        model=GEMINI_IMAGE_MODEL_V2,
         prompt=prompt[:80],
         image_count=len(images),
     )

@@ -72,6 +72,7 @@ def _default_tools_for_persona(persona_id: str) -> list:
 def create_agent(
     persona: PersonaResponse,
     extra_tools: list | None = None,
+    model: str | None = None,
 ) -> Agent:
     """Build an ADK ``Agent`` from a persona configuration.
 
@@ -82,6 +83,8 @@ def create_agent(
         ``voice``, and ``system_instruction``.
     extra_tools:
         Additional tools to include (e.g., MCP tools from get_mcp_manager().get_tools()).
+    model:
+        Override the default model. Defaults to ``LIVE_MODEL``.
 
     Returns
     -------
@@ -94,7 +97,7 @@ def create_agent(
 
     agent = Agent(
         name=persona.id,
-        model=LIVE_MODEL,
+        model=model or LIVE_MODEL,
         instruction=persona.system_instruction or f"You are {persona.name}.",
         tools=tools,
     )

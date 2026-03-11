@@ -8,6 +8,7 @@ import { createLiveConnection, sendBinaryAudio, sendJsonMessage, parseServerMess
 import { auth } from '@/lib/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { useChatStore } from '@/stores/chatStore';
+import { useClientStore } from '@/stores/clientStore';
 
 export function useWebSocket() {
   const wsRef = useRef(null);
@@ -133,6 +134,9 @@ export function useWebSocket() {
           if (msg.status === 'ok') {
             setIsConnected(true);
           }
+          break;
+        case 'client_status_update':
+          useClientStore.getState().setClients(msg.clients);
           break;
         default:
           break;

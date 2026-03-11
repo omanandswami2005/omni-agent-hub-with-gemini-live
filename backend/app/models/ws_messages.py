@@ -214,6 +214,13 @@ class CrossClientMessage(BaseModel):
     data: dict = {}
 
 
+class ClientStatusUpdateMessage(BaseModel):
+    type: Literal["client_status_update"] = "client_status_update"
+    clients: list[dict] = []
+    event: str = ""  # "connected" or "disconnected"
+    client_type: str = ""
+
+
 # ── Discriminated Union ──────────────────────────────────────────────
 
 ClientMessage = Annotated[
@@ -223,13 +230,13 @@ ClientMessage = Annotated[
 """Any JSON frame the **client** may send (excluding binary audio)."""
 
 ServerMessage = Annotated[
-    AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ImageResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage,
+    AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ImageResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage | ClientStatusUpdateMessage,
     Field(discriminator="type"),
 ]
 """Any JSON frame the **server** may send (excluding binary audio)."""
 
 WSMessage = Annotated[
-    AuthMessage | TextMessage | ImageMessage | PersonaSwitchMessage | MCPToggleMessage | ControlMessage | AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ImageResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage,
+    AuthMessage | TextMessage | ImageMessage | PersonaSwitchMessage | MCPToggleMessage | ControlMessage | AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ImageResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage | ClientStatusUpdateMessage,
     Field(discriminator="type"),
 ]
 """Parse any WS JSON frame: ``TypeAdapter(WSMessage).validate_json(raw)``."""

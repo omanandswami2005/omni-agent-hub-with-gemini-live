@@ -9,16 +9,11 @@ import { useClientStore } from '@/stores/clientStore';
 
 export default function ClientsPage() {
   useDocumentTitle('Connected Clients');
-  const { clients, loading, fetchClients, watchClients, stopWatching } = useClientStore();
+  const { clients, loading, fetchClients } = useClientStore();
 
   useEffect(() => {
     fetchClients();
-    const unsub = watchClients();
-    return () => {
-      unsub?.();
-      stopWatching();
-    };
-  }, [fetchClients, watchClients, stopWatching]);
+  }, [fetchClients]);
 
   return (
     <div className="space-y-6">

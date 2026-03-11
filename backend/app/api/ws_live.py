@@ -16,6 +16,7 @@ Lifecycle
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import time
 import warnings
@@ -176,6 +177,58 @@ async def _get_runner(user_id: str, session_service=None):
 def invalidate_runner(user_id: str) -> None:
     """Remove a cached runner for *user_id* (e.g. after MCP toggle)."""
     _runner_cache.pop(user_id, None)
+    _chat_runner_cache.pop(user_id, None)
+
+
+def _make_session_id(user_id: str) -> str:
+    """Return a Vertex-AI-safe session ID for *user_id*.
+
+    Vertex AI Agent Engine session IDs must be lowercase alphanumeric + hyphens
+    only.  Firebase UIDs are alphanumeric (mixed case) so we lowercase them and
+    append a fixed suffix with hyphens instead of underscores.
+    """
+    safe_uid = user_id.lower()
+    return f"{safe_uid}-main"
+
+
+# ── Chat Runner pool — uses TEXT_MODEL for generateContent ────────────
+
+_chat_runner_cache: dict[str, tuple["Runner", frozenset[str], float]] = {}
+
+
+async def _get_chat_runner(user_id: str, session_service=None):
+    """Return a Runner using TEXT_MODEL for the chat (non-live) endpoint."""
+    from google.adk.runners import Runner
+    from app.agents.root_agent import build_root_agent
+    from app.agents.agent_factory import TEXT_MODEL
+
+    ss = session_service or _get_session_service()
+
+    mcp_mgr = get_mcp_manager()
+    enabled_ids = frozenset(mcp_mgr.get_enabled_ids(user_id))
+
+    cached = _chat_runner_cache.get(user_id)
+    if cached is not None:
+        runner, cached_ids, ts = cached
+        if time.monotonic() - ts < _RUNNER_TTL and cached_ids == enabled_ids:
+            return runner
+        _chat_runner_cache.pop(user_id, None)
+
+    mcp_tools: list = []
+    try:
+        mcp_tools = await mcp_mgr.get_tools(user_id)
+    except Exception:
+        logger.warning("mcp_tools_load_failed", user_id=user_id, exc_info=True)
+
+    root = build_root_agent(mcp_tools=mcp_tools, model=TEXT_MODEL)
+    runner = Runner(
+        app_name=APP_NAME,
+        agent=root,
+        session_service=ss,
+    )
+    _chat_runner_cache[user_id] = (runner, enabled_ids, time.monotonic())
+    logger.debug("chat_runner_cached", user_id=user_id, model=TEXT_MODEL, mcp_count=len(mcp_tools))
+    return runner
 
 
 def _build_run_config(voice: str = "Aoede"):
@@ -263,8 +316,10 @@ async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, Cli
 
 async def _send_auth_error(websocket: WebSocket, error: str) -> None:
     msg = AuthResponse(status="error", error=error)
-    await websocket.send_text(msg.model_dump_json())
-    await websocket.close(code=4003, reason=error)
+    with contextlib.suppress(Exception):
+        await websocket.send_text(msg.model_dump_json())
+    with contextlib.suppress(Exception):
+        await websocket.close(code=4003, reason=error)
 
 
 # ── Upstream (client → ADK) ──────────────────────────────────────────
@@ -518,7 +573,7 @@ async def ws_live(websocket: WebSocket) -> None:
     
     # Use a unified session ID for cross-device continuity
     # All devices share the same session for this user
-    session_id = f"{user.uid}_main"
+    session_id = _make_session_id(user.uid)
 
     # Ensure ADK session exists — no silent fallback; misconfiguration must surface
     active_session_service = _get_session_service()
@@ -625,7 +680,7 @@ async def ws_chat(websocket: WebSocket) -> None:
         return
     user, client_type, os_name = auth_result
 
-    session_id = f"{user.uid}_main"
+    session_id = _make_session_id(user.uid)
     active_session_service = _get_session_service()
     session = await active_session_service.get_session(
         app_name=APP_NAME, user_id=user.uid, session_id=session_id,
@@ -639,7 +694,7 @@ async def ws_chat(websocket: WebSocket) -> None:
     await websocket.send_text(auth_ok.model_dump_json())
 
     bus = get_event_bus()
-    runner = await _get_runner(user.uid, session_service=active_session_service)
+    runner = await _get_chat_runner(user.uid, session_service=active_session_service)
 
     logger.info("ws_chat_connected", user_id=user.uid, session_id=session_id)
 
@@ -660,7 +715,7 @@ async def ws_chat(websocket: WebSocket) -> None:
             )
 
             # Status: thinking
-            thinking_msg = StatusMessage(state=AgentState.THINKING)
+            thinking_msg = StatusMessage(state=AgentState.PROCESSING)
             await websocket.send_text(thinking_msg.model_dump_json())
 
             try:
@@ -670,6 +725,9 @@ async def ws_chat(websocket: WebSocket) -> None:
                     new_message=content,
                 ):
                     await _process_event(websocket, event, bus, user.uid)
+                # run_async events don't carry turn_complete, so send IDLE explicitly
+                idle_msg = StatusMessage(state=AgentState.IDLE)
+                await websocket.send_text(idle_msg.model_dump_json())
             except Exception:
                 logger.exception("ws_chat_turn_error", user_id=user.uid)
                 err_msg = StatusMessage(state=AgentState.IDLE)

@@ -17,6 +17,8 @@ import contextlib
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import json
+
 from app.models.client import ClientInfo, ClientType
 from app.utils.logging import get_logger
 
@@ -67,6 +69,7 @@ class ConnectionManager:
             )
         user_conns[client_type] = (websocket, datetime.now(UTC), os_name)
         logger.info("client_connected", user_id=user_id, client_type=client_type)
+        await self._broadcast_client_status(user_id, event="connected", changed_client_type=client_type)
 
     async def disconnect(
         self,
@@ -81,6 +84,34 @@ class ConnectionManager:
         if not user_conns:
             self._connections.pop(user_id, None)
         logger.info("client_disconnected", user_id=user_id, client_type=client_type)
+        await self._broadcast_client_status(user_id, event="disconnected", changed_client_type=client_type)
+
+    # ── Status Broadcasting ────────────────────────────────────────────
+
+    async def _broadcast_client_status(
+        self,
+        user_id: str,
+        event: str,
+        changed_client_type: ClientType,
+    ) -> None:
+        """Notify all connected clients of this user about the current client list."""
+        clients = self.get_connected_clients(user_id)
+        payload = json.dumps({
+            "type": "client_status_update",
+            "event": event,
+            "client_type": str(changed_client_type),
+            "clients": [
+                {
+                    "client_type": str(c.client_type),
+                    "client_id": c.client_id,
+                    "connected_at": c.connected_at.isoformat() if c.connected_at else None,
+                    "os_name": c.os_name,
+                    "connected": True,
+                }
+                for c in clients
+            ],
+        })
+        await self.send_to_user(user_id, payload)
 
     # ── Messaging ─────────────────────────────────────────────────────
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from google.adk.agents import Agent
 
-from app.agents.agent_factory import LIVE_MODEL, create_agent
+from app.agents.agent_factory import LIVE_MODEL, TEXT_MODEL, create_agent
 from app.agents.personas import get_default_personas
 from app.models.persona import PersonaResponse
 from app.utils.logging import get_logger
@@ -36,6 +36,7 @@ ROOT_INSTRUCTION = (
 def build_root_agent(
     personas: list[PersonaResponse] | None = None,
     mcp_tools: list | None = None,
+    model: str | None = None,
 ) -> Agent:
     """Construct the root ADK agent with persona sub-agents.
 
@@ -46,21 +47,25 @@ def build_root_agent(
         five built-in defaults when *None*.
     mcp_tools:
         Additional MCP tools to include in the root agent.
+    model:
+        Override the default model for root + sub-agents.
+        Defaults to ``LIVE_MODEL``.
 
     Returns
     -------
     Agent
         A root agent whose ``sub_agents`` are the persona agents.
     """
+    effective_model = model or LIVE_MODEL
     if personas is None:
         personas = get_default_personas()
 
-    sub_agents = [create_agent(p, mcp_tools) for p in personas]
+    sub_agents = [create_agent(p, mcp_tools, model=effective_model) for p in personas]
     names = [a.name for a in sub_agents]
 
     root = Agent(
         name="omni_root",
-        model=LIVE_MODEL,
+        model=effective_model,
         instruction=ROOT_INSTRUCTION,
         sub_agents=sub_agents,
         tools=mcp_tools or [],

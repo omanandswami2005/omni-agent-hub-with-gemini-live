@@ -10,6 +10,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { auth } from '@/lib/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { useChatStore } from '@/stores/chatStore';
+import { useClientStore } from '@/stores/clientStore';
 import { parseServerMessage, reconnectDelay } from '@/lib/ws';
 
 const CHAT_WS_URL =
@@ -117,6 +118,9 @@ export function useChatWebSocket() {
                     break;
                 case 'auth_response':
                     if (msg.status === 'ok') setIsConnected(true);
+                    break;
+                case 'client_status_update':
+                    useClientStore.getState().setClients(msg.clients);
                     break;
                 default:
                     break;
