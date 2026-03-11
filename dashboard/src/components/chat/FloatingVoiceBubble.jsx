@@ -12,6 +12,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { cn } from '@/lib/cn';
 import { useChatStore } from '@/stores/chatStore';
+import { useDraggable } from '@/hooks/useDraggable';
 import {
     Mic,
     MicOff,
@@ -23,6 +24,7 @@ import {
     CameraOff,
     MessageSquare,
     Video,
+    GripVertical,
 } from 'lucide-react';
 
 const ORB_COLORS = {
@@ -60,9 +62,8 @@ export default function FloatingVoiceBubble({
 }) {
     const agentState = useChatStore((s) => s.agentState);
     const [isExpanded, setIsExpanded] = useState(false);
-    const [isDragging, setIsDragging] = useState(false);
+    const { containerRef, posStyle, dragHandleProps } = useDraggable();
     const hoverTimeout = useRef(null);
-    const containerRef = useRef(null);
 
     const state = isRecording ? 'listening' : agentState;
     const volume = state === 'listening' ? captureVolume : state === 'speaking' ? playbackVolume : 0;
@@ -123,35 +124,51 @@ export default function FloatingVoiceBubble({
     return (
         <div
             ref={containerRef}
-            className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3"
+            className="fixed bottom-6 right-6 z-50 flex flex-col items-end"
+            style={posStyle}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
         >
-            {/* Expanded controls panel */}
+            {/* Controls + drag handle — collapsed to zero height when not expanded so
+                the hover bounding box is only as large as the orb itself */}
             <div
                 className={cn(
-                    'flex flex-col items-center gap-2 transition-all duration-300 ease-out',
+                    'flex flex-col items-end overflow-hidden transition-all duration-300 ease-out',
                     isExpanded
-                        ? 'pointer-events-auto translate-y-0 opacity-100'
-                        : 'pointer-events-none translate-y-4 opacity-0',
+                        ? 'max-h-[32rem] opacity-100 pointer-events-auto mb-3'
+                        : 'max-h-0 opacity-0 pointer-events-none mb-0',
                 )}
             >
-                {/* Chat shortcut */}
-                <ControlButton
-                    icon={MessageSquare}
-                    label="Chat"
-                    onClick={onOpenChat}
-                    color="text-primary"
-                    active={false}
-                />
-
-                {/* Divider */}
-                <div className="h-px w-8 bg-border/50" />
+                {/* Drag handle */}
+                <div
+                    {...dragHandleProps}
+                    className={cn(
+                        'mb-1 flex items-center justify-center rounded-full p-1.5',
+                        'bg-background/80 border border-border/40 backdrop-blur-xl shadow',
+                    )}
+                    title="Drag to move"
+                >
+                    <GripVertical size={12} className="text-muted-foreground" />
+                </div>
 
                 {/* Control buttons */}
-                {controls.map((ctrl) => (
-                    <ControlButton key={ctrl.label} {...ctrl} />
-                ))}
+                <div className="flex flex-col items-center gap-2">
+                    {/* Chat shortcut */}
+                    <ControlButton
+                        icon={MessageSquare}
+                        label="Chat"
+                        onClick={onOpenChat}
+                        color="text-primary"
+                        active={false}
+                    />
+
+                    {/* Divider */}
+                    <div className="h-px w-8 bg-border/50" />
+
+                    {controls.map((ctrl) => (
+                        <ControlButton key={ctrl.label} {...ctrl} />
+                    ))}
+                </div>
             </div>
 
             {/* Main orb */}

@@ -36,8 +36,8 @@ class ConnectionManager:
     """In-memory registry of active WebSocket connections with heartbeat."""
 
     def __init__(self) -> None:
-        # { user_id: { client_type: (WebSocket, connected_at) } }
-        self._connections: dict[str, dict[ClientType, tuple[WebSocket, datetime]]] = {}
+        # { user_id: { client_type: (WebSocket, connected_at, os_name) } }
+        self._connections: dict[str, dict[ClientType, tuple[WebSocket, datetime, str]]] = {}
         self._reaper_task: asyncio.Task | None = None
 
     # ── Connect / Disconnect ──────────────────────────────────────────
@@ -47,6 +47,7 @@ class ConnectionManager:
         websocket: WebSocket,
         user_id: str,
         client_type: ClientType = ClientType.WEB,
+        os_name: str = "Unknown",
     ) -> None:
         """Register *websocket* for the given user + device type.
 
@@ -56,7 +57,7 @@ class ConnectionManager:
         user_conns = self._connections.setdefault(user_id, {})
         old = user_conns.get(client_type)
         if old is not None:
-            old_ws, _ = old
+            old_ws, _, _os = old
             with contextlib.suppress(Exception):
                 await old_ws.close(code=4000, reason="Replaced by new connection")
             logger.info(
@@ -64,7 +65,7 @@ class ConnectionManager:
                 user_id=user_id,
                 client_type=client_type,
             )
-        user_conns[client_type] = (websocket, datetime.now(UTC))
+        user_conns[client_type] = (websocket, datetime.now(UTC), os_name)
         logger.info("client_connected", user_id=user_id, client_type=client_type)
 
     async def disconnect(
@@ -87,7 +88,7 @@ class ConnectionManager:
         """Broadcast a JSON text frame to **all** connected clients of a user."""
         user_conns = self._connections.get(user_id, {})
         dead: list[ClientType] = []
-        for ct, (ws, _) in user_conns.items():
+        for ct, (ws, _, _os) in user_conns.items():
             try:
                 await ws.send_text(message)
             except Exception:
@@ -106,7 +107,7 @@ class ConnectionManager:
         entry = user_conns.get(client_type)
         if entry is None:
             return
-        ws, _ = entry
+        ws, _, _os = entry
         try:
             await ws.send_text(message)
         except Exception:
@@ -122,11 +123,12 @@ class ConnectionManager:
             ClientInfo(
                 user_id=user_id,
                 client_type=ct,
-                client_id=f"{user_id}:{ct}",
+                client_id=str(ct),
                 connected_at=connected_at,
                 last_ping=now,
+                os_name=os_name,
             )
-            for ct, (_, connected_at) in user_conns.items()
+            for ct, (_, connected_at, os_name) in user_conns.items()
         ]
 
     def is_online(self, user_id: str, client_type: ClientType | None = None) -> bool:
@@ -182,7 +184,7 @@ class ConnectionManager:
         """Send a WebSocket ping to every connection; disconnect failures."""
         dead: list[tuple[str, ClientType]] = []
         for user_id, user_conns in list(self._connections.items()):
-            for ct, (ws, _) in list(user_conns.items()):
+            for ct, (ws, _, _os) in list(user_conns.items()):
                 try:
                     await asyncio.wait_for(ws.send_text('{"type":"ping"}'), timeout=_PING_TIMEOUT)
                 except Exception:

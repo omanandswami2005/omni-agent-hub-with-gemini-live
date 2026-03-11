@@ -35,8 +35,8 @@ _SEARCH_PERSONA_IDS = {"assistant", "researcher", "analyst"}
 # Persona IDs that get code execution tools
 _CODE_EXEC_PERSONA_IDS = {"coder", "analyst"}
 
-# Persona IDs that get image generation tools
-_IMAGE_GEN_PERSONA_IDS = {"creative", "assistant"}
+# Persona IDs that get image generation tools (all personas can generate images)
+_IMAGE_GEN_PERSONA_IDS = {"creative", "assistant", "researcher", "analyst", "coder"}
 
 # Persona IDs that get RAG document tools
 _RAG_PERSONA_IDS = {"researcher", "analyst"}

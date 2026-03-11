@@ -2,31 +2,39 @@
  * Clients: ClientCard — Individual client connection card.
  */
 
-import { Monitor, Globe, Smartphone, Glasses } from 'lucide-react';
+import { Monitor, Globe, Smartphone, Glasses, Laptop } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
-const TYPE_ICONS = {
-  desktop: Monitor,
-  chrome: Globe,
-  mobile: Smartphone,
-  glasses: Glasses,
+const TYPE_META = {
+  desktop: { icon: Laptop, label: 'Desktop App' },
+  chrome: { icon: Globe, label: 'Chrome Extension' },
+  mobile: { icon: Smartphone, label: 'Mobile' },
+  glasses: { icon: Glasses, label: 'Smart Glasses' },
+  web: { icon: Globe, label: 'Web Browser' },
 };
 
 export default function ClientCard({ client }) {
-  const Icon = TYPE_ICONS[client?.client_type] || Monitor;
-  const connected = client?.connected ?? (client?.last_ping && (Date.now() - new Date(client.last_ping).getTime()) < 60_000);
+  const meta = TYPE_META[client?.client_type] ?? TYPE_META.web;
+  const Icon = meta.icon;
+  const connected = client?.connected ?? true;
   const lastSeen = client?.connected_at
     ? formatDistanceToNow(new Date(client.connected_at), { addSuffix: true })
     : client?.lastSeen || 'Unknown';
+
+  const osLabel = client?.os_name && client.os_name !== 'Unknown' ? client.os_name : null;
 
   return (
     <div className="rounded-lg border border-border p-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Icon className="h-6 w-6 text-muted-foreground" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+            <Icon className="h-5 w-5 text-muted-foreground" />
+          </div>
           <div>
-            <p className="font-medium">{client?.name || client?.client_type || 'Client'}</p>
-            <p className="text-xs text-muted-foreground">{client?.client_id || client?.platform || ''}</p>
+            <p className="font-medium">{meta.label}</p>
+            {osLabel && (
+              <p className="text-xs text-muted-foreground">{osLabel}</p>
+            )}
           </div>
         </div>
         <span

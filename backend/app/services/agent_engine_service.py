@@ -94,8 +94,18 @@ class AgentEngineService:
         return match.group(1)
 
     def build_session_resource_name(self, session_id: str) -> str:
-        short = self._short_reasoning_engine_name()
-        return f"{short}/sessions/{session_id}"
+        """Return the full Vertex AI resource name for a session.
+
+        The ``memories.generate`` API requires the fully-qualified path:
+          projects/{project}/locations/{location}/reasoningEngines/{id}/sessions/{session_id}
+        """
+        engine_id = self.get_reasoning_engine_id()
+        return (
+            f"projects/{self._settings.GOOGLE_CLOUD_PROJECT}"
+            f"/locations/{self._settings.GOOGLE_CLOUD_LOCATION}"
+            f"/reasoningEngines/{engine_id}"
+            f"/sessions/{session_id}"
+        )
 
     async def create_session(self, user_id: str) -> str:
         client = self._get_client()

@@ -9,10 +9,12 @@
 import { useRef, useEffect, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { Camera, Monitor, X, Maximize2, Minimize2 } from 'lucide-react';
+import { useDraggable } from '@/hooks/useDraggable';
 
 export default function MediaPreviewOverlay({ stream, source, onClose }) {
     const videoRef = useRef(null);
     const [isMinimised, setIsMinimised] = useState(false);
+    const { containerRef, posStyle, dragHandleProps } = useDraggable();
 
     // Attach the live MediaStream to the <video> element
     useEffect(() => {
@@ -30,12 +32,14 @@ export default function MediaPreviewOverlay({ stream, source, onClose }) {
 
     return (
         <div
+            ref={containerRef}
             className={cn(
                 'fixed z-50 transition-all duration-300 ease-out',
-                // Position just above the voice bubble
+                // Default position: just above the voice bubble
                 'bottom-24 right-6',
                 isMinimised ? 'h-10 w-40' : 'h-40 w-64 sm:h-48 sm:w-80',
             )}
+            style={posStyle}
         >
             <div
                 className={cn(
@@ -54,8 +58,11 @@ export default function MediaPreviewOverlay({ stream, source, onClose }) {
                     )}
                 />
 
-                {/* Header bar */}
-                <div className="absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/70 to-transparent px-3 py-2">
+                {/* Header bar — also serves as drag handle */}
+                <div
+                    {...dragHandleProps}
+                    className="absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/70 to-transparent px-3 py-2"
+                >
                     <div className="flex items-center gap-1.5 text-xs text-white/80">
                         <SourceIcon size={12} />
                         <span>{label}</span>
@@ -84,9 +91,9 @@ export default function MediaPreviewOverlay({ stream, source, onClose }) {
                     </div>
                 </div>
 
-                {/* Minimised label */}
+                {/* Minimised label — pointer-events-none so the header drag handle stays interactive */}
                 {isMinimised && (
-                    <div className="absolute inset-0 flex items-center justify-center gap-2 text-xs text-white/70">
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 text-xs text-white/70">
                         <SourceIcon size={14} />
                         <span>{label} active</span>
                     </div>

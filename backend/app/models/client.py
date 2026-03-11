@@ -14,6 +14,24 @@ class ClientType(StrEnum):
     GLASSES = "glasses"
 
 
+def detect_os(user_agent: str) -> str:
+    """Return a concise OS label from a User-Agent string."""
+    ua = (user_agent or "").lower()
+    if "android" in ua:
+        return "Android"
+    if "iphone" in ua or "ipad" in ua or "ipod" in ua:
+        return "iOS"
+    if "windows" in ua:
+        return "Windows"
+    if "mac" in ua:
+        return "macOS"
+    if "linux" in ua or "x11" in ua:
+        return "Linux"
+    if "cros" in ua or "chromebook" in ua:
+        return "ChromeOS"
+    return "Unknown"
+
+
 class ClientInfo(BaseModel):
     """A single connected client device."""
 
@@ -22,6 +40,7 @@ class ClientInfo(BaseModel):
     client_id: str = ""
     connected_at: datetime
     last_ping: datetime
+    os_name: str = "Unknown"
 
 
 class ClientStatus(BaseModel):

@@ -10,6 +10,7 @@ import TopBar from '@/components/layout/TopBar';
 import MobileNav from '@/components/layout/MobileNav';
 import FloatingVoiceBubble from '@/components/chat/FloatingVoiceBubble';
 import MediaPreviewOverlay from '@/components/chat/MediaPreviewOverlay';
+import PermissionErrorBanner from '@/components/chat/PermissionErrorBanner';
 import { VoiceProvider, useVoice } from '@/hooks/useVoiceProvider';
 import { useIsMobile } from '@/hooks/useMediaQuery';
 
@@ -36,6 +37,12 @@ function ShellLayout() {
         </main>
       </div>
       {isMobile && <MobileNav />}
+
+      {/* Permission denied / device busy / not-found toast */}
+      <PermissionErrorBanner
+        error={voice.permissionError}
+        onDismiss={voice.clearPermissionError}
+      />
 
       {/* Live camera / screen share PiP preview */}
       {voice.isVideoActive && (

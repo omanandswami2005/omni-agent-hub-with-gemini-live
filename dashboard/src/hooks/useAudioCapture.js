@@ -61,6 +61,7 @@ export function useAudioCapture({ onAudioData } = {}) {
   const ctxRef = useRef(null);
   const workletRef = useRef(null);
   const streamRef = useRef(null);
+  const isMutedRef = useRef(false);
 
   const clearError = useCallback(() => setPermissionError(null), []);
 
@@ -92,7 +93,7 @@ export function useAudioCapture({ onAudioData } = {}) {
           : float32;
         const pcm16 = float32ToPcm16(resampled);
         setVolume(calculateVolume(pcm16));
-        onAudioData?.(pcm16);
+        if (!isMutedRef.current) onAudioData?.(pcm16);
       };
 
       source.connect(worklet);
@@ -111,9 +112,17 @@ export function useAudioCapture({ onAudioData } = {}) {
     workletRef.current = null;
     ctxRef.current = null;
     streamRef.current = null;
+    isMutedRef.current = false;
     setIsRecording(false);
     setVolume(0);
   }, []);
 
-  return { startRecording, stopRecording, isRecording, volume, permissionError, clearError };
+  // Toggle mic track enabled state — suppresses both audio sending and the input volume indicator
+  const setMuted = useCallback((muted) => {
+    isMutedRef.current = muted;
+    streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = !muted; });
+    if (muted) setVolume(0);
+  }, []);
+
+  return { startRecording, stopRecording, isRecording, volume, permissionError, clearError, setMuted };
 }

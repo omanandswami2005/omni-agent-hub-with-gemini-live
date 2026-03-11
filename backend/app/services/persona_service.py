@@ -45,13 +45,13 @@ class PersonaService:
         defaults = get_default_personas()
         query = (
             self.db.collection(COLLECTION)
-            .where("user_id", "==", user_id)
+            .where(filter=firestore.FieldFilter("user_id", "==", user_id))
         )
         user_personas = [
             PersonaResponse(id=snap.id, **snap.to_dict())
             for snap in query.stream()
         ]
-        user_personas.sort(key=lambda p: p.created_at, reverse=True)
+        user_personas.sort(key=lambda p: p.created_at or datetime.min, reverse=True)
         return defaults + user_personas
 
     # ── Get one ───────────────────────────────────────────────────────

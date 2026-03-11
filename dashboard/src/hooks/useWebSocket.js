@@ -48,7 +48,12 @@ export function useWebSocket() {
     ws.onopen = () => {
       attemptRef.current = 0;
       // Send auth handshake as first frame (token NOT in URL for security)
-      sendJsonMessage(ws, { type: 'auth', token: freshToken });
+      // Include platform/OS info so the server can display it in the clients panel
+      sendJsonMessage(ws, {
+        type: 'auth',
+        token: freshToken,
+        user_agent: navigator.userAgent,
+      });
     };
 
     ws.onmessage = (event) => {
@@ -64,7 +69,7 @@ export function useWebSocket() {
             useChatStore.getState().enqueueAudio(buf);
           });
           break;
-        case 'transcript':
+        case 'transcription':
           useChatStore.getState().updateTranscript(msg);
           break;
         case 'response':
@@ -85,6 +90,8 @@ export function useWebSocket() {
           }
           break;
         case 'tool_call':
+          // Skip internal ADK multi-agent routing calls
+          if (msg.tool_name === 'transfer_to_agent') break;
           useChatStore.getState().setToolActive(msg.tool_name, true);
           useChatStore.getState().addMessage({
             role: 'system',
@@ -96,6 +103,8 @@ export function useWebSocket() {
           });
           break;
         case 'tool_response':
+          // Skip internal ADK multi-agent routing responses
+          if (msg.tool_name === 'transfer_to_agent') break;
           useChatStore.getState().setToolActive(msg.tool_name, false);
           useChatStore.getState().addMessage({
             role: 'system',
@@ -103,6 +112,21 @@ export function useWebSocket() {
             content: msg.result || `Tool ${msg.tool_name} completed`,
             tool_name: msg.tool_name,
             success: msg.success,
+          });
+          break;
+        case 'image_response':
+          useChatStore.getState().addMessage({
+            role: 'assistant',
+            type: 'image',
+            tool_name: msg.tool_name,
+            image_base64: msg.image_base64,
+            mime_type: msg.mime_type,
+            image_url: msg.image_url,
+            description: msg.description,
+            images: msg.images,
+            text: msg.text,
+            parts: msg.parts,
+            timestamp: new Date().toISOString(),
           });
           break;
         case 'auth_response':

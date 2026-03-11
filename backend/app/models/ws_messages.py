@@ -142,6 +142,31 @@ class ToolResponseMessage(BaseModel):
     success: bool = True
 
 
+class ImageResponseMessage(BaseModel):
+    """Server → client: an image produced by an image generation tool.
+
+    For ``generate_image`` (Imagen 4): single image via ``image_base64``.
+    For ``generate_rich_image`` (Gemini interleaved): ordered ``parts``
+    list preserving the text↔image interleaving so the dashboard can
+    render an illustrated guide exactly as Gemini produced it.
+    """
+
+    type: Literal["image_response"] = "image_response"
+    tool_name: str = "generate_image"
+    # Single image (generate_image / Imagen 4)
+    image_base64: str = ""
+    mime_type: str = "image/png"
+    image_url: str = ""
+    description: str = ""
+    # Multi-image (generate_rich_image / Gemini interleaved)
+    images: list[dict] = []
+    text: str = ""
+    # Interleaved parts in display order (generate_rich_image)
+    # Each item: {"type": "text", "content": "..."} or
+    #            {"type": "image", "base64": "...", "mime_type": "..."}
+    parts: list[dict] = []
+
+
 class AgentActivityMessage(BaseModel):
     """Real-time agent activity: sub-agent calls, reasoning, MCP invocations.
     
@@ -198,13 +223,13 @@ ClientMessage = Annotated[
 """Any JSON frame the **client** may send (excluding binary audio)."""
 
 ServerMessage = Annotated[
-    AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage,
+    AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ImageResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage,
     Field(discriminator="type"),
 ]
 """Any JSON frame the **server** may send (excluding binary audio)."""
 
 WSMessage = Annotated[
-    AuthMessage | TextMessage | ImageMessage | PersonaSwitchMessage | MCPToggleMessage | ControlMessage | AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage,
+    AuthMessage | TextMessage | ImageMessage | PersonaSwitchMessage | MCPToggleMessage | ControlMessage | AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ImageResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage,
     Field(discriminator="type"),
 ]
 """Parse any WS JSON frame: ``TypeAdapter(WSMessage).validate_json(raw)``."""

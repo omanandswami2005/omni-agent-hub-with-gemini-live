@@ -14,6 +14,7 @@
 
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { useChatWebSocket } from '@/hooks/useChatWebSocket';
 import { useAudioCapture } from '@/hooks/useAudioCapture';
 import { useAudioPlayback } from '@/hooks/useAudioPlayback';
 import { useVideoCapture } from '@/hooks/useVideoCapture';
@@ -22,8 +23,11 @@ import { useKeyboard } from '@/hooks/useKeyboard';
 const VoiceContext = createContext(null);
 
 export function VoiceProvider({ children }) {
-    const { sendText, sendAudio, sendImage, sendControl, isConnected, disconnect } = useWebSocket();
-    const { startRecording, stopRecording, isRecording, volume: captureVolume, permissionError: micError, clearError: clearMicError } = useAudioCapture({
+    const { sendAudio, sendImage, sendControl, isConnected, disconnect } = useWebSocket();
+    // Text chat goes through the dedicated /ws/chat endpoint (ADK runner.run_async)
+    // for reliable responses independent of the live audio session.
+    const { sendText, isConnected: isChatConnected } = useChatWebSocket();
+    const { startRecording, stopRecording, isRecording, volume: captureVolume, permissionError: micError, clearError: clearMicError, setMuted } = useAudioCapture({
         onAudioData: sendAudio,
     });
     const { stopPlayback, volume: playbackVolume } = useAudioPlayback();
@@ -67,8 +71,10 @@ export function VoiceProvider({ children }) {
     }, [isRecording, startRecording, stopRecording, stopPlayback]);
 
     const toggleMute = useCallback(() => {
-        setIsMuted((m) => !m);
-    }, []);
+        const next = !isMuted;
+        setIsMuted(next);
+        setMuted(next);
+    }, [isMuted, setMuted]);
 
     const toggleScreen = useCallback(async () => {
         if (isScreenSharing) {

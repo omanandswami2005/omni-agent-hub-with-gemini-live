@@ -38,7 +38,7 @@ function classifyError(err, src) {
             device: src === 'camera' ? 'camera' : 'microphone',
             title: `${src === 'camera' ? 'Camera' : 'Microphone'} access blocked`,
             message:
-                'You previously blocked access. Click the camera icon in your browser's address bar and choose "Allow", then retry.',
+                'You previously blocked access. Click the camera icon in your browser\u2019s address bar and choose \u201cAllow\u201d, then retry.',
         };
     }
     if (name === 'NotFoundError') {

@@ -43,6 +43,7 @@ from app.models.ws_messages import (
     AuthResponse,
     ConnectedMessage,
     ContentType,
+    ImageResponseMessage,
     StatusMessage,
     ToolCallMessage,
     ToolResponseMessage,
@@ -250,9 +251,14 @@ async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, Cli
     except ValueError:
         client_type = ClientType.WEB
 
+    # Detect OS from user agent sent by the client
+    from app.models.client import detect_os
+    user_agent = data.get("user_agent", "")
+    os_name = detect_os(user_agent)
+
     logger.info("ws_auth_ok", uid=decoded.get("uid"), client=client_type_str)
     
-    return AuthenticatedUser(decoded), client_type
+    return AuthenticatedUser(decoded), client_type, os_name
 
 
 async def _send_auth_error(websocket: WebSocket, error: str) -> None:
@@ -373,8 +379,14 @@ async def _downstream(
             await _process_event(websocket, event, bus, user_id)
     except (WebSocketDisconnect, RuntimeError):
         logger.info("ws_downstream_disconnected", user_id=user_id)
-    except Exception:
-        logger.exception("ws_downstream_error", user_id=user_id)
+    except Exception as exc:
+        # Gemini Live sends code 1000 ("The operation was cancelled") as a normal
+        # graceful session end — treat it as info, not an error.
+        exc_str = str(exc)
+        if "1000" in exc_str and "cancelled" in exc_str.lower():
+            logger.info("ws_downstream_session_ended", user_id=user_id, reason=exc_str)
+        else:
+            logger.exception("ws_downstream_error", user_id=user_id)
 
 
 async def _process_event(
@@ -435,7 +447,25 @@ async def _process_event(
         await websocket.send_text(json_str)
         await _publish(bus, user_id, json_str)
 
+    # ── Tool responses + image delivery ─────────────────────────────
+    #
+    # Image tools (generate_image / generate_rich_image) return TEXT ONLY
+    # to Gemini (saves context tokens).  Actual image data is queued in
+    # ``image_gen._pending_images`` during tool execution and drained here
+    # when we see the corresponding function_response event.
+    #
+    from app.tools.image_gen import IMAGE_TOOL_NAMES, drain_pending_images
+
     for fr in event.get_function_responses():
+        # Drain pending images queued by the tool for this user
+        if fr.name in IMAGE_TOOL_NAMES and user_id:
+            for img_data in drain_pending_images(user_id):
+                img_msg = ImageResponseMessage(**img_data)
+                json_str = img_msg.model_dump_json()
+                await websocket.send_text(json_str)
+                await _publish(bus, user_id, json_str)
+
+        # Always send the tool response (text summary for image tools)
         msg = ToolResponseMessage(
             tool_name=fr.name,
             result=str(fr.response) if fr.response else "",
@@ -476,7 +506,7 @@ async def ws_live(websocket: WebSocket) -> None:
     auth_result = await _authenticate_ws(websocket)
     if auth_result is None:
         return
-    user, client_type = auth_result
+    user, client_type, os_name = auth_result
 
     mgr = get_connection_manager()
     
@@ -484,7 +514,7 @@ async def ws_live(websocket: WebSocket) -> None:
     other_clients = mgr.get_other_clients_online(user.uid, client_type)
     
     # Phase 2 — Register connection + prepare ADK session
-    await mgr.connect(websocket, user.uid, client_type)
+    await mgr.connect(websocket, user.uid, client_type, os_name=os_name)
     
     # Use a unified session ID for cross-device continuity
     # All devices share the same session for this user
@@ -568,3 +598,86 @@ async def ws_live(websocket: WebSocket) -> None:
 
         await mgr.disconnect(user.uid, client_type)
         logger.info("ws_live_closed", user_id=user.uid, session_id=session_id)
+
+
+# ── Text-only chat WebSocket (/ws/chat) ───────────────────────────────────
+#
+# Provides a reliable ADK-powered text chat channel that works even when the
+# Gemini Live audio connection is unavailable or disconnected.
+#
+# Protocol:
+#   1. Client connects and sends Auth frame (same as /ws/live)
+#   2. Client sends: {"type":"text","content":"Hello"}
+#   3. Server responds with AgentResponse JSON frames + tool events
+#   4. Server signals completion with StatusMessage(state=idle)
+#
+
+@router.websocket("/chat")
+async def ws_chat(websocket: WebSocket) -> None:
+    """ADK text-only chat over WebSocket — no audio, no live session required."""
+    from google.adk.runners import Runner
+    from google.genai import types
+
+    await websocket.accept()
+
+    auth_result = await _authenticate_ws(websocket)
+    if auth_result is None:
+        return
+    user, client_type, os_name = auth_result
+
+    session_id = f"{user.uid}_main"
+    active_session_service = _get_session_service()
+    session = await active_session_service.get_session(
+        app_name=APP_NAME, user_id=user.uid, session_id=session_id,
+    )
+    if session is None:
+        await active_session_service.create_session(
+            app_name=APP_NAME, user_id=user.uid, session_id=session_id,
+        )
+
+    auth_ok = AuthResponse(status="ok", user_id=user.uid, session_id=session_id)
+    await websocket.send_text(auth_ok.model_dump_json())
+
+    bus = get_event_bus()
+    runner = await _get_runner(user.uid, session_service=active_session_service)
+
+    logger.info("ws_chat_connected", user_id=user.uid, session_id=session_id)
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            if data.get("type") != "text" or not data.get("content", "").strip():
+                continue
+
+            content = types.Content(
+                parts=[types.Part(text=data["content"])],
+                role="user",
+            )
+
+            # Status: thinking
+            thinking_msg = StatusMessage(state=AgentState.THINKING)
+            await websocket.send_text(thinking_msg.model_dump_json())
+
+            try:
+                async for event in runner.run_async(
+                    user_id=user.uid,
+                    session_id=session_id,
+                    new_message=content,
+                ):
+                    await _process_event(websocket, event, bus, user.uid)
+            except Exception:
+                logger.exception("ws_chat_turn_error", user_id=user.uid)
+                err_msg = StatusMessage(state=AgentState.IDLE)
+                await websocket.send_text(err_msg.model_dump_json())
+
+    except (WebSocketDisconnect, RuntimeError):
+        logger.info("ws_chat_disconnected", user_id=user.uid)
+    except Exception:
+        logger.exception("ws_chat_error", user_id=user.uid)
+    finally:
+        logger.info("ws_chat_closed", user_id=user.uid, session_id=session_id)

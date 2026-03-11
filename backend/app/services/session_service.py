@@ -71,7 +71,7 @@ class SessionService:
     async def list_sessions(self, user_id: str) -> list[SessionListItem]:
         query = (
             self.db.collection(COLLECTION)
-            .where("user_id", "==", user_id)
+            .where(filter=firestore.FieldFilter("user_id", "==", user_id))
         )
         items = [
             SessionListItem(id=snap.id, **snap.to_dict())
