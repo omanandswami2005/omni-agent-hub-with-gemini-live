@@ -1,6 +1,8 @@
 """FastAPI application factory + lifespan."""
 
-import asyncio
+import os
+import threading
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -16,6 +18,11 @@ from app.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
 
+def _force_exit_delayed() -> None:
+    """Force-exit after 1.5 seconds to bypass the Python 3.14 + concurrent.futures hang."""
+    time.sleep(1.5)
+    os._exit(0)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,22 +36,8 @@ async def lifespan(app: FastAPI):
     )
     yield
     logger.info("backend_shutting_down")
-
-    # Cancel any lingering async tasks (e.g. WebSocket handlers)
-    loop = asyncio.get_running_loop()
-    pending = [
-        t for t in asyncio.all_tasks(loop)
-        if t is not asyncio.current_task() and not t.done()
-    ]
-    for task in pending:
-        task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
-
-    # Shut down the default thread-pool executor to prevent the
-    # KeyboardInterrupt hang caused by orphaned asyncio.to_thread threads
-    # (e.g. Google GenAI credential loading via concurrent.futures).
-    await loop.shutdown_default_executor()
+    # Launch a delayed suicide sequence to avoid hanging on Windows thread pool teardown
+    threading.Thread(target=_force_exit_delayed, daemon=True).start()
 
 
 def create_app() -> FastAPI:

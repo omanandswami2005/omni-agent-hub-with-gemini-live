@@ -3,6 +3,7 @@
  */
 
 import { useState } from 'react';
+import { useNavigate } from 'react-router';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import ThemeToggle from '@/components/layout/ThemeToggle';
 import { useAuthStore } from '@/stores/authStore';
@@ -20,8 +21,27 @@ const SHORTCUTS = [
 export default function SettingsPage() {
   useDocumentTitle('Settings');
   const [tab, setTab] = useState('General');
+  const [signingOut, setSigningOut] = useState(false);
   const user = useAuthStore((s) => s.user);
   const { signOut } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    try {
+      await signOut();
+      // Wait a bit for the auth state to propagate
+      await new Promise(resolve => setTimeout(resolve, 500));
+      // Force a full page reload with cache bypass to clear all state
+      window.location.replace('/login?t=' + Date.now());
+    } catch (error) {
+      console.error('Sign out failed:', error);
+      // Force navigation even if signOut fails
+      window.location.replace('/login?t=' + Date.now());
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -61,8 +81,8 @@ export default function SettingsPage() {
                     <p className="font-medium">{user.displayName || user.email}</p>
                     <p className="text-sm text-muted-foreground">{user.email}</p>
                   </div>
-                  <button onClick={signOut} className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted">
-                    Sign out
+                  <button onClick={handleSignOut} disabled={signingOut} className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted disabled:opacity-50">
+                    {signingOut ? 'Signing out...' : 'Sign out'}
                   </button>
                 </div>
               ) : (

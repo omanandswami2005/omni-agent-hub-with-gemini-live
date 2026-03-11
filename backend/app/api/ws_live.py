@@ -20,15 +20,8 @@ import json
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from google.adk.agents.live_request_queue import LiveRequestQueue
-from google.adk.agents.run_config import RunConfig, StreamingMode
-from google.adk.events import Event
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
-from google.genai import types
 
-from app.agents.personas import get_default_personas
-from app.agents.root_agent import build_root_agent
+# ── Light imports only (no google.adk / google.genai at module level) ──
 from app.config import settings
 from app.middleware.auth_middleware import AuthenticatedUser, _get_firebase_app
 from app.models.client import ClientType
@@ -45,7 +38,6 @@ from app.models.ws_messages import (
     TranscriptionDirection,
     TranscriptionMessage,
 )
-from app.services.agent_engine_service import get_agent_engine_service
 from app.services.connection_manager import get_connection_manager
 from app.services.event_bus import EventBus, get_event_bus
 from app.services.memory_service import get_memory_service
@@ -53,45 +45,66 @@ from app.services.mcp_manager import get_mcp_manager
 from app.utils.logging import get_logger
 
 if TYPE_CHECKING:
-    pass
+    from google.adk.agents.live_request_queue import LiveRequestQueue
+    from google.adk.agents.run_config import RunConfig
+    from google.adk.events import Event
+    from google.adk.runners import Runner
+    from google.genai import types
 
 logger = get_logger(__name__)
 
 router = APIRouter()
 
-# ── Module-level singletons (initialised lazily) ─────────────────────
+# ── Module-level singletons (built lazily on first use) ───────────────
+
+APP_NAME = "omni-hub"
+AUDIO_INPUT_MIME = "audio/pcm;rate=16000"
+
+_adk_session_service = None  # lazy — built on first call to _get_session_service()
 
 
-def _build_adk_session_service():
+def _get_session_service():
+    """Lazy singleton: build the ADK session service on first access.
+
+    Uses InMemorySessionService for local dev (fast), or
+    VertexAiSessionService for GCP production (persistent).
+    """
+    global _adk_session_service
+    if _adk_session_service is not None:
+        return _adk_session_service
+
     if not settings.USE_AGENT_ENGINE_SESSIONS:
-        return InMemorySessionService()
+        from google.adk.sessions import InMemorySessionService
+        _adk_session_service = InMemorySessionService()
+        return _adk_session_service
 
     try:
         from google.adk.sessions import VertexAiSessionService
+        from app.services.agent_engine_service import get_agent_engine_service
 
         ae = get_agent_engine_service()
         agent_engine_id = ae.get_reasoning_engine_id()
-        return VertexAiSessionService(
+        _adk_session_service = VertexAiSessionService(
             project=settings.GOOGLE_CLOUD_PROJECT,
             location=settings.GOOGLE_CLOUD_LOCATION,
             agent_engine_id=agent_engine_id,
         )
     except Exception:
+        from google.adk.sessions import InMemorySessionService
         logger.warning("vertex_ai_session_service_init_failed_fallback_in_memory", exc_info=True)
-        return InMemorySessionService()
+        _adk_session_service = InMemorySessionService()
+
+    return _adk_session_service
 
 
-_adk_session_service = _build_adk_session_service()
-APP_NAME = "omni-hub"
-
-AUDIO_INPUT_MIME = "audio/pcm;rate=16000"
-
-
-async def _get_runner(user_id: str) -> Runner:
+async def _get_runner(user_id: str, session_service=None):
     """Create a runner with user-specific MCP tools.
     
     Each user gets their own runner instance with their enabled MCP tools.
     """
+    from google.adk.runners import Runner
+    from app.agents.root_agent import build_root_agent
+
     mcp_mgr = get_mcp_manager()
     mcp_tools: list = []
     try:
@@ -103,12 +116,15 @@ async def _get_runner(user_id: str) -> Runner:
     return Runner(
         app_name=APP_NAME,
         agent=root,
-        session_service=_adk_session_service,
+        session_service=session_service or _get_session_service(),
     )
 
 
-def _build_run_config(voice: str = "Aoede") -> RunConfig:
+def _build_run_config(voice: str = "Aoede"):
     """Build an ADK ``RunConfig`` for bidi live streaming."""
+    from google.adk.agents.run_config import RunConfig, StreamingMode
+    from google.genai import types
+
     return RunConfig(
         streaming_mode=StreamingMode.BIDI,
         response_modalities=["AUDIO"],
@@ -190,6 +206,8 @@ async def _upstream(
     - **Binary frames** → PCM audio → ``send_realtime``
     - **JSON text frames** → control messages → ``send_content``
     """
+    from google.genai import types
+
     try:
         while True:
             msg = await websocket.receive()
@@ -378,9 +396,10 @@ async def ws_live(websocket: WebSocket) -> None:
     await websocket.accept()
 
     # Phase 1 — Authenticate (includes client_type detection)
-    user, client_type = await _authenticate_ws(websocket)
-    if user is None:
+    auth_result = await _authenticate_ws(websocket)
+    if auth_result is None:
         return
+    user, client_type = auth_result
 
     mgr = get_connection_manager()
     
@@ -394,16 +413,31 @@ async def ws_live(websocket: WebSocket) -> None:
     # All devices share the same session for this user
     session_id = f"{user.uid}_main"
 
-    # Ensure ADK session exists
-    session = await _adk_session_service.get_session(
-        app_name=APP_NAME, user_id=user.uid, session_id=session_id,
-    )
-    if session is None:
-        await _adk_session_service.create_session(
+    # Ensure ADK session exists — fall back to in-memory if Vertex AI fails
+    active_session_service = _get_session_service()
+    try:
+        session = await active_session_service.get_session(
+            app_name=APP_NAME, user_id=user.uid, session_id=session_id,
+        )
+        if session is None:
+            await active_session_service.create_session(
+                app_name=APP_NAME, user_id=user.uid, session_id=session_id,
+            )
+    except Exception:
+        logger.warning(
+            "vertex_session_failed_fallback_in_memory",
+            user_id=user.uid,
+            session_id=session_id,
+            exc_info=True,
+        )
+        from google.adk.sessions import InMemorySessionService
+        active_session_service = InMemorySessionService()
+        await active_session_service.create_session(
             app_name=APP_NAME, user_id=user.uid, session_id=session_id,
         )
 
     # Determine voice from active persona (default: first default persona)
+    from app.agents.personas import get_default_personas
     default_persona = get_default_personas()[0]
     run_config = _build_run_config(voice=default_persona.voice)
 
@@ -423,8 +457,9 @@ async def ws_live(websocket: WebSocket) -> None:
         await websocket.send_text(suggestion.model_dump_json())
 
     # Phase 3 — Bidi streaming
+    from google.adk.agents.live_request_queue import LiveRequestQueue
     queue = LiveRequestQueue()
-    runner = await _get_runner(user.uid)
+    runner = await _get_runner(user.uid, session_service=active_session_service)
 
     try:
         await asyncio.gather(

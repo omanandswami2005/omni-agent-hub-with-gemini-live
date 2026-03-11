@@ -25,7 +25,7 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Live-capable native audio model
-LIVE_MODEL = "gemini-2.5-flash-native-audio"
+LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 TEXT_MODEL = "gemini-2.5-flash"
 
 # Persona IDs that get Google Search grounding by default

@@ -3,7 +3,7 @@
  */
 
 import { useEffect } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut as fbSignOut } from 'firebase/auth';
+import { onAuthStateChanged, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as fbSignOut } from 'firebase/auth';
 import { auth, googleProvider } from '@/lib/firebase';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -52,7 +52,33 @@ export function useAuth() {
   }, [user, setUser]);
 
   const signIn = () => signInWithPopup(auth, googleProvider);
-  const signOut = () => fbSignOut(auth);
+  const signInWithEmail = (email, password) => signInWithEmailAndPassword(auth, email, password);
+  const signUpWithEmail = (email, password) => createUserWithEmailAndPassword(auth, email, password);
+  const signOut = async () => {
+    try {
+      await fbSignOut(auth);
+    } catch (error) {
+      console.error('Sign out error:', error);
+    } finally {
+      // Clear all Firebase auth data from localStorage and sessionStorage
+      try {
+        for (const key in localStorage) {
+          if (key.startsWith('firebase:')) {
+            localStorage.removeItem(key);
+          }
+        }
+        for (const key in sessionStorage) {
+          if (key.startsWith('firebase:')) {
+            sessionStorage.removeItem(key);
+          }
+        }
+      } catch (e) {
+        console.error('Error clearing storage:', e);
+      }
+      // Clear user state
+      logout();
+    }
+  };
 
-  return { user, token, loading, signIn, signOut };
+  return { user, token, loading, signIn, signInWithEmail, signUpWithEmail, signOut };
 }

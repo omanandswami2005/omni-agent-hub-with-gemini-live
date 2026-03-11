@@ -5,6 +5,7 @@ import { AuthGuard } from '@/components/auth/AuthGuard';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 
 const LoginPage = lazy(() => import('@/components/auth/LoginPage'));
+const RegisterPage = lazy(() => import('@/components/auth/RegisterPage'));
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
 const PersonasPage = lazy(() => import('@/pages/PersonasPage'));
 const MCPStorePage = lazy(() => import('@/pages/MCPStorePage'));
@@ -27,6 +28,7 @@ export default function App() {
       <Suspense fallback={<PageFallback />}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
           <Route element={<AuthGuard />}>
             <Route element={<AppShell />}>
               <Route path="/" element={<DashboardPage />} />
