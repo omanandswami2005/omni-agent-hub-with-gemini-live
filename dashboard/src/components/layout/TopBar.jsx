@@ -6,12 +6,14 @@ import { Search, Menu } from 'lucide-react';
 import ThemeToggle from '@/components/layout/ThemeToggle';
 import UserMenu from '@/components/auth/UserMenu';
 import ClientStatusBar from '@/components/clients/ClientStatusBar';
+import { useAuth } from '@/hooks/useAuth';
 import { useUiStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useClientStore } from '@/stores/clientStore';
 
 export default function TopBar() {
   const { toggleSidebar, setCommandPalette } = useUiStore();
+  const { signOut } = useAuth();
   const { user } = useAuthStore();
   const { clients } = useClientStore();
 
@@ -42,8 +44,9 @@ export default function TopBar() {
       <div className="flex items-center gap-3">
         <ClientStatusBar clients={clients} />
         <ThemeToggle />
-        {user && <UserMenu user={user} onSignOut={() => useAuthStore.getState().logout()} />}
+        {user && <UserMenu user={user} onSignOut={signOut} />}
       </div>
     </header>
   );
 }
+

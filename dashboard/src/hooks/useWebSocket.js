@@ -50,24 +50,24 @@ export function useWebSocket() {
         case 'transcript':
           useChatStore.getState().updateTranscript(msg);
           break;
-        case 'agent_message':
+        case 'response':
           useChatStore.getState().addMessage({
             id: msg.id || Date.now().toString(),
             role: 'assistant',
-            content: msg.content,
+            content: msg.data,
             persona: msg.persona,
             timestamp: msg.timestamp || new Date().toISOString(),
-            genui: msg.genui,
+            genui: msg.genuI,
           });
           break;
-        case 'agent_state':
+        case 'status':
           useChatStore.getState().setAgentState(msg.state);
           break;
-        case 'tool_start':
-          useChatStore.getState().setToolActive(msg.tool, true);
+        case 'tool_call':
+          useChatStore.getState().setToolActive(msg.tool_name, true);
           break;
-        case 'tool_end':
-          useChatStore.getState().setToolActive(msg.tool, false);
+        case 'tool_response':
+          useChatStore.getState().setToolActive(msg.tool_name, false);
           break;
         case 'auth_response':
           // Auth accepted — nothing extra needed
@@ -132,7 +132,7 @@ export function useWebSocket() {
   }, []);
 
   const sendImage = useCallback((base64) => {
-    sendJsonMessage(wsRef.current, { type: 'image', content: base64 });
+    sendJsonMessage(wsRef.current, { type: 'image', data_base64: base64 });
   }, []);
 
   const sendControl = useCallback((action, payload = {}) => {

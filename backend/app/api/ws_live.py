@@ -479,5 +479,5 @@ async def ws_live(websocket: WebSocket) -> None:
             logger.warning("memory_bank_sync_failed", user_id=user.uid, session_id=session_id, exc_info=True)
 
         queue.close()
-        await mgr.disconnect(user.uid, ClientType.WEB)
+        await mgr.disconnect(user.uid, client_type)
         logger.info("ws_live_closed", user_id=user.uid, session_id=session_id)

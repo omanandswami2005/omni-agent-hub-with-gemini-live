@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 
 
 class DesktopConfig(BaseSettings):
-    server_url: str = "ws://localhost:8080/ws/live"
+    server_url: str = "ws://localhost:8000/ws/live"
     auth_token: str = ""
     audio_device: int | None = None
     capture_quality: int = 75

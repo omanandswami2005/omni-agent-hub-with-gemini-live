@@ -11,7 +11,6 @@ import asyncio
 import json
 import logging
 from typing import Any, Callable, Coroutine
-from urllib.parse import urlencode
 
 import websockets
 from websockets.asyncio.client import ClientConnection
@@ -46,28 +45,16 @@ class DesktopWSClient:
         self._handlers[action] = handler
 
     async def connect(self) -> None:
-        """Establish WebSocket connection with auth token as query param."""
-        params = urlencode({"token": self.token, "client_type": "desktop"})
-        url = f"{self.server_url}?{params}"
-        self.ws = await websockets.connect(url, max_size=10 * 1024 * 1024)
+        """Establish WebSocket connection and send auth message."""
+        self.ws = await websockets.connect(self.server_url, max_size=10 * 1024 * 1024)
         self.connected = True
         logger.info("Connected to %s", self.server_url)
 
-        # Register capabilities
+        # Send auth handshake as first message (matching backend protocol)
         await self.send_json({
-            "type": "register",
+            "type": "auth",
+            "token": self.token,
             "client_type": "desktop",
-            "capabilities": [
-                "capture_screen",
-                "click",
-                "type_text",
-                "hotkey",
-                "scroll",
-                "open_app",
-                "read_file",
-                "write_file",
-                "list_directory",
-            ],
         })
 
     async def run(self) -> None:
@@ -124,7 +111,7 @@ class DesktopWSClient:
             self.ws = None
         logger.info("Disconnected from server")
 
-    # ── Internal ──────────────────────────────────────────────────────
+    # ── Internal ────────────────────────────────────────────────────
 
     async def _listen(self) -> None:
         """Listen for incoming messages and dispatch to handlers."""
@@ -145,9 +132,10 @@ class DesktopWSClient:
         """Route an incoming message to the appropriate handler."""
         msg_type = msg.get("type", "")
 
-        if msg_type == "cross_client_action":
+        # Handle cross_client messages (matching backend protocol)
+        if msg_type == "cross_client":
             action = msg.get("action", "")
-            payload = msg.get("payload", {})
+            payload = msg.get("data", {})
             handler = self._handlers.get(action)
             if handler:
                 try:

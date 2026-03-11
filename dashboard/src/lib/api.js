@@ -6,7 +6,7 @@
 import { useAuthStore } from '@/stores/authStore';
 import { auth } from '@/lib/firebase';
 
-const BASE_URL = import.meta.env.VITE_API_URL || '/api';
+const BASE_URL = (import.meta.env.VITE_API_URL || '/api') + '/v1';
 
 async function request(path, options = {}) {
     const { token: explicitToken, ...fetchOptions } = options;
