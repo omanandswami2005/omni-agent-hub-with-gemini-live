@@ -17,6 +17,7 @@ export default function PersonasPage() {
 
   useEffect(() => {
     fetchPersonas();
+    useMcpStore.getState().fetchCatalog();
   }, [fetchPersonas]);
 
   const handleSave = async (form) => {

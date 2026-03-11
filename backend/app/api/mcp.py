@@ -36,16 +36,6 @@ async def toggle_mcp(body: MCPToggle, user: CurrentUser):
     return {"mcp_id": body.mcp_id, "enabled": enabled}
 
 
-@router.get("/{mcp_id}", response_model=MCPConfig)
-async def get_mcp_detail(mcp_id: str):
-    """Return full config for a single MCP."""
-    mgr = get_mcp_manager()
-    config = mgr.get_mcp_config(mcp_id)
-    if config is None:
-        raise HTTPException(status_code=404, detail=f"MCP '{mcp_id}' not found")
-    return config
-
-
 @router.get("/capabilities", response_model=list[dict])
 async def list_capabilities(user: CurrentUser):
     """Return available tools/capabilities for enabled MCPs and sandboxes.
@@ -56,3 +46,13 @@ async def list_capabilities(user: CurrentUser):
     """
     mgr = get_mcp_manager()
     return mgr.get_available_capabilities(user.uid)
+
+
+@router.get("/{mcp_id}", response_model=MCPConfig)
+async def get_mcp_detail(mcp_id: str):
+    """Return full config for a single MCP."""
+    mgr = get_mcp_manager()
+    config = mgr.get_mcp_config(mcp_id)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"MCP '{mcp_id}' not found")
+    return config

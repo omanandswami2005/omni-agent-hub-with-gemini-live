@@ -46,12 +46,12 @@ class PersonaService:
         query = (
             self.db.collection(COLLECTION)
             .where("user_id", "==", user_id)
-            .order_by("created_at", direction=firestore.Query.DESCENDING)
         )
         user_personas = [
             PersonaResponse(id=snap.id, **snap.to_dict())
             for snap in query.stream()
         ]
+        user_personas.sort(key=lambda p: p.created_at, reverse=True)
         return defaults + user_personas
 
     # ── Get one ───────────────────────────────────────────────────────

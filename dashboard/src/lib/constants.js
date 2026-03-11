@@ -11,6 +11,10 @@ export const WS_RECONNECT_MAX_MS = 30000;
 export const AUDIO_CAPTURE_RATE = 16000;
 export const AUDIO_PLAYBACK_RATE = 24000;
 
+export const VIDEO_CAPTURE_FPS = 2;
+export const VIDEO_CAPTURE_QUALITY = 0.7;
+export const VIDEO_MAX_DIMENSION = 1024;
+
 export const AGENT_STATES = {
   IDLE: 'idle',
   LISTENING: 'listening',

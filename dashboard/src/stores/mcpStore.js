@@ -10,7 +10,7 @@ export const useMcpStore = create((set, _get) => ({
   fetchCatalog: async () => {
     set({ loading: true, error: null });
     try {
-      const catalog = await api.get('/v1/mcp/catalog');
+      const catalog = await api.get('/mcp/catalog');
       set({ catalog, loading: false });
     } catch (err) {
       set({ error: err.message, loading: false });
@@ -19,13 +19,13 @@ export const useMcpStore = create((set, _get) => ({
 
   fetchEnabled: async () => {
     try {
-      const installed = await api.get('/v1/mcp/enabled');
+      const installed = await api.get('/mcp/enabled');
       set({ installed });
     } catch { /* silent */ }
   },
 
   toggleMCP: async (mcpId, enabled) => {
-    await api.post('/v1/mcp/toggle', { mcp_id: mcpId, enabled });
+    await api.post('/mcp/toggle', { mcp_id: mcpId, enabled });
     set((state) => ({
       catalog: state.catalog.map((m) => (m.id === mcpId ? { ...m, enabled } : m)),
       installed: enabled

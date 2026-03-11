@@ -10,7 +10,7 @@ export const usePersonaStore = create((set, get) => ({
   fetchPersonas: async () => {
     set({ loading: true, error: null });
     try {
-      const personas = await api.get('/v1/personas');
+      const personas = await api.get('/personas');
       set({ personas, loading: false });
     } catch (err) {
       set({ error: err.message, loading: false });
@@ -18,13 +18,13 @@ export const usePersonaStore = create((set, get) => ({
   },
 
   createPersona: async (data) => {
-    const persona = await api.post('/v1/personas', data);
+    const persona = await api.post('/personas', data);
     set({ personas: [...get().personas, persona] });
     return persona;
   },
 
   updatePersona: async (id, data) => {
-    const updated = await api.put(`/v1/personas/${id}`, data);
+    const updated = await api.put(`/personas/${id}`, data);
     set({
       personas: get().personas.map((p) => (p.id === id ? updated : p)),
       activePersona: get().activePersona?.id === id ? updated : get().activePersona,
@@ -33,7 +33,7 @@ export const usePersonaStore = create((set, get) => ({
   },
 
   deletePersona: async (id) => {
-    await api.delete(`/v1/personas/${id}`);
+    await api.delete(`/personas/${id}`);
     set({
       personas: get().personas.filter((p) => p.id !== id),
       activePersona: get().activePersona?.id === id ? null : get().activePersona,

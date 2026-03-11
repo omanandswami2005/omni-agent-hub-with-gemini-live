@@ -72,12 +72,13 @@ class SessionService:
         query = (
             self.db.collection(COLLECTION)
             .where("user_id", "==", user_id)
-            .order_by("created_at", direction=firestore.Query.DESCENDING)
         )
-        return [
+        items = [
             SessionListItem(id=snap.id, **snap.to_dict())
             for snap in query.stream()
         ]
+        items.sort(key=lambda s: s.created_at, reverse=True)
+        return items
 
     # ── Update ────────────────────────────────────────────────────────
 

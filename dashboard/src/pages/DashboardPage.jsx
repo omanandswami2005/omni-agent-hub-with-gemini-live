@@ -2,27 +2,19 @@
  * Page: DashboardPage — Main dashboard with chat panel and activity overview.
  */
 
-import { useCallback } from 'react';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import ChatPanel from '@/components/chat/ChatPanel';
 import GenUIRenderer from '@/components/genui/GenUIRenderer';
 import PersonaCard from '@/components/persona/PersonaCard';
 import ClientStatusBar from '@/components/clients/ClientStatusBar';
-import { useWebSocket } from '@/hooks/useWebSocket';
-import { useAudioCapture } from '@/hooks/useAudioCapture';
-import { useAudioPlayback } from '@/hooks/useAudioPlayback';
-import { useKeyboard } from '@/hooks/useKeyboard';
+import { useVoice } from '@/hooks/useVoiceProvider';
 import { useChatStore } from '@/stores/chatStore';
 import { usePersonaStore } from '@/stores/personaStore';
 import { useClientStore } from '@/stores/clientStore';
 
 export default function DashboardPage() {
     useDocumentTitle('Dashboard');
-    const { sendText, sendAudio, isConnected } = useWebSocket();
-    const { startRecording, stopRecording, isRecording, volume: captureVolume } = useAudioCapture({
-        onAudioData: sendAudio,
-    });
-    const { stopPlayback, volume: playbackVolume } = useAudioPlayback();
+    const voice = useVoice();
 
     const messages = useChatStore((s) => s.messages);
     const activePersona = usePersonaStore((s) => s.activePersona);
@@ -31,35 +23,18 @@ export default function DashboardPage() {
     const clients = useClientStore((s) => s.clients);
     const activeTools = useChatStore((s) => s.activeTools);
 
-    const toggleRecording = useCallback(() => {
-        if (isRecording) {
-            stopRecording();
-        } else {
-            stopPlayback();
-            startRecording();
-        }
-    }, [isRecording, startRecording, stopRecording, stopPlayback]);
-
-    // Global keyboard shortcuts
-    useKeyboard({
-        escape: useCallback(() => {
-            if (isRecording) stopRecording();
-        }, [isRecording, stopRecording]),
-    });
-
     // Find the last genui message for the side panel
-    const lastGenUI = [...messages].reverse().find((m) => m.type === 'genui');
+    const lastGenUI = [...messages].reverse().find((m) => m.genui_type);
 
     return (
         <div className="flex h-full gap-4">
             {/* Main chat panel */}
             <div className="flex-1">
                 <ChatPanel
-                    onSend={sendText}
-                    onToggleRecording={toggleRecording}
-                    isRecording={isRecording}
-                    captureVolume={captureVolume}
-                    playbackVolume={playbackVolume}
+                    onSend={voice.sendText}
+                    isRecording={voice.isRecording}
+                    captureVolume={voice.captureVolume}
+                    playbackVolume={voice.playbackVolume}
                 />
             </div>
 
@@ -69,8 +44,8 @@ export default function DashboardPage() {
                 <div className="rounded-lg border border-border p-3">
                     <p className="mb-1 text-xs font-medium text-muted-foreground">Status</p>
                     <div className="flex items-center gap-2">
-                        <span className={`h-2 w-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-                        <span className="text-sm">{isConnected ? 'Connected' : 'Disconnected'}</span>
+                        <span className={`h-2 w-2 rounded-full ${voice.isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+                        <span className="text-sm">{voice.isConnected ? 'Connected' : 'Disconnected'}</span>
                     </div>
                 </div>
 

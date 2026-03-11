@@ -11,7 +11,7 @@ export const useClientStore = create((set) => ({
   fetchClients: async () => {
     set({ loading: true });
     try {
-      const clients = await api.get('/v1/clients');
+      const clients = await api.get('/clients');
       set({ clients, loading: false });
     } catch {
       set({ loading: false });

@@ -69,12 +69,12 @@ export function useWebSocket() {
           break;
         case 'response':
           useChatStore.getState().addMessage({
-            id: msg.id || Date.now().toString(),
             role: 'assistant',
             content: msg.data,
+            content_type: msg.content_type || 'text',
+            genui_type: msg.genui?.type || msg.genui_type,
+            genui_data: msg.genui?.data || msg.genui_data,
             persona: msg.persona,
-            timestamp: msg.timestamp || new Date().toISOString(),
-            genui: msg.genuI,
           });
           break;
         case 'status':
@@ -86,9 +86,24 @@ export function useWebSocket() {
           break;
         case 'tool_call':
           useChatStore.getState().setToolActive(msg.tool_name, true);
+          useChatStore.getState().addMessage({
+            role: 'system',
+            type: 'tool_call',
+            content: `Using tool: ${msg.tool_name}`,
+            tool_name: msg.tool_name,
+            arguments: msg.arguments,
+            status: msg.status,
+          });
           break;
         case 'tool_response':
           useChatStore.getState().setToolActive(msg.tool_name, false);
+          useChatStore.getState().addMessage({
+            role: 'system',
+            type: 'tool_response',
+            content: msg.result || `Tool ${msg.tool_name} completed`,
+            tool_name: msg.tool_name,
+            success: msg.success,
+          });
           break;
         case 'auth_response':
           if (msg.status === 'ok') {
