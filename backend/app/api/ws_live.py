@@ -155,25 +155,36 @@ async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, Cli
     from firebase_admin import auth as firebase_auth
     from app.models.client import ClientType
 
+    logger.info("ws_auth_waiting_for_message", client_host=websocket.client.host if websocket.client else "unknown")
+    
     try:
         raw = await asyncio.wait_for(websocket.receive_text(), timeout=10)
     except (TimeoutError, WebSocketDisconnect):
+        logger.warning("ws_auth_timeout_or_disconnect", client_host=websocket.client.host if websocket.client else "unknown")
         return None
 
+    logger.info("ws_auth_message_received", client_host=websocket.client.host if websocket.client else "unknown", raw_message=raw[:200] if len(raw) > 200 else raw)
+    
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        logger.warning("ws_auth_invalid_json", error=str(e), client_host=websocket.client.host if websocket.client else "unknown")
         await _send_auth_error(websocket, "Invalid JSON")
         return None
 
     if data.get("type") != "auth" or not data.get("token"):
+        logger.warning("ws_auth_missing_type_or_token", data_type=data.get("type"), has_token=bool(data.get("token")), client_host=websocket.client.host if websocket.client else "unknown")
         await _send_auth_error(websocket, "First message must be auth with token")
         return None
 
+    logger.info("ws_auth_verifying_token", client_host=websocket.client.host if websocket.client else "unknown")
+    
     _get_firebase_app()
     try:
         decoded = firebase_auth.verify_id_token(data["token"])
-    except Exception:
+        logger.info("ws_auth_token_valid", user_id=decoded.get("uid"), client_host=websocket.client.host if websocket.client else "unknown")
+    except Exception as e:
+        logger.warning("ws_auth_token_invalid", error=str(e), client_host=websocket.client.host if websocket.client else "unknown")
         await _send_auth_error(websocket, "Invalid or expired token")
         return None
 
@@ -184,11 +195,14 @@ async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, Cli
     except ValueError:
         client_type = ClientType.WEB
 
+    logger.info("ws_auth_success", user_id=decoded.get("uid"), client_type=client_type_str)
+    
     return AuthenticatedUser(decoded), client_type
 
 
 async def _send_auth_error(websocket: WebSocket, error: str) -> None:
     msg = AuthResponse(status="error", error=error)
+    logger.warning("ws_auth_error_sending", error=error, client_host=websocket.client.host if websocket.client else "unknown")
     await websocket.send_text(msg.model_dump_json())
     await websocket.close(code=4003, reason=error)
 
@@ -393,7 +407,19 @@ async def _publish(bus: EventBus | None, user_id: str, json_str: str) -> None:
 @router.websocket("/live")
 async def ws_live(websocket: WebSocket) -> None:
     """Bidirectional audio streaming with Gemini via ADK."""
+    # Log WebSocket connection attempt
+    logger.info(
+        "ws_connection_attempt",
+        client_host=websocket.client.host if websocket.client else "unknown",
+    )
+    
     await websocket.accept()
+
+    # Log WebSocket accepted
+    logger.info(
+        "ws_connection_accepted",
+        client_host=websocket.client.host if websocket.client else "unknown",
+    )
 
     # Phase 1 — Authenticate (includes client_type detection)
     auth_result = await _authenticate_ws(websocket)

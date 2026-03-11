@@ -34,7 +34,7 @@ echo "=== Starting Omni (local dev) ==="
 # Backend
 echo "--- Starting backend (port 8000) ---"
 cd "${ROOT_DIR}/backend"
-uv run uvicorn app.main:app --reload --port 8000 &
+uv run python dev.py &
 
 # Dashboard
 echo "--- Starting dashboard (port 5173) ---"

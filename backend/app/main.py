@@ -4,8 +4,11 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
+from typing import Callable
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.health import router as health_router
 from app.api.router import api_router
@@ -17,6 +20,33 @@ from app.utils.errors import register_exception_handlers
 from app.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
+
+
+class LoggingMiddleware(BaseHTTPMiddleware):
+    """Middleware to log all HTTP requests."""
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Log incoming request
+        logger.info(
+            "http_request",
+            method=request.method,
+            path=request.url.path,
+            client=request.client.host if request.client else "unknown",
+        )
+
+        # Process request
+        response = await call_next(request)
+
+        # Log response
+        logger.info(
+            "http_response",
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code,
+        )
+
+        return response
+
 
 def _force_exit_delayed() -> None:
     """Force-exit after 1.5 seconds to bypass the Python 3.14 + concurrent.futures hang."""
@@ -49,6 +79,9 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if not settings.is_production else None,
         lifespan=lifespan,
     )
+
+    # Add logging middleware first
+    app.add_middleware(LoggingMiddleware)
 
     # Middleware
     setup_cors(app)

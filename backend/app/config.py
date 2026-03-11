@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     ENVIRONMENT: str = "development"  # development | staging | production
     BACKEND_PORT: int = 8000
+    BACKEND_HOST: str = "0.0.0.0"  # Listen on all interfaces (required for container deployment like Cloud Run)
     LOG_LEVEL: str = "INFO"
 
     # --- Google Cloud / Vertex AI ---
