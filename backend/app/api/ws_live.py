@@ -17,7 +17,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+import warnings
 from typing import TYPE_CHECKING
+
+# Suppress Pydantic serialization warning for response_modalities.
+# ADK's RunConfig stores modalities as list[str] but the downstream
+# GenerationConfig expects Modality enums — this is an ADK-internal mismatch.
+warnings.filterwarnings(
+    "ignore",
+    message="Pydantic serializer warnings",
+    category=UserWarning,
+    module=r"pydantic\.main",
+)
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -66,8 +78,11 @@ _adk_session_service = None  # lazy — built on first call to _get_session_serv
 def _get_session_service():
     """Lazy singleton: build the ADK session service on first access.
 
-    Uses InMemorySessionService for local dev (fast), or
-    VertexAiSessionService for GCP production (persistent).
+    When ``USE_AGENT_ENGINE_SESSIONS`` is *True* (requires Vertex AI),
+    uses ``VertexAiSessionService`` backed by Agent Engine — failures are
+    **not** silently swallowed so misconfigurations surface immediately.
+
+    When *False*, uses ``InMemorySessionService`` (local dev / offline).
     """
     global _adk_session_service
     if _adk_session_service is not None:
@@ -76,48 +91,90 @@ def _get_session_service():
     if not settings.USE_AGENT_ENGINE_SESSIONS:
         from google.adk.sessions import InMemorySessionService
         _adk_session_service = InMemorySessionService()
+        logger.info("session_service_init", backend="in_memory")
         return _adk_session_service
 
-    try:
-        from google.adk.sessions import VertexAiSessionService
-        from app.services.agent_engine_service import get_agent_engine_service
+    # Vertex AI path — fail loudly on misconfiguration
+    from google.adk.sessions import VertexAiSessionService
+    from app.services.agent_engine_service import get_agent_engine_service
 
-        ae = get_agent_engine_service()
-        agent_engine_id = ae.get_reasoning_engine_id()
-        _adk_session_service = VertexAiSessionService(
-            project=settings.GOOGLE_CLOUD_PROJECT,
-            location=settings.GOOGLE_CLOUD_LOCATION,
-            agent_engine_id=agent_engine_id,
-        )
-    except Exception:
-        from google.adk.sessions import InMemorySessionService
-        logger.warning("vertex_ai_session_service_init_failed_fallback_in_memory", exc_info=True)
-        _adk_session_service = InMemorySessionService()
-
+    ae = get_agent_engine_service()
+    agent_engine_id = ae.get_reasoning_engine_id()
+    _adk_session_service = VertexAiSessionService(
+        project=settings.GOOGLE_CLOUD_PROJECT,
+        location=settings.GOOGLE_CLOUD_LOCATION,
+        agent_engine_id=agent_engine_id,
+    )
+    logger.info(
+        "session_service_init",
+        backend="vertex_ai",
+        project=settings.GOOGLE_CLOUD_PROJECT,
+        agent_engine_id=agent_engine_id,
+    )
     return _adk_session_service
 
 
+# ── Runner pool — cached per user_id ──────────────────────────────────
+
+# Runner TTL: if a user hasn't reconnected within this window, the cached
+# runner is discarded so that MCP tool changes are picked up.
+_RUNNER_TTL = 10 * 60  # 10 minutes
+
+# { user_id: (Runner, enabled_mcp_ids_frozenset, created_monotonic) }
+_runner_cache: dict[str, tuple["Runner", frozenset[str], float]] = {}
+
+
 async def _get_runner(user_id: str, session_service=None):
-    """Create a runner with user-specific MCP tools.
-    
-    Each user gets their own runner instance with their enabled MCP tools.
+    """Return a Runner for *user_id*, reusing a cached one when possible.
+
+    The cache is keyed by ``user_id``.  A cached runner is reused when:
+    - It was created less than ``_RUNNER_TTL`` seconds ago, AND
+    - The user's enabled MCP tool set hasn't changed since creation.
+
+    Otherwise a fresh runner is built (and cached).
     """
     from google.adk.runners import Runner
     from app.agents.root_agent import build_root_agent
 
+    ss = session_service or _get_session_service()
+
     mcp_mgr = get_mcp_manager()
+    enabled_ids = frozenset(mcp_mgr.get_enabled_ids(user_id))
+
+    cached = _runner_cache.get(user_id)
+    if cached is not None:
+        runner, cached_ids, ts = cached
+        if time.monotonic() - ts < _RUNNER_TTL and cached_ids == enabled_ids:
+            return runner
+        # Stale or MCP set changed → discard
+        _runner_cache.pop(user_id, None)
+
+    # Evict expired entries from other users while we're here
+    now = time.monotonic()
+    expired = [uid for uid, (_, _, ts) in _runner_cache.items() if now - ts > _RUNNER_TTL]
+    for uid in expired:
+        _runner_cache.pop(uid, None)
+
     mcp_tools: list = []
     try:
         mcp_tools = await mcp_mgr.get_tools(user_id)
     except Exception:
         logger.warning("mcp_tools_load_failed", user_id=user_id, exc_info=True)
-    
+
     root = build_root_agent(mcp_tools=mcp_tools)
-    return Runner(
+    runner = Runner(
         app_name=APP_NAME,
         agent=root,
-        session_service=session_service or _get_session_service(),
+        session_service=ss,
     )
+    _runner_cache[user_id] = (runner, enabled_ids, time.monotonic())
+    logger.debug("runner_cached", user_id=user_id, mcp_count=len(mcp_tools))
+    return runner
+
+
+def invalidate_runner(user_id: str) -> None:
+    """Remove a cached runner for *user_id* (e.g. after MCP toggle)."""
+    _runner_cache.pop(user_id, None)
 
 
 def _build_run_config(voice: str = "Aoede"):
@@ -137,7 +194,14 @@ def _build_run_config(voice: str = "Aoede"):
         ),
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
-        session_resumption=types.SessionResumptionConfig(),
+        session_resumption=types.SessionResumptionConfig(
+            handle="",  # ADK fills this on first connect; empty string = new session
+        ),
+        context_window_compression=types.ContextWindowCompressionConfig(
+            sliding_window=types.SlidingWindow(
+                target_tokens=16_000,  # Must be ≤ trigger tokens (32k for native audio model)
+            ),
+        ),
         proactivity=types.ProactivityConfig(proactive_audio=True),
         enable_affective_dialog=True,
     )
@@ -155,36 +219,27 @@ async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, Cli
     from firebase_admin import auth as firebase_auth
     from app.models.client import ClientType
 
-    logger.info("ws_auth_waiting_for_message", client_host=websocket.client.host if websocket.client else "unknown")
-    
     try:
         raw = await asyncio.wait_for(websocket.receive_text(), timeout=10)
     except (TimeoutError, WebSocketDisconnect):
-        logger.warning("ws_auth_timeout_or_disconnect", client_host=websocket.client.host if websocket.client else "unknown")
+        logger.warning("ws_auth_timeout")
         return None
 
-    logger.info("ws_auth_message_received", client_host=websocket.client.host if websocket.client else "unknown", raw_message=raw[:200] if len(raw) > 200 else raw)
-    
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.warning("ws_auth_invalid_json", error=str(e), client_host=websocket.client.host if websocket.client else "unknown")
+    except json.JSONDecodeError:
         await _send_auth_error(websocket, "Invalid JSON")
         return None
 
     if data.get("type") != "auth" or not data.get("token"):
-        logger.warning("ws_auth_missing_type_or_token", data_type=data.get("type"), has_token=bool(data.get("token")), client_host=websocket.client.host if websocket.client else "unknown")
         await _send_auth_error(websocket, "First message must be auth with token")
         return None
 
-    logger.info("ws_auth_verifying_token", client_host=websocket.client.host if websocket.client else "unknown")
-    
     _get_firebase_app()
     try:
         decoded = firebase_auth.verify_id_token(data["token"])
-        logger.info("ws_auth_token_valid", user_id=decoded.get("uid"), client_host=websocket.client.host if websocket.client else "unknown")
-    except Exception as e:
-        logger.warning("ws_auth_token_invalid", error=str(e), client_host=websocket.client.host if websocket.client else "unknown")
+    except Exception as exc:
+        logger.warning("ws_auth_failed", client=websocket.client.host if websocket.client else "?", error=str(exc))
         await _send_auth_error(websocket, "Invalid or expired token")
         return None
 
@@ -195,14 +250,13 @@ async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, Cli
     except ValueError:
         client_type = ClientType.WEB
 
-    logger.info("ws_auth_success", user_id=decoded.get("uid"), client_type=client_type_str)
+    logger.info("ws_auth_ok", uid=decoded.get("uid"), client=client_type_str)
     
     return AuthenticatedUser(decoded), client_type
 
 
 async def _send_auth_error(websocket: WebSocket, error: str) -> None:
     msg = AuthResponse(status="error", error=error)
-    logger.warning("ws_auth_error_sending", error=error, client_host=websocket.client.host if websocket.client else "unknown")
     await websocket.send_text(msg.model_dump_json())
     await websocket.close(code=4003, reason=error)
 
@@ -251,11 +305,12 @@ async def _upstream(
                         mime_type=data.get("mime_type", "image/jpeg"),
                         data=image_bytes,
                     )
-                    content = types.Content(
-                        parts=[types.Part(inline_data=blob)],
-                        role="user",
+                    queue.send_content(
+                        types.Content(
+                            parts=[types.Part(inline_data=blob)],
+                            role="user",
+                        )
                     )
-                    queue.send_content(content)
                 elif msg_type == "mcp_toggle":
                     # Handle MCP toggle during live session
                     mcp_id = data.get("mcp_id")
@@ -266,15 +321,19 @@ async def _upstream(
                         toggle = MCPToggle(mcp_id=mcp_id, enabled=enabled)
                         try:
                             await mcp_mgr.toggle_mcp(user_id, toggle)
+                            invalidate_runner(user_id)
                             logger.info("mcp_toggle_during_session", user_id=user_id, mcp_id=mcp_id, enabled=enabled)
                         except Exception:
                             logger.warning("mcp_toggle_failed", user_id=user_id, mcp_id=mcp_id, exc_info=True)
                 # Other control messages (persona_switch)
                 # are handled at the API layer, not pushed to ADK
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
+        # RuntimeError fires when the WS is replaced by a new connection
         logger.info("ws_upstream_disconnected", user_id=user_id)
     except Exception:
         logger.exception("ws_upstream_error", user_id=user_id)
+    finally:
+        queue.close()  # Signal run_live() to stop gracefully
 
 
 # ── Downstream (ADK → client) ────────────────────────────────────────
@@ -300,6 +359,7 @@ async def _downstream(
     connected dashboard clients.
     """
     bus = get_event_bus()
+    first_event = True
     try:
         async for event in runner.run_live(
             user_id=user_id,
@@ -307,8 +367,11 @@ async def _downstream(
             live_request_queue=queue,
             run_config=run_config,
         ):
+            if first_event:
+                logger.info("live_connection_established", user_id=user_id, session_id=session_id)
+                first_event = False
             await _process_event(websocket, event, bus, user_id)
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
         logger.info("ws_downstream_disconnected", user_id=user_id)
     except Exception:
         logger.exception("ws_downstream_error", user_id=user_id)
@@ -407,19 +470,7 @@ async def _publish(bus: EventBus | None, user_id: str, json_str: str) -> None:
 @router.websocket("/live")
 async def ws_live(websocket: WebSocket) -> None:
     """Bidirectional audio streaming with Gemini via ADK."""
-    # Log WebSocket connection attempt
-    logger.info(
-        "ws_connection_attempt",
-        client_host=websocket.client.host if websocket.client else "unknown",
-    )
-    
     await websocket.accept()
-
-    # Log WebSocket accepted
-    logger.info(
-        "ws_connection_accepted",
-        client_host=websocket.client.host if websocket.client else "unknown",
-    )
 
     # Phase 1 — Authenticate (includes client_type detection)
     auth_result = await _authenticate_ws(websocket)
@@ -439,25 +490,12 @@ async def ws_live(websocket: WebSocket) -> None:
     # All devices share the same session for this user
     session_id = f"{user.uid}_main"
 
-    # Ensure ADK session exists — fall back to in-memory if Vertex AI fails
+    # Ensure ADK session exists — no silent fallback; misconfiguration must surface
     active_session_service = _get_session_service()
-    try:
-        session = await active_session_service.get_session(
-            app_name=APP_NAME, user_id=user.uid, session_id=session_id,
-        )
-        if session is None:
-            await active_session_service.create_session(
-                app_name=APP_NAME, user_id=user.uid, session_id=session_id,
-            )
-    except Exception:
-        logger.warning(
-            "vertex_session_failed_fallback_in_memory",
-            user_id=user.uid,
-            session_id=session_id,
-            exc_info=True,
-        )
-        from google.adk.sessions import InMemorySessionService
-        active_session_service = InMemorySessionService()
+    session = await active_session_service.get_session(
+        app_name=APP_NAME, user_id=user.uid, session_id=session_id,
+    )
+    if session is None:
         await active_session_service.create_session(
             app_name=APP_NAME, user_id=user.uid, session_id=session_id,
         )
@@ -487,23 +525,46 @@ async def ws_live(websocket: WebSocket) -> None:
     queue = LiveRequestQueue()
     runner = await _get_runner(user.uid, session_service=active_session_service)
 
+    logger.info(
+        "live_session_ready",
+        user_id=user.uid,
+        session_id=session_id,
+        client_type=str(client_type),
+    )
+
+    up_task: asyncio.Task | None = None
+    down_task: asyncio.Task | None = None
     try:
-        await asyncio.gather(
-            _upstream(websocket, queue, user.uid),
-            _downstream(websocket, runner, user.uid, session_id, queue, run_config),
-            return_exceptions=True,
+        up_task = asyncio.create_task(
+            _upstream(websocket, queue, user.uid), name="upstream",
         )
+        down_task = asyncio.create_task(
+            _downstream(websocket, runner, user.uid, session_id, queue, run_config),
+            name="downstream",
+        )
+        # When either task finishes (disconnect or error), cancel the other
+        done, pending = await asyncio.wait(
+            {up_task, down_task}, return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        # Await pending tasks to let them clean up
+        await asyncio.gather(*pending, return_exceptions=True)
+        # Re-raise if the completed task had an unexpected exception
+        for task in done:
+            if task.exception() and not isinstance(task.exception(), asyncio.CancelledError):
+                logger.warning("ws_task_error", user_id=user.uid, task=task.get_name(), exc_info=task.exception())
     except asyncio.CancelledError:
         logger.info("ws_live_cancelled", user_id=user.uid)
     except Exception:
         logger.exception("ws_live_error", user_id=user.uid)
     finally:
         # Phase 4 — Cleanup
+        queue.close()  # Ensure queue is closed (upstream also closes, but be safe)
         try:
             await get_memory_service().sync_from_session(user.uid, session_id)
         except Exception:
             logger.warning("memory_bank_sync_failed", user_id=user.uid, session_id=session_id, exc_info=True)
 
-        queue.close()
         await mgr.disconnect(user.uid, client_type)
         logger.info("ws_live_closed", user_id=user.uid, session_id=session_id)

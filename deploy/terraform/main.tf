@@ -73,7 +73,7 @@ resource "google_cloud_run_v2_service" "backend" {
 
       env {
         name  = "BACKEND_HOST"
-        value = "0.0.0.0"
+        value = "::"
       }
 
       env {

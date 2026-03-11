@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { createLiveConnection, sendBinaryAudio, sendJsonMessage, parseServerMessage, reconnectDelay } from '@/lib/ws';
+import { auth } from '@/lib/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { useChatStore } from '@/stores/chatStore';
 
@@ -12,26 +13,42 @@ export function useWebSocket() {
   const wsRef = useRef(null);
   const attemptRef = useRef(0);
   const reconnectTimer = useRef(null);
+  const intentionalClose = useRef(false);
+  const connectGenRef = useRef(0);
   const [isConnected, setIsConnected] = useState(false);
 
-  const connect = useCallback(() => {
-    const token = useAuthStore.getState().token;
-    if (!token) return;
+  const connect = useCallback(async () => {
+    // Bump generation so any older in-flight connect() bails after its await
+    const gen = ++connectGenRef.current;
 
-    // Cleanup previous
+    // Close any existing connection synchronously (before the await gap)
     if (wsRef.current) {
       wsRef.current.close();
+      wsRef.current = null;
+    }
+    intentionalClose.current = false;
+
+    // Get a fresh Firebase token (async — may yield to other effects)
+    const fbUser = auth.currentUser;
+    if (!fbUser) return;
+    let freshToken;
+    try {
+      freshToken = await fbUser.getIdToken();
+    } catch {
+      return;
     }
 
-    const ws = createLiveConnection(token);
+    // Bail if a newer connect() or disconnect() happened while we awaited
+    if (connectGenRef.current !== gen || intentionalClose.current) return;
+
+    const ws = createLiveConnection();
     ws.binaryType = 'arraybuffer';
     wsRef.current = ws;
 
     ws.onopen = () => {
       attemptRef.current = 0;
-      setIsConnected(true);
-      // Send auth handshake
-      sendJsonMessage(ws, { type: 'auth', token });
+      // Send auth handshake as first frame (token NOT in URL for security)
+      sendJsonMessage(ws, { type: 'auth', token: freshToken });
     };
 
     ws.onmessage = (event) => {
@@ -62,6 +79,10 @@ export function useWebSocket() {
           break;
         case 'status':
           useChatStore.getState().setAgentState(msg.state);
+          // On interruption, clear audio queue so stale playback stops
+          if (msg.state === 'listening' && msg.detail === 'Interrupted by user') {
+            useChatStore.getState().clearAudioQueue?.();
+          }
           break;
         case 'tool_call':
           useChatStore.getState().setToolActive(msg.tool_name, true);
@@ -70,19 +91,24 @@ export function useWebSocket() {
           useChatStore.getState().setToolActive(msg.tool_name, false);
           break;
         case 'auth_response':
-          // Auth accepted — nothing extra needed
+          if (msg.status === 'ok') {
+            setIsConnected(true);
+          }
           break;
         default:
           break;
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       setIsConnected(false);
-      // Reconnect with backoff
-      const delay = reconnectDelay(attemptRef.current);
-      attemptRef.current += 1;
-      reconnectTimer.current = setTimeout(connect, delay);
+      // 4000 = replaced by new connection, 4003 = auth failure — don't reconnect for either
+      const noReconnect = e.code === 4000 || e.code === 4003;
+      if (!intentionalClose.current && !noReconnect) {
+        const delay = reconnectDelay(attemptRef.current);
+        attemptRef.current += 1;
+        reconnectTimer.current = setTimeout(connect, delay);
+      }
     };
 
     ws.onerror = () => {
@@ -93,6 +119,7 @@ export function useWebSocket() {
   const disconnect = useCallback(() => {
     clearTimeout(reconnectTimer.current);
     attemptRef.current = 0;
+    intentionalClose.current = true;
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;

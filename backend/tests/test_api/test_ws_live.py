@@ -174,9 +174,10 @@ class TestAuthenticateWs:
             patch("app.api.ws_live._get_firebase_app"),
             patch("firebase_admin.auth.verify_id_token", return_value=_FAKE_DECODED),
         ):
-            user = await _authenticate_ws(ws)
+            result = await _authenticate_ws(ws)
 
-        assert user is not None
+        assert result is not None
+        user, client_type = result
         assert user.uid == "u1"
 
     async def test_invalid_json_returns_none(self):

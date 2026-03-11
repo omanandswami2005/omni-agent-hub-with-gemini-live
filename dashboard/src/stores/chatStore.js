@@ -29,4 +29,5 @@ export const useChatStore = create((set, _get) => ({
     set((s) => ({ audioQueue: [...s.audioQueue, blob] })),
   dequeueAudio: () =>
     set((s) => ({ audioQueue: s.audioQueue.slice(1) })),
+  clearAudioQueue: () => set({ audioQueue: [] }),
 }));

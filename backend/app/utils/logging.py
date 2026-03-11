@@ -16,6 +16,7 @@ def setup_logging(log_level: str = "INFO") -> None:
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
     ]
 
@@ -46,8 +47,23 @@ def setup_logging(log_level: str = "INFO") -> None:
     root_logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     # Quieten noisy third-party loggers
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-    logging.getLogger("google").setLevel(logging.WARNING)
+    for noisy in (
+        "uvicorn.access",
+        "uvicorn.error",
+        "google",
+        "google.auth",
+        "google.cloud",
+        "google.adk",
+        "grpc",
+        "grpc._cython",
+        "httpx",
+        "httpcore",
+        "hpack",
+        "urllib3",
+        "firebase_admin",
+        "websockets",
+    ):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:

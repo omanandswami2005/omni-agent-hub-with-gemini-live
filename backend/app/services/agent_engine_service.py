@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+import time
 from contextlib import suppress
 from typing import Any
 
@@ -20,6 +21,10 @@ from app.config import get_settings
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Sandbox cache entry TTL — sandbox_ttl from settings is in seconds string
+# e.g. "86400s".  We cache for 80% of that to avoid using expired sandboxes.
+_SANDBOX_CACHE_TTL_RATIO = 0.8
 
 
 class AgentEngineService:
@@ -29,7 +34,8 @@ class AgentEngineService:
         self._settings = get_settings()
         self._client = None
         self._agent_engine_name: str | None = None
-        self._sandbox_by_key: dict[str, str] = {}
+        # { sandbox_key: (resource_name, created_at_monotonic) }
+        self._sandbox_by_key: dict[str, tuple[str, float]] = {}
 
     @property
     def enabled(self) -> bool:
@@ -191,10 +197,30 @@ class AgentEngineService:
             return int(op.response.purge_count)
         return 0
 
+    def _sandbox_ttl_seconds(self) -> float:
+        """Parse AGENT_ENGINE_SANDBOX_TTL (e.g. '86400s') to seconds."""
+        raw = self._settings.AGENT_ENGINE_SANDBOX_TTL.rstrip("s")
+        try:
+            return float(raw) * _SANDBOX_CACHE_TTL_RATIO
+        except ValueError:
+            return 86400 * _SANDBOX_CACHE_TTL_RATIO
+
+    def _evict_expired_sandboxes(self) -> None:
+        """Remove sandbox cache entries older than the TTL."""
+        ttl = self._sandbox_ttl_seconds()
+        now = time.monotonic()
+        expired = [k for k, (_, ts) in self._sandbox_by_key.items() if now - ts > ttl]
+        for k in expired:
+            self._sandbox_by_key.pop(k, None)
+        if expired:
+            logger.info("sandbox_cache_evicted", count=len(expired))
+
     async def _get_or_create_sandbox_name(self, sandbox_key: str) -> str:
-        existing = self._sandbox_by_key.get(sandbox_key)
-        if existing:
-            return existing
+        self._evict_expired_sandboxes()
+
+        entry = self._sandbox_by_key.get(sandbox_key)
+        if entry is not None:
+            return entry[0]
 
         client = self._get_client()
         op = client.agent_engines.sandboxes.create(
@@ -209,7 +235,7 @@ class AgentEngineService:
         if not op.response or not op.response.name:
             raise RuntimeError("Failed to create Agent Engine sandbox")
 
-        self._sandbox_by_key[sandbox_key] = op.response.name
+        self._sandbox_by_key[sandbox_key] = (op.response.name, time.monotonic())
         return op.response.name
 
     @staticmethod

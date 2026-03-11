@@ -122,7 +122,7 @@ class TestConnectDisconnect:
     @pytest.mark.asyncio
     async def test_connect_returns_existing(self, mgr):
         mock_toolset = MagicMock()
-        mgr._toolsets[("user1", "github")] = mock_toolset
+        mgr._toolsets[("user1", "github")] = (mock_toolset, 0.0)
 
         result = await mgr.connect_mcp("user1", "github")
         assert result is mock_toolset
@@ -141,7 +141,7 @@ class TestConnectDisconnect:
     @pytest.mark.asyncio
     async def test_disconnect_removes_toolset(self, mgr):
         mock_toolset = AsyncMock()
-        mgr._toolsets[("user1", "github")] = mock_toolset
+        mgr._toolsets[("user1", "github")] = (mock_toolset, 0.0)
         mgr._user_enabled["user1"] = {"github": True}
 
         result = await mgr.disconnect_mcp("user1", "github")
@@ -173,7 +173,7 @@ class TestToggle:
     @pytest.mark.asyncio
     async def test_toggle_off(self, mgr):
         mock_toolset = AsyncMock()
-        mgr._toolsets[("user1", "github")] = mock_toolset
+        mgr._toolsets[("user1", "github")] = (mock_toolset, 0.0)
         mgr._user_enabled["user1"] = {"github": True}
 
         result = await mgr.toggle_mcp(
@@ -194,7 +194,7 @@ class TestGetTools:
         mock_toolset = AsyncMock()
         mock_tool = MagicMock(name="mock_tool")
         mock_toolset.get_tools = AsyncMock(return_value=[mock_tool])
-        mgr._toolsets[("user1", "github")] = mock_toolset
+        mgr._toolsets[("user1", "github")] = (mock_toolset, 0.0)
         mgr._user_enabled["user1"] = {"github": True}
 
         tools = await mgr.get_tools("user1")
@@ -210,7 +210,7 @@ class TestGetTools:
     async def test_handles_tool_fetch_error(self, mgr):
         mock_toolset = AsyncMock()
         mock_toolset.get_tools = AsyncMock(side_effect=RuntimeError("fail"))
-        mgr._toolsets[("user1", "github")] = mock_toolset
+        mgr._toolsets[("user1", "github")] = (mock_toolset, 0.0)
         mgr._user_enabled["user1"] = {"github": True}
 
         tools = await mgr.get_tools("user1")

@@ -16,34 +16,44 @@ from app.api.ws_events import router as ws_events_router
 from app.api.ws_live import router as ws_live_router
 from app.config import settings
 from app.middleware.cors import setup_cors
+from app.services.connection_manager import get_connection_manager
 from app.utils.errors import register_exception_handlers
 from app.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
 
 
+# Paths that generate noise — skip logging entirely
+_SILENT_PATHS = {"/health", "/api/v1/health", "/favicon.ico"}
+
+
 class LoggingMiddleware(BaseHTTPMiddleware):
-    """Middleware to log all HTTP requests."""
+    """Production-grade HTTP request logger.
+
+    * Health-check / favicon requests are silenced.
+    * Successful (2xx) responses are logged at DEBUG.
+    * Non-2xx responses are logged at WARNING with timing.
+    """
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Log incoming request
-        logger.info(
-            "http_request",
-            method=request.method,
-            path=request.url.path,
-            client=request.client.host if request.client else "unknown",
-        )
+        if request.url.path in _SILENT_PATHS:
+            return await call_next(request)
 
-        # Process request
+        import time as _t
+        start = _t.monotonic()
         response = await call_next(request)
+        elapsed_ms = round((_t.monotonic() - start) * 1000, 1)
 
-        # Log response
-        logger.info(
-            "http_response",
+        log_kw = dict(
             method=request.method,
             path=request.url.path,
-            status_code=response.status_code,
+            status=response.status_code,
+            ms=elapsed_ms,
         )
+        if response.status_code >= 400:
+            logger.warning("http", **log_kw)
+        else:
+            logger.debug("http", **log_kw)
 
         return response
 
@@ -64,7 +74,38 @@ async def lifespan(app: FastAPI):
         version=settings.APP_VERSION,
         environment=settings.ENVIRONMENT,
     )
+
+    # Log active service backends for operational clarity
+    logger.info(
+        "service_backends",
+        vertex_ai=settings.GOOGLE_GENAI_USE_VERTEXAI,
+        agent_engine_sessions=settings.USE_AGENT_ENGINE_SESSIONS,
+        agent_engine_memory=settings.USE_AGENT_ENGINE_MEMORY_BANK,
+        agent_engine_code_exec=settings.USE_AGENT_ENGINE_CODE_EXECUTION,
+        project=settings.GOOGLE_CLOUD_PROJECT or "(not set)",
+        location=settings.GOOGLE_CLOUD_LOCATION,
+    )
+
+    # Eager validation: if Vertex AI is on, required config must be present
+    if settings.GOOGLE_GENAI_USE_VERTEXAI and not settings.GOOGLE_CLOUD_PROJECT:
+        raise RuntimeError(
+            "GOOGLE_GENAI_USE_VERTEXAI=True but GOOGLE_CLOUD_PROJECT is not set. "
+            "Set GOOGLE_CLOUD_PROJECT in .env or disable Vertex AI."
+        )
+
+    # Start the heartbeat reaper so stale WS connections are cleaned up
+    mgr = get_connection_manager()
+    mgr.start_reaper()
+
     yield
+
+    # Shutdown — stop reaper + close MCP connections
+    mgr.stop_reaper()
+    try:
+        from app.services.mcp_manager import get_mcp_manager
+        await get_mcp_manager().shutdown()
+    except Exception:
+        pass
     logger.info("backend_shutting_down")
     # Launch a delayed suicide sequence to avoid hanging on Windows thread pool teardown
     threading.Thread(target=_force_exit_delayed, daemon=True).start()

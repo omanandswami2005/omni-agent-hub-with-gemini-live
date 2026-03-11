@@ -1,5 +1,6 @@
 """Application settings — loaded from environment variables via Pydantic Settings."""
 
+import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,7 +19,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     ENVIRONMENT: str = "development"  # development | staging | production
     BACKEND_PORT: int = 8000
-    BACKEND_HOST: str = "0.0.0.0"  # Listen on all interfaces (required for container deployment like Cloud Run)
+    BACKEND_HOST: str = "::"  # Listen on all interfaces (required for container deployment like Cloud Run)
     LOG_LEVEL: str = "INFO"
 
     # --- Google Cloud / Vertex AI ---
@@ -26,6 +27,7 @@ class Settings(BaseSettings):
     GOOGLE_CLOUD_LOCATION: str = "us-central1"
     GOOGLE_GENAI_USE_VERTEXAI: bool = True
     GOOGLE_API_KEY: str = ""  # Alternative to Vertex AI for local dev
+    GOOGLE_APPLICATION_CREDENTIALS: str = ""  # Path to service account JSON
 
     # --- Vertex AI Agent Engine ---
     AGENT_ENGINE_NAME: str = ""  # projects/.../locations/.../reasoningEngines/...
@@ -45,6 +47,10 @@ class Settings(BaseSettings):
     # --- CORS ---
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
 
+    # --- Model Names ---
+    LIVE_MODEL: str = "gemini-live-2.5-flash-native-audio"  # Vertex AI native audio model
+    TEXT_MODEL: str = "gemini-2.5-flash"  # Standard text model
+
     # --- GCS (Cloud Storage) ---
     GCS_BUCKET_NAME: str = "omni-artifacts"
 
@@ -63,3 +69,26 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+# ── Export critical env vars so google-genai / google-auth / ADK can find them ──
+# Pydantic reads .env into Python but doesn't set os.environ; the Google
+# SDKs check os.environ directly.
+_ENV_EXPORTS = {
+    "GOOGLE_GENAI_USE_VERTEXAI": str(settings.GOOGLE_GENAI_USE_VERTEXAI).lower(),
+    "GOOGLE_CLOUD_PROJECT": settings.GOOGLE_CLOUD_PROJECT,
+    "GOOGLE_CLOUD_LOCATION": settings.GOOGLE_CLOUD_LOCATION,
+}
+if settings.GOOGLE_API_KEY:
+    _ENV_EXPORTS["GOOGLE_API_KEY"] = settings.GOOGLE_API_KEY
+if settings.GOOGLE_APPLICATION_CREDENTIALS:
+    # Resolve relative path (e.g. "firebase-sa.json") to absolute so
+    # google-auth can find it regardless of CWD.
+    _cred_path = settings.GOOGLE_APPLICATION_CREDENTIALS
+    if not os.path.isabs(_cred_path):
+        _cred_path = os.path.join(os.path.dirname(__file__), os.pardir, _cred_path)
+    _cred_path = os.path.abspath(_cred_path)
+    _ENV_EXPORTS["GOOGLE_APPLICATION_CREDENTIALS"] = _cred_path
+
+for _k, _v in _ENV_EXPORTS.items():
+    if _v and not os.environ.get(_k):
+        os.environ[_k] = _v

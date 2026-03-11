@@ -14,6 +14,7 @@ from __future__ import annotations
 from google.adk.agents import Agent
 from google.genai import types
 
+from app.config import settings
 from app.models.persona import PersonaResponse
 from app.tools.code_exec import get_code_exec_tools
 from app.tools.cross_client import get_cross_client_tools
@@ -24,9 +25,9 @@ from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Live-capable native audio model
-LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
-TEXT_MODEL = "gemini-2.5-flash"
+# Model names — configurable via env vars LIVE_MODEL / TEXT_MODEL
+LIVE_MODEL = settings.LIVE_MODEL
+TEXT_MODEL = settings.TEXT_MODEL
 
 # Persona IDs that get Google Search grounding by default
 _SEARCH_PERSONA_IDS = {"assistant", "researcher", "analyst"}

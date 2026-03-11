@@ -6,9 +6,8 @@ import { WS_RECONNECT_MIN_MS, WS_RECONNECT_MAX_MS } from '@/lib/constants';
 
 export const WS_URL = import.meta.env.VITE_WS_URL || `ws://${window.location.host}/ws/live`;
 
-export function createLiveConnection(token) {
-  const url = `${WS_URL}?token=${encodeURIComponent(token)}`;
-  return new WebSocket(url);
+export function createLiveConnection() {
+  return new WebSocket(WS_URL);
 }
 
 export function sendBinaryAudio(ws, pcm16Buffer) {

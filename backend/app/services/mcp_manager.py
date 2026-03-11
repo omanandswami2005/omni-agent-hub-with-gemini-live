@@ -8,6 +8,7 @@ created on first access and torn down on disconnect or toggle-off.
 from __future__ import annotations
 
 import contextlib
+import time
 
 from google.adk.tools.mcp_tool.mcp_toolset import (
     McpToolset,
@@ -20,6 +21,9 @@ from app.models.mcp import MCPCatalogItem, MCPConfig, MCPToggle, TransportType, 
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# MCP toolset idle TTL — if a toolset hasn't been accessed for this long, evict it.
+_MCP_TOOLSET_IDLE_TTL = 30 * 60  # 30 minutes
 
 # ---------------------------------------------------------------------------
 # Built-in MCP catalog (seed data)
@@ -148,8 +152,8 @@ class MCPManager:
     """
 
     def __init__(self) -> None:
-        # { (user_id, mcp_id): McpToolset }
-        self._toolsets: dict[tuple[str, str], McpToolset] = {}
+        # { (user_id, mcp_id): (McpToolset, last_access_monotonic) }
+        self._toolsets: dict[tuple[str, str], tuple[McpToolset, float]] = {}
         # { user_id: { mcp_id: enabled } }
         self._user_enabled: dict[str, dict[str, bool]] = {}
 
@@ -207,11 +211,15 @@ class MCPManager:
     async def connect_mcp(self, user_id: str, mcp_id: str) -> McpToolset | None:
         """Instantiate and return a :class:`McpToolset` for *mcp_id*.
 
-        Returns an existing toolset if already connected.
+        Returns an existing toolset if already connected (and refreshes its
+        last-access timestamp for idle TTL tracking).
         """
         key = (user_id, mcp_id)
-        if key in self._toolsets:
-            return self._toolsets[key]
+        entry = self._toolsets.get(key)
+        if entry is not None:
+            # Refresh access timestamp
+            self._toolsets[key] = (entry[0], time.monotonic())
+            return entry[0]
 
         config = self.get_mcp_config(mcp_id)
         if config is None:
@@ -220,7 +228,7 @@ class MCPManager:
 
         params = self._build_connection_params(config)
         toolset = McpToolset(connection_params=params)
-        self._toolsets[key] = toolset
+        self._toolsets[key] = (toolset, time.monotonic())
 
         # Mark enabled
         self._user_enabled.setdefault(user_id, {})[mcp_id] = True
@@ -230,8 +238,9 @@ class MCPManager:
     async def disconnect_mcp(self, user_id: str, mcp_id: str) -> bool:
         """Disconnect and clean up a toolset.  Returns True if it existed."""
         key = (user_id, mcp_id)
-        toolset = self._toolsets.pop(key, None)
-        if toolset is not None:
+        entry = self._toolsets.pop(key, None)
+        if entry is not None:
+            toolset = entry[0]
             try:
                 await toolset.close()
             except Exception:
@@ -240,7 +249,7 @@ class MCPManager:
         user_mcps = self._user_enabled.get(user_id, {})
         user_mcps.pop(mcp_id, None)
         logger.info("mcp_disconnected", user_id=user_id, mcp_id=mcp_id)
-        return toolset is not None
+        return entry is not None
 
     async def toggle_mcp(self, user_id: str, toggle: MCPToggle) -> bool:
         """Enable or disable an MCP.  Returns the new enabled state."""
@@ -265,8 +274,11 @@ class MCPManager:
                 continue
 
             key = (user_id, mcp_id)
-            toolset = self._toolsets.get(key)
-            if toolset is not None:
+            entry = self._toolsets.get(key)
+            if entry is not None:
+                toolset = entry[0]
+                # Refresh access timestamp
+                self._toolsets[key] = (toolset, time.monotonic())
                 try:
                     mcp_tools = await toolset.get_tools()
                     tools.extend(mcp_tools)
@@ -344,9 +356,32 @@ class MCPManager:
         for mcp_id in ids:
             await self.disconnect_mcp(user_id, mcp_id)
 
+    async def evict_idle_toolsets(self) -> int:
+        """Close toolsets that have been idle longer than the TTL.
+
+        Returns the number of evicted entries.  Called periodically by
+        the heartbeat reaper in ``ConnectionManager``.
+        """
+        now = time.monotonic()
+        expired: list[tuple[str, str]] = [
+            k for k, (_, ts) in self._toolsets.items()
+            if now - ts > _MCP_TOOLSET_IDLE_TTL
+        ]
+        for key in expired:
+            entry = self._toolsets.pop(key, None)
+            if entry is not None:
+                with contextlib.suppress(Exception):
+                    await entry[0].close()
+                user_id, mcp_id = key
+                user_mcps = self._user_enabled.get(user_id, {})
+                user_mcps.pop(mcp_id, None)
+        if expired:
+            logger.info("mcp_idle_evicted", count=len(expired))
+        return len(expired)
+
     async def shutdown(self) -> None:
         """Close all connections (server shutdown)."""
-        for (_user_id, _mcp_id), toolset in list(self._toolsets.items()):
+        for (_user_id, _mcp_id), (toolset, _) in list(self._toolsets.items()):
             with contextlib.suppress(Exception):
                 await toolset.close()
         self._toolsets.clear()

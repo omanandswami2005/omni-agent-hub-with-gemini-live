@@ -82,13 +82,15 @@ class TestEventBus:
         assert not q1.empty()
         assert q2.empty()
 
-    async def test_publish_full_queue_skipped(self):
+    async def test_publish_full_queue_drops_oldest(self):
         bus = EventBus()
         q: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
         bus.subscribe("u1", q)
         await bus.publish("u1", '{"first":1}')
-        await bus.publish("u1", '{"second":2}')  # should not raise (skipped)
+        await bus.publish("u1", '{"second":2}')  # should not raise; drops oldest
         assert q.qsize() == 1
+        # Newest event is kept, oldest is dropped
+        assert json.loads(q.get_nowait())["second"] == 2
 
     def test_multiple_subscribe_same_queue(self):
         bus = EventBus()

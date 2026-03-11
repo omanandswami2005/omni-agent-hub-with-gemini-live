@@ -1,1 +1,0 @@
-{"mcpServers":{"playwright":{"command":"npx","args":["-y","@playwright/mcp@0.0.38"],"alwaysAllow":["browser_navigate","browser_snapshot","browser_click","browser_console_messages"]},"puppeteer":{"command":"npx","args":["-y","@modelcontextprotocol/server-puppeteer"]}}}

@@ -87,7 +87,7 @@ async def ws_events(websocket: WebSocket) -> None:
         return
 
     bus = get_event_bus()
-    queue: asyncio.Queue[str] = asyncio.Queue()
+    queue = bus.create_queue()
 
     # Phase 2 - Subscribe to user's event stream
     bus.subscribe(user.uid, queue)
