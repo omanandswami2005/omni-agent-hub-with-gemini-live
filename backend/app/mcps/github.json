@@ -16,5 +16,83 @@
     "icon": "github",
     "tags": [
         "code_execution"
+    ],
+    "tools_summary": [
+        {
+            "name": "create_or_update_file",
+            "description": "Create or update a file in a repository"
+        },
+        {
+            "name": "search_repositories",
+            "description": "Search for GitHub repositories"
+        },
+        {
+            "name": "create_repository",
+            "description": "Create a new GitHub repository"
+        },
+        {
+            "name": "get_file_contents",
+            "description": "Get contents of a file or directory"
+        },
+        {
+            "name": "push_files",
+            "description": "Push multiple files in a single commit"
+        },
+        {
+            "name": "create_issue",
+            "description": "Create a new issue in a repository"
+        },
+        {
+            "name": "create_pull_request",
+            "description": "Create a new pull request"
+        },
+        {
+            "name": "fork_repository",
+            "description": "Fork a repository"
+        },
+        {
+            "name": "create_branch",
+            "description": "Create a new branch in a repository"
+        },
+        {
+            "name": "list_issues",
+            "description": "List issues in a repository"
+        },
+        {
+            "name": "update_issue",
+            "description": "Update an existing issue"
+        },
+        {
+            "name": "add_issue_comment",
+            "description": "Add a comment to an issue"
+        },
+        {
+            "name": "search_code",
+            "description": "Search for code across repositories"
+        },
+        {
+            "name": "search_issues",
+            "description": "Search for issues and pull requests"
+        },
+        {
+            "name": "list_commits",
+            "description": "List commits in a repository"
+        },
+        {
+            "name": "get_issue",
+            "description": "Get details of a specific issue"
+        },
+        {
+            "name": "get_pull_request",
+            "description": "Get details of a pull request"
+        },
+        {
+            "name": "list_pull_requests",
+            "description": "List pull requests in a repository"
+        },
+        {
+            "name": "create_or_update_file",
+            "description": "Create or update a single file"
+        }
     ]
 }

@@ -48,6 +48,7 @@ from app.models.plugin import (
     ToolSummary,
 )
 from app.services import secret_service
+from app.services.google_oauth_service import get_google_oauth_service
 from app.services.oauth_service import get_oauth_service
 from app.utils.logging import get_logger
 
@@ -201,6 +202,13 @@ class PluginRegistry:
                             state = PluginState.CONNECTED
                         else:
                             state = PluginState.ENABLED
+                    elif m.kind == PluginKind.NATIVE and m.google_oauth_scopes:
+                        # Google OAuth native — connected only if tokens exist
+                        goauth = get_google_oauth_service()
+                        if goauth.has_tokens(user_id, m.id):
+                            state = PluginState.CONNECTED
+                        else:
+                            state = PluginState.ENABLED
                     else:
                         state = PluginState.CONNECTED
 
@@ -218,6 +226,7 @@ class PluginRegistry:
                 tools_summary=summaries,
                 requires_auth=m.requires_auth,
                 env_keys=m.env_keys,
+                google_oauth_scopes=m.google_oauth_scopes,
                 version=m.version,
                 author=m.author,
             ))
@@ -463,6 +472,10 @@ class PluginRegistry:
             if manifest.kind == PluginKind.MCP_OAUTH:
                 get_oauth_service().revoke_tokens(user_id, plugin_id)
 
+        # Revoke Google OAuth tokens for native plugins
+        if manifest.kind == PluginKind.NATIVE and manifest.google_oauth_scopes:
+            get_google_oauth_service().revoke(user_id, plugin_id)
+
         user_mcps = self._user_enabled.get(user_id, {})
         user_mcps.pop(plugin_id, None)
         logger.info("plugin_disconnected", user_id=user_id, plugin_id=plugin_id)
@@ -588,6 +601,24 @@ class PluginRegistry:
                     )
             schemas.append(ToolSchema(name=name, description=desc, parameters=params))
         return schemas
+
+    def get_tool_source(self, tool_name: str) -> str | None:
+        """Return the plugin name that provides *tool_name*, or None.
+
+        Checks discovered summaries first (MCP tools), then native tool caches.
+        Used by the event pipeline to classify tool actions for the UI.
+        """
+        for plugin_id, summaries in self._discovered_summaries.items():
+            for s in summaries:
+                if s.name == tool_name:
+                    manifest = self._catalog.get(plugin_id)
+                    return manifest.name if manifest else plugin_id
+        # Also check tool_summary from manifests (before first connection)
+        for _plugin_id, manifest in self._catalog.items():
+            for s in manifest.tools_summary:
+                if s.name == tool_name:
+                    return manifest.name
+        return None
 
     # ------------------------------------------------------------------
     # Cleanup

@@ -14,5 +14,47 @@
     "tags": [
         "code_execution",
         "sandbox"
+    ],
+    "tools_summary": [
+        {
+            "name": "read_file",
+            "description": "Read complete contents of a file"
+        },
+        {
+            "name": "read_multiple_files",
+            "description": "Read multiple files simultaneously"
+        },
+        {
+            "name": "write_file",
+            "description": "Create or overwrite a file"
+        },
+        {
+            "name": "edit_file",
+            "description": "Make selective edits using advanced pattern matching"
+        },
+        {
+            "name": "create_directory",
+            "description": "Create a new directory or nested directories"
+        },
+        {
+            "name": "list_directory",
+            "description": "List directory contents with type indicators"
+        },
+        {
+            "name": "directory_tree",
+            "description": "Get a recursive tree view of directory structure"
+        },
+        {
+            "name": "move_file",
+            "description": "Move or rename files and directories"
+        },
+        {
+            "name": "search_files",
+            "description": "Recursively search for files matching a pattern"
+        },
+        {
+            "name": "get_file_info",
+            "description": "Get detailed metadata about a file or directory"
+        }
     ]
 }

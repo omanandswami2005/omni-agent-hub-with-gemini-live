@@ -16,5 +16,43 @@
     "icon": "slack",
     "tags": [
         "communication"
+    ],
+    "tools_summary": [
+        {
+            "name": "slack_list_channels",
+            "description": "List available Slack channels"
+        },
+        {
+            "name": "slack_post_message",
+            "description": "Post a message to a Slack channel"
+        },
+        {
+            "name": "slack_reply_to_thread",
+            "description": "Reply to a thread in a channel"
+        },
+        {
+            "name": "slack_add_reaction",
+            "description": "Add a reaction emoji to a message"
+        },
+        {
+            "name": "slack_get_channel_history",
+            "description": "Get recent messages from a channel"
+        },
+        {
+            "name": "slack_get_thread_replies",
+            "description": "Get replies in a message thread"
+        },
+        {
+            "name": "slack_search_messages",
+            "description": "Search for messages across channels"
+        },
+        {
+            "name": "slack_get_users",
+            "description": "List users in the workspace"
+        },
+        {
+            "name": "slack_get_user_profile",
+            "description": "Get profile info for a user"
+        }
     ]
 }

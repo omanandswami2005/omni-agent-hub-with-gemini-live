@@ -66,6 +66,33 @@ export const useMcpStore = create((set, _get) => ({
     await api.post('/plugins/secrets', { plugin_id: pluginId, secrets });
   },
 
+  /** Start Google OAuth flow for a native plugin — opens popup. */
+  startGoogleOAuth: async (pluginId) => {
+    const data = await api.post(`/plugins/${pluginId}/google-oauth/start`);
+    if (data?.auth_url) {
+      const w = 600, h = 700;
+      const left = window.screenX + (window.innerWidth - w) / 2;
+      const top = window.screenY + (window.innerHeight - h) / 2;
+      window.open(
+        data.auth_url,
+        'omni_google_oauth',
+        `width=${w},height=${h},left=${left},top=${top},popup=1`,
+      );
+    }
+    return data;
+  },
+
+  /** Disconnect a Google OAuth native plugin. */
+  disconnectGoogleOAuth: async (pluginId) => {
+    await api.post(`/plugins/${pluginId}/google-oauth/disconnect`);
+    set((state) => ({
+      catalog: state.catalog.map((m) =>
+        m.id === pluginId ? { ...m, state: 'available' } : m,
+      ),
+      installed: state.installed.filter((id) => id !== pluginId),
+    }));
+  },
+
   /** Called when OAuth popup sends a postMessage back. */
   handleOAuthCallback: (pluginId, status) => {
     if (status === 'success') {

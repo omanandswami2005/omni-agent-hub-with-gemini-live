@@ -16,6 +16,39 @@ export const useChatStore = create((set, get) => ({
   clearMessages: () => set({ messages: [] }),
 
   /**
+   * Add an action (tool_call) as a message. Returns the message id so
+   * the matching tool_response can update the same entry via completeAction.
+   */
+  addAction: (action) => {
+    const id = nextId();
+    set((s) => ({
+      messages: [
+        ...s.messages,
+        { id, timestamp: new Date().toISOString(), role: 'system', type: 'action', responded: false, ...action },
+      ],
+    }));
+    return id;
+  },
+
+  /**
+   * Merge a tool_response into its matching tool_call action in-place.
+   * Finds the last unresponded action with the same tool_name.
+   */
+  completeAction: (tool_name, response) => {
+    set((s) => {
+      const msgs = [...s.messages];
+      // Find the last unresponded action with this tool_name
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].type === 'action' && msgs[i].tool_name === tool_name && !msgs[i].responded) {
+          msgs[i] = { ...msgs[i], ...response, responded: true };
+          break;
+        }
+      }
+      return { messages: msgs };
+    });
+  },
+
+  /**
    * Handle transcription events from the WebSocket.
    * While `finished` is false, update the live transcript overlay.
    * When `finished` is true, commit the transcript as a chat message.

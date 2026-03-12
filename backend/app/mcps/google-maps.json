@@ -18,5 +18,35 @@
         "search",
         "maps",
         "gcp"
+    ],
+    "tools_summary": [
+        {
+            "name": "maps_geocode",
+            "description": "Convert an address to coordinates"
+        },
+        {
+            "name": "maps_reverse_geocode",
+            "description": "Convert coordinates to an address"
+        },
+        {
+            "name": "maps_search_places",
+            "description": "Search for places using Google Places API"
+        },
+        {
+            "name": "maps_place_details",
+            "description": "Get detailed info about a specific place"
+        },
+        {
+            "name": "maps_distance_matrix",
+            "description": "Calculate travel distance and time between locations"
+        },
+        {
+            "name": "maps_directions",
+            "description": "Get directions between two locations"
+        },
+        {
+            "name": "maps_elevation",
+            "description": "Get elevation data for locations"
+        }
     ]
 }

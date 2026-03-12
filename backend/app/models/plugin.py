@@ -171,6 +171,12 @@ class PluginManifest(BaseModel):
         description="If True, user must provide credentials (API keys) before enabling.",
     )
 
+    # ── Google OAuth scopes (for native plugins needing per-user Google tokens) ──
+    google_oauth_scopes: list[str] = Field(
+        default_factory=list,
+        description="Google OAuth 2.0 scopes. If set, plugin uses per-user Google OAuth.",
+    )
+
     # ── Context management ──
     max_context_tokens: int = Field(
         default=0,
@@ -199,6 +205,7 @@ class PluginStatus(BaseModel):
     tools_summary: list[ToolSummary] = Field(default_factory=list)
     requires_auth: bool = False
     env_keys: list[str] = Field(default_factory=list)
+    google_oauth_scopes: list[str] = Field(default_factory=list)
     version: str = "0.1.0"
     author: str = ""
 

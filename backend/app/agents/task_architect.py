@@ -149,6 +149,8 @@ break it into stages.  Each stage has an execution type:
 For every sub-task pick the best persona:
   assistant, coder, researcher, analyst, creative
 
+{tool_context}
+
 Return **only** valid JSON (no markdown fences) matching this schema:
 {{
   "stages": [
@@ -172,6 +174,7 @@ Rules:
 - Keep the total number of stages <= 5 and total sub-tasks <= 12.
 - Loop stages must have exactly one sub-task and max_iterations between 2 and 5.
 - If the task is simple (1 step), return a single stage with one task.
+- Prefer personas that have the right tools/plugins for the sub-task.
 
 TASK:
 {task}
@@ -192,8 +195,13 @@ class TaskArchitect:
         Used to publish progress events to the correct dashboard.
     """
 
-    def __init__(self, user_id: str) -> None:
+    def __init__(
+        self,
+        user_id: str,
+        tools_by_persona: dict[str, list] | None = None,
+    ) -> None:
         self.user_id = user_id
+        self._tools_by_persona = tools_by_persona or {}
         self._event_bus = get_event_bus()
 
     # -- Public API --------------------------------------------------------
@@ -202,10 +210,12 @@ class TaskArchitect:
         """Use Gemini to decompose *task* into a :class:`PipelineBlueprint`."""
         from google.genai import Client
 
+        tool_context = self._build_tool_context()
+
         client = Client(vertexai=True)
         response = client.models.generate_content(
             model=TEXT_MODEL,
-            contents=[_DECOMPOSE_PROMPT.format(task=task)],
+            contents=[_DECOMPOSE_PROMPT.format(task=task, tool_context=tool_context)],
         )
 
         raw_text = response.text or ""
@@ -288,6 +298,107 @@ class TaskArchitect:
         )
         return pipeline
 
+    async def execute_pipeline(
+        self,
+        blueprint: PipelineBlueprint,
+        pipeline: Agent,
+    ) -> str:
+        """Run *pipeline* with live stage-progress events on the EventBus.
+
+        Returns a summary string with per-stage outcomes.
+        """
+        from google.adk.runners import Runner
+        from google.adk.sessions import InMemorySessionService
+
+        session_service = InMemorySessionService()
+        runner = Runner(
+            app_name="omni-pipeline",
+            agent=pipeline,
+            session_service=session_service,
+        )
+
+        session = await session_service.create_session(
+            app_name="omni-pipeline", user_id=self.user_id,
+        )
+
+        # Publish "pending" for every stage up-front
+        for stage in blueprint.stages:
+            await self.publish_stage_update(
+                blueprint.pipeline_id, stage.name, "pending",
+            )
+
+        from google.genai import types as genai_types
+
+        results: list[str] = []
+        stage_idx = 0
+        current_stage = blueprint.stages[stage_idx] if blueprint.stages else None
+
+        if current_stage:
+            await self.publish_stage_update(
+                blueprint.pipeline_id, current_stage.name, "running", 0.0,
+            )
+
+        content = genai_types.Content(
+            role="user",
+            parts=[genai_types.Part.from_text(
+                f"Execute the following plan:\n{blueprint.task_description}"
+            )],
+        )
+
+        try:
+            async for event in runner.run_async(
+                user_id=self.user_id,
+                session_id=session.id,
+                new_message=content,
+            ):
+                # Detect agent-name changes to track stage transitions
+                agent_name = getattr(event, "author", "") or ""
+
+                # Collect text output
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if part.text:
+                            results.append(part.text)
+
+                # Check if we've moved to a new stage
+                if current_stage and agent_name == current_stage.name:
+                    pass  # still in same stage
+                elif blueprint.stages and stage_idx < len(blueprint.stages) - 1:
+                    # Mark current stage done, advance
+                    if current_stage:
+                        await self.publish_stage_update(
+                            blueprint.pipeline_id, current_stage.name, "completed", 1.0,
+                        )
+                    stage_idx += 1
+                    current_stage = blueprint.stages[stage_idx]
+                    await self.publish_stage_update(
+                        blueprint.pipeline_id, current_stage.name, "running", 0.0,
+                    )
+
+            # Mark final stage complete
+            if current_stage:
+                await self.publish_stage_update(
+                    blueprint.pipeline_id, current_stage.name, "completed", 1.0,
+                )
+
+        except Exception:
+            logger.exception(
+                "pipeline_execution_failed",
+                pipeline_id=blueprint.pipeline_id,
+            )
+            if current_stage:
+                await self.publish_stage_update(
+                    blueprint.pipeline_id, current_stage.name, "failed", 0.0,
+                )
+
+        summary = "\n".join(results) if results else "Pipeline completed with no text output."
+        logger.info(
+            "pipeline_executed",
+            pipeline_id=blueprint.pipeline_id,
+            result_chars=len(summary),
+        )
+        return summary
+
     async def publish_blueprint(self, blueprint: PipelineBlueprint) -> None:
         """Send the blueprint to dashboard via event bus."""
         event = json.dumps({
@@ -317,6 +428,33 @@ class TaskArchitect:
 
     # -- Internals ---------------------------------------------------------
 
+    def _build_tool_context(self) -> str:
+        """Build a tool/plugin summary string for the decomposition prompt."""
+        lines: list[str] = []
+
+        # T1 core tools per persona
+        from app.agents.agent_factory import T1_TOOL_REGISTRY
+        t1_caps = list(T1_TOOL_REGISTRY.keys())
+        if t1_caps:
+            lines.append("Core capabilities available to all personas: " + ", ".join(t1_caps))
+
+        # T2 plugin tools per persona
+        if self._tools_by_persona:
+            lines.append("\nEnabled plugins/tools per persona:")
+            for persona_id, tools in self._tools_by_persona.items():
+                if persona_id == "__device__":
+                    tool_names = [getattr(t, "name", getattr(t, "__name__", str(t))) for t in tools]
+                    lines.append(f"  device_agent: {', '.join(tool_names)}")
+                    continue
+                if not tools:
+                    continue
+                tool_names = [getattr(t, "name", getattr(t, "__name__", str(t))) for t in tools]
+                lines.append(f"  {persona_id}: {', '.join(tool_names)}")
+
+        if not lines:
+            return "No additional plugins or tools are currently enabled."
+        return "\n".join(lines)
+
     def _create_sub_agent(self, task: SubTask) -> Agent:
         """Build a focused LlmAgent for a single sub-task."""
         # Map persona_id to typical capabilities for task pipeline agents
@@ -328,7 +466,12 @@ class TaskArchitect:
             "creative": ["creative", "media"],
         }
         caps = _PERSONA_CAPS.get(task.persona_id, ["search"])
+        # T1 tools from capability mapping
         tools = get_tools_for_capabilities(caps)
+        # T2 plugin tools matched to this persona
+        t2_tools = self._tools_by_persona.get(task.persona_id, [])
+        if t2_tools:
+            tools = tools + list(t2_tools)
         return Agent(
             name=task.id,
             model=TEXT_MODEL,

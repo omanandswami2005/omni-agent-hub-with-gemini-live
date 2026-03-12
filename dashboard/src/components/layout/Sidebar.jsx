@@ -10,6 +10,7 @@ import {
   Store,
   Clock,
   Monitor,
+  Image as ImageIcon,
   Settings,
   PanelLeftClose,
   PanelLeft,
@@ -33,7 +34,8 @@ const NAV_ITEMS = [
   { to: '/mcp-store', label: 'MCP Store', icon: Store, shortcut: ['3'] },
   { id: 'sessions', to: '/sessions', label: 'Sessions', icon: Clock, shortcut: ['4'], hasSublist: true },
   { to: '/clients', label: 'Clients', icon: Monitor, shortcut: ['5'] },
-  { to: '/settings', label: 'Settings', icon: Settings, shortcut: ['6'] },
+  { to: '/gallery', label: 'Gallery', icon: ImageIcon, shortcut: ['6'] },
+  { to: '/settings', label: 'Settings', icon: Settings, shortcut: ['7'] },
 ];
 
 function SidebarSessionList() {
@@ -136,7 +138,7 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
-        {NAV_ITEMS.map(({ id, to, label, icon: Icon, shortcut, hasSublist }) => {
+        {NAV_ITEMS.map(({ to, label, icon: Icon, shortcut, hasSublist }) => {
           const isActive = to === '/'
             ? location.pathname === '/' || location.pathname.startsWith('/session/')
             : location.pathname.startsWith(to);

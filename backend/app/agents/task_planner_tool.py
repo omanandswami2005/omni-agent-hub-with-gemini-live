@@ -15,6 +15,18 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+async def _build_tools_for_architect(user_id: str) -> dict[str, list]:
+    """Build per-persona tool map for the TaskArchitect."""
+    try:
+        from app.agents.personas import get_default_personas
+        from app.services.tool_registry import get_tool_registry
+        personas = get_default_personas()
+        return await get_tool_registry().build_for_session(user_id, personas)
+    except Exception:
+        logger.warning("plan_task_tool_build_failed", user_id=user_id, exc_info=True)
+        return {}
+
+
 async def plan_task(user_id: str, task: str) -> str:
     """Decompose a complex task into an ordered plan of persona-routed steps.
 
@@ -29,13 +41,18 @@ async def plan_task(user_id: str, task: str) -> str:
         A structured plan listing each step, the persona to use, and
         the instruction for that step.
     """
-    architect = TaskArchitect(user_id=user_id)
+    tools_by_persona = await _build_tools_for_architect(user_id)
+    architect = TaskArchitect(user_id=user_id, tools_by_persona=tools_by_persona)
     blueprint = await architect.analyse_task(task)
 
     # Publish to dashboard for visual DAG display
     await architect.publish_blueprint(blueprint)
 
-    # Format as a clear plan the root can follow
+    # Build and execute the pipeline with live stage progress
+    pipeline = architect.build_pipeline(blueprint)
+    summary = await architect.execute_pipeline(blueprint, pipeline)
+
+    # Format as a clear plan + execution result the root can relay
     lines = [f"Plan '{blueprint.pipeline_id}' — {len(blueprint.stages)} stage(s):\n"]
     step = 1
     for stage in blueprint.stages:
@@ -45,10 +62,8 @@ async def plan_task(user_id: str, task: str) -> str:
             step += 1
         lines.append("")
 
-    lines.append(
-        "Execute by transferring to each persona in order using transfer_to_agent. "
-        "Pass the step instruction as context in your message to the persona."
-    )
+    lines.append("--- Execution Result ---")
+    lines.append(summary[:4000])  # Truncate to avoid excessive context
     return "\n".join(lines)
 
 

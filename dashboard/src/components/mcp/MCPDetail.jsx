@@ -17,10 +17,13 @@ export default function MCPDetail({ server, onToggle, onClose }) {
   const handleOAuthCallback = useMcpStore((s) => s.handleOAuthCallback);
   const fetchCatalog = useMcpStore((s) => s.fetchCatalog);
   const saveSecrets = useMcpStore((s) => s.saveSecrets);
+  const startGoogleOAuth = useMcpStore((s) => s.startGoogleOAuth);
+  const disconnectGoogleOAuth = useMcpStore((s) => s.disconnectGoogleOAuth);
 
   const isOAuth = server?.kind === 'mcp_oauth';
+  const isGoogleOAuth = server?.google_oauth_scopes?.length > 0;
   const isConnected = server?.state === 'connected';
-  const needsApiKeys = !isOAuth && server?.requires_auth && server?.env_keys?.length > 0;
+  const needsApiKeys = !isOAuth && !isGoogleOAuth && server?.requires_auth && server?.env_keys?.length > 0;
 
   // Reset secrets form when server changes
   useEffect(() => {
@@ -47,14 +50,22 @@ export default function MCPDetail({ server, onToggle, onClose }) {
   const handleOAuthConnect = async () => {
     setOauthLoading(true);
     try {
-      await startOAuth(server.id);
+      if (isGoogleOAuth) {
+        await startGoogleOAuth(server.id);
+      } else {
+        await startOAuth(server.id);
+      }
     } catch {
       setOauthLoading(false);
     }
   };
 
   const handleOAuthDisconnect = async () => {
-    await disconnectOAuth(server.id);
+    if (isGoogleOAuth) {
+      await disconnectGoogleOAuth(server.id);
+    } else {
+      await disconnectOAuth(server.id);
+    }
     fetchCatalog();
   };
 
@@ -73,11 +84,11 @@ export default function MCPDetail({ server, onToggle, onClose }) {
 
       <p className="text-sm text-muted-foreground">{server.description}</p>
 
-      {/* OAuth connect / disconnect */}
-      {isOAuth ? (
+      {/* OAuth connect / disconnect (MCP OAuth or Google OAuth native) */}
+      {(isOAuth || isGoogleOAuth) ? (
         <div className="flex items-center justify-between rounded-lg bg-muted/50 p-3">
           <div>
-            <span className="text-sm font-medium">OAuth Connection</span>
+            <span className="text-sm font-medium">{isGoogleOAuth ? 'Google Account' : 'OAuth Connection'}</span>
             {isConnected && <span className="ml-2 text-xs text-green-500">● Connected</span>}
             {server.state === 'error' && (
               <p className="mt-1 text-xs text-destructive">{server.error}</p>
@@ -96,7 +107,7 @@ export default function MCPDetail({ server, onToggle, onClose }) {
               disabled={oauthLoading}
               className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {oauthLoading ? 'Connecting…' : 'Connect with OAuth'}
+              {oauthLoading ? 'Connecting…' : isGoogleOAuth ? 'Connect Google Account' : 'Connect with OAuth'}
             </button>
           )}
         </div>

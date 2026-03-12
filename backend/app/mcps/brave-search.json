@@ -17,5 +17,15 @@
     "tags": [
         "search",
         "web"
+    ],
+    "tools_summary": [
+        {
+            "name": "brave_web_search",
+            "description": "Search the web using Brave Search"
+        },
+        {
+            "name": "brave_local_search",
+            "description": "Search for local businesses and places"
+        }
     ]
 }

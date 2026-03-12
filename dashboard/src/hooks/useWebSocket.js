@@ -94,28 +94,38 @@ export function useWebSocket() {
           }
           break;
         case 'tool_call':
-          // Skip internal ADK multi-agent routing calls
+          // Agent transfers get their own collapsible card
           if (msg.tool_name === 'transfer_to_agent') break;
           useChatStore.getState().setToolActive(msg.tool_name, true);
-          useChatStore.getState().addMessage({
-            role: 'system',
-            type: 'tool_call',
-            content: `Using tool: ${msg.tool_name}`,
+          useChatStore.getState().addAction({
             tool_name: msg.tool_name,
             arguments: msg.arguments,
             status: msg.status,
+            action_kind: msg.action_kind || 'tool',
+            source_label: msg.source_label || '',
           });
           break;
         case 'tool_response':
           // Skip internal ADK multi-agent routing responses
           if (msg.tool_name === 'transfer_to_agent') break;
           useChatStore.getState().setToolActive(msg.tool_name, false);
-          useChatStore.getState().addMessage({
-            role: 'system',
-            type: 'tool_response',
-            content: msg.result || `Tool ${msg.tool_name} completed`,
-            tool_name: msg.tool_name,
+          useChatStore.getState().completeAction(msg.tool_name, {
+            result: msg.result || `Tool ${msg.tool_name} completed`,
             success: msg.success,
+            action_kind: msg.action_kind || 'tool',
+            source_label: msg.source_label || '',
+          });
+          break;
+        case 'agent_transfer':
+          useChatStore.getState().addAction({
+            type: 'agent_transfer',
+            tool_name: 'transfer_to_agent',
+            to_agent: msg.to_agent || '',
+            from_agent: msg.from_agent || '',
+            message: msg.message || '',
+            action_kind: 'agent_transfer',
+            responded: true,
+            success: true,
           });
           break;
         case 'image_response':

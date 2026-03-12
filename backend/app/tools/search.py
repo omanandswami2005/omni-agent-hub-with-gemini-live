@@ -1,22 +1,21 @@
 """Google Search grounding tool for ADK agents.
 
 Provides grounded, citation-backed responses via Gemini's native Google
-Search integration.  The ADK built-in ``google_search`` tool injects a
-``GoogleSearch`` tool declaration into the LLM request so Gemini can
-autonomously decide when to search.  Responses include
-``grounding_metadata`` with source URLs and inline citations.
+Search integration.  Uses ADK's ``GoogleSearchAgentTool`` wrapper so the
+search tool can safely coexist with other function-call tools on any
+agent — regardless of how many explicit tools the agent has.
+
+The wrapper runs an internal ``google_search_agent`` sub-agent that calls
+``generateContent`` with only the ``GoogleSearch`` built-in tool,
+avoiding Vertex AI's "Multiple tools must all be search tools" restriction.
+Grounding metadata (source URLs, inline citations) flows back through
+ADK session state (``temp:_adk_grounding_metadata``).
 
 Usage::
 
     from app.tools.search import get_search_tool, get_search_tools
 
-    # Single pre-configured instance
     tool = get_search_tool()
-
-    # All search-related tools as a list
-    tools = get_search_tools()
-
-    # Use in an ADK Agent
     agent = Agent(name="sage", tools=[tool], ...)
 
 Compliance
@@ -33,41 +32,42 @@ See: https://ai.google.dev/gemini-api/docs/grounding/search-suggestions
 from __future__ import annotations
 
 from google.adk.tools import google_search as _builtin_google_search
+from google.adk.tools.google_search_agent_tool import (
+    GoogleSearchAgentTool,
+    create_google_search_agent,
+)
 from google.adk.tools.google_search_tool import GoogleSearchTool
 
+from app.config import settings
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
-# Pre-configured singleton
+# Pre-configured singleton — always uses TEXT_MODEL for generateContent
 # ---------------------------------------------------------------------------
 
-# ``bypass_multi_tools_limit=True`` allows google_search to coexist with
-# other function-call tools on the same agent (e.g. code_exec, MCP tools).
-_search_tool: GoogleSearchTool | None = None
+_search_tool: GoogleSearchAgentTool | None = None
 
 
-def get_search_tool() -> GoogleSearchTool:
-    """Return a re-usable ``GoogleSearchTool`` instance.
+def get_search_tool() -> GoogleSearchAgentTool:
+    """Return a re-usable ``GoogleSearchAgentTool`` instance.
 
-    The instance has ``bypass_multi_tools_limit`` enabled so it can be
-    combined with other tools on the same agent without hitting Gemini's
-    single-tool-type restriction.
+    Uses ``TEXT_MODEL`` (``gemini-2.5-flash``) for the internal search
+    sub-agent so it works correctly in both text-chat (``run_async``)
+    and live-audio (``run_live``) flows.  The live audio model does not
+    support ``generateContent``, so using TEXT_MODEL here is required.
     """
     global _search_tool
     if _search_tool is None:
-        _search_tool = GoogleSearchTool(bypass_multi_tools_limit=True)
-        logger.info("google_search_tool_initialized")
+        agent = create_google_search_agent(model=settings.TEXT_MODEL)
+        _search_tool = GoogleSearchAgentTool(agent)
+        logger.info("google_search_agent_tool_initialized", model=settings.TEXT_MODEL)
     return _search_tool
 
 
-def get_search_tools() -> list[GoogleSearchTool]:
-    """Return all search-related tools as a list.
-
-    Currently returns only the Google Search grounding tool.  Can be
-    extended to include Google Maps grounding when needed.
-    """
+def get_search_tools() -> list[GoogleSearchAgentTool]:
+    """Return all search-related tools as a list."""
     return [get_search_tool()]
 
 
@@ -75,6 +75,7 @@ def get_search_tools() -> list[GoogleSearchTool]:
 builtin_google_search = _builtin_google_search
 
 __all__ = [
+    "GoogleSearchAgentTool",
     "GoogleSearchTool",
     "builtin_google_search",
     "get_search_tool",

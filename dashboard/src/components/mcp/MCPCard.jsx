@@ -6,7 +6,9 @@ import MCPIcon from './MCPIcon';
 
 export default function MCPCard({ server, onSelect }) {
   const isOAuth = server?.kind === 'mcp_oauth';
+  const isGoogleOAuth = server?.google_oauth_scopes?.length > 0;
   const isConnected = server?.state === 'connected';
+  const needsOAuth = isOAuth || isGoogleOAuth;
 
   return (
     <button
@@ -25,9 +27,9 @@ export default function MCPCard({ server, onSelect }) {
         <span className="text-xs text-muted-foreground">
           {server?.tools_summary?.length || server?.tools?.length || 0} tools
         </span>
-        {isOAuth && isConnected && <span className="text-xs text-green-500">● OAuth Connected</span>}
-        {isOAuth && !isConnected && <span className="text-xs text-amber-500">OAuth Required</span>}
-        {!isOAuth && (server?.state === 'enabled' || server?.state === 'connected') && <span className="text-xs text-green-500">Active</span>}
+        {needsOAuth && isConnected && <span className="text-xs text-green-500">● Connected</span>}
+        {needsOAuth && !isConnected && <span className="text-xs text-amber-500">{isGoogleOAuth ? 'Google Sign-in Required' : 'OAuth Required'}</span>}
+        {!needsOAuth && (server?.state === 'enabled' || server?.state === 'connected') && <span className="text-xs text-green-500">Active</span>}
       </div>
     </button>
   );

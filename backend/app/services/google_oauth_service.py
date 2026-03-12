@@ -11,6 +11,7 @@ Required env vars (from GCP Console > APIs & Services > Credentials):
 
 from __future__ import annotations
 
+import contextlib
 import os
 import secrets
 import time
@@ -174,14 +175,10 @@ class GoogleOAuthService:
         key = (user_id, plugin_id)
         tokens = self._tokens.pop(key, None)
         if tokens and tokens.refresh_token:
-            try:
+            with contextlib.suppress(Exception):
                 httpx.post(_REVOKE_URL, params={"token": tokens.refresh_token}, timeout=5)
-            except Exception:
-                pass
-        try:
+        with contextlib.suppress(Exception):
             secret_service.delete_secrets(user_id, f"{plugin_id}-google-oauth")
-        except Exception:
-            pass
         logger.info("google_oauth_revoked", user_id=user_id, plugin_id=plugin_id)
 
     # ── internal ────────────────────────────────────────────────────
@@ -231,7 +228,7 @@ _instance: GoogleOAuthService | None = None
 
 
 def get_google_oauth_service() -> GoogleOAuthService:
-    global _instance  # noqa: PLW0603
+    global _instance
     if _instance is None:
         _instance = GoogleOAuthService()
     return _instance

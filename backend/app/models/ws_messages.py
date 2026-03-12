@@ -47,6 +47,17 @@ class ToolStatus(StrEnum):
     FAILED = "failed"
 
 
+class ActionKind(StrEnum):
+    """Classifies the source/type of a tool action for UI display."""
+
+    TOOL = "tool"  # Built-in ADK tool
+    MCP = "mcp"  # MCP server tool
+    NATIVE_PLUGIN = "native_plugin"  # Native plugin (e.g. Google Calendar)
+    CROSS_DEVICE = "cross_device"  # T3 reverse-RPC to another client
+    AGENT_TRANSFER = "agent_transfer"  # Sub-agent routing
+    IMAGE_GEN = "image_gen"  # Image generation tool
+
+
 # ── Client → Server ──────────────────────────────────────────────────
 
 
@@ -138,6 +149,8 @@ class ToolCallMessage(BaseModel):
     tool_name: str
     arguments: dict = {}
     status: ToolStatus = ToolStatus.STARTED
+    action_kind: ActionKind = ActionKind.TOOL
+    source_label: str = ""  # Human-readable source (e.g. MCP server name, plugin name, device)
 
 
 class ToolResponseMessage(BaseModel):
@@ -145,6 +158,8 @@ class ToolResponseMessage(BaseModel):
     tool_name: str
     result: str = ""
     success: bool = True
+    action_kind: ActionKind = ActionKind.TOOL
+    source_label: str = ""
 
 
 class ImageResponseMessage(BaseModel):
@@ -174,7 +189,7 @@ class ImageResponseMessage(BaseModel):
 
 class AgentActivityMessage(BaseModel):
     """Real-time agent activity: sub-agent calls, reasoning, MCP invocations.
-    
+
     This provides transparency into what the async agent is doing behind the scenes.
     """
     type: Literal["agent_activity"] = "agent_activity"
@@ -191,6 +206,15 @@ class ErrorMessage(BaseModel):
     type: Literal["error"] = "error"
     code: str
     description: str = ""
+
+
+class AgentTransferMessage(BaseModel):
+    """Notification that the root agent routed to a sub-agent."""
+
+    type: Literal["agent_transfer"] = "agent_transfer"
+    from_agent: str = ""
+    to_agent: str = ""
+    message: str = ""
 
 
 class StatusMessage(BaseModel):

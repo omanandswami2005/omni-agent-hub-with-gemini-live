@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.api.auth import router as auth_router
 from app.api.clients import router as clients_router
+from app.api.gallery import router as gallery_router
 from app.api.health import router as health_router
 from app.api.init import router as init_router
 from app.api.mcp import router as mcp_router
@@ -22,3 +23,4 @@ api_router.include_router(sessions_router, prefix="/sessions", tags=["sessions"]
 api_router.include_router(mcp_router, prefix="/mcp", tags=["mcp"])
 api_router.include_router(plugins_router, prefix="/plugins", tags=["plugins"])
 api_router.include_router(clients_router, prefix="/clients", tags=["clients"])
+api_router.include_router(gallery_router, prefix="/gallery", tags=["gallery"])

@@ -23,6 +23,7 @@ from app.models.plugin import (
     PluginUserSecrets,
     ToolSchema,
 )
+from app.services.google_oauth_service import get_google_oauth_service
 from app.services.oauth_service import get_oauth_service
 from app.services.plugin_registry import get_plugin_registry
 
@@ -185,6 +186,73 @@ async def disconnect_oauth(plugin_id: str, user: CurrentUser):
         raise HTTPException(status_code=404, detail=f"Plugin '{plugin_id}' not found")
     if manifest.kind != PluginKind.MCP_OAUTH:
         raise HTTPException(status_code=400, detail=f"Plugin '{plugin_id}' does not use OAuth")
+
+    await registry.disconnect_plugin(user.uid, plugin_id)
+    return {"plugin_id": plugin_id, "status": "disconnected"}
+
+
+# ---------------------------------------------------------------------------
+# Google OAuth — per-user Google account connection for native plugins
+# ---------------------------------------------------------------------------
+
+@router.post("/{plugin_id}/google-oauth/start")
+async def start_google_oauth(plugin_id: str, user: CurrentUser):
+    """Start Google OAuth 2.0 flow for a native plugin that needs per-user Google access."""
+    registry = get_plugin_registry()
+    manifest = registry.get_manifest(plugin_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail=f"Plugin '{plugin_id}' not found")
+    if not manifest.google_oauth_scopes:
+        raise HTTPException(status_code=400, detail=f"Plugin '{plugin_id}' does not use Google OAuth")
+
+    goauth = get_google_oauth_service()
+    auth_url = goauth.start_flow(
+        user_id=user.uid,
+        plugin_id=plugin_id,
+        scopes=manifest.google_oauth_scopes,
+    )
+    return {"auth_url": auth_url, "plugin_id": plugin_id}
+
+
+@router.get("/google-oauth/callback", response_class=HTMLResponse)
+async def google_oauth_callback(request: Request):
+    """Handle Google OAuth redirect callback."""
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    error = request.query_params.get("error")
+
+    if error:
+        return HTMLResponse(_oauth_result_page(success=False, message=error))
+
+    if not code or not state:
+        return HTMLResponse(_oauth_result_page(success=False, message="Missing code or state"))
+
+    try:
+        goauth = get_google_oauth_service()
+        user_id, plugin_id = await goauth.handle_callback(code, state)
+
+        # Auto-enable the plugin
+        registry = get_plugin_registry()
+        await registry.connect_plugin(user_id, plugin_id)
+
+        return HTMLResponse(_oauth_result_page(
+            success=True,
+            message=f"Google account connected for {plugin_id}!",
+            plugin_id=plugin_id,
+        ))
+    except Exception as exc:
+        return HTMLResponse(_oauth_result_page(success=False, message=str(exc)))
+
+
+@router.post("/{plugin_id}/google-oauth/disconnect")
+async def disconnect_google_oauth(plugin_id: str, user: CurrentUser):
+    """Revoke Google OAuth tokens and disconnect."""
+    registry = get_plugin_registry()
+    manifest = registry.get_manifest(plugin_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail=f"Plugin '{plugin_id}' not found")
+    if not manifest.google_oauth_scopes:
+        raise HTTPException(status_code=400, detail=f"Plugin '{plugin_id}' does not use Google OAuth")
 
     await registry.disconnect_plugin(user.uid, plugin_id)
     return {"plugin_id": plugin_id, "status": "disconnected"}

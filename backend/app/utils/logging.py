@@ -54,6 +54,7 @@ def setup_logging(log_level: str = "INFO") -> None:
         "google.auth",
         "google.cloud",
         "google.adk",
+        "google.genai",
         "grpc",
         "grpc._cython",
         "httpx",

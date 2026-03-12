@@ -39,8 +39,10 @@ from app.config import settings
 from app.middleware.auth_middleware import AuthenticatedUser, _get_firebase_app
 from app.models.client import ClientType
 from app.models.ws_messages import (
+    ActionKind,
     AgentResponse,
     AgentState,
+    AgentTransferMessage,
     AuthResponse,
     ConnectedMessage,
     ContentType,
@@ -565,6 +567,50 @@ async def _downstream(
             logger.exception("ws_downstream_error", user_id=user_id)
 
 
+# ── Tool classification ──────────────────────────────────────────────
+
+# Cross-device T3 tool names (from app.tools.cross_client)
+_CROSS_DEVICE_TOOLS = frozenset({
+    "send_to_desktop", "send_to_chrome", "send_to_dashboard",
+    "notify_client", "list_connected_clients",
+})
+
+# Native plugin tool names (from app.plugins.*)
+_NATIVE_PLUGIN_TOOLS: dict[str, str] = {
+    "list_calendar_events": "Google Calendar",
+    "create_calendar_event": "Google Calendar",
+    "delete_calendar_event": "Google Calendar",
+    "search_drive_files": "Google Drive",
+    "read_drive_file": "Google Drive",
+    "list_drive_files": "Google Drive",
+}
+
+
+def _classify_tool(tool_name: str) -> tuple[ActionKind, str]:
+    """Return (ActionKind, human-readable source label) for a tool name."""
+    from app.tools.image_gen import IMAGE_TOOL_NAMES
+
+    if tool_name in IMAGE_TOOL_NAMES:
+        return ActionKind.IMAGE_GEN, "Image Generation"
+    if tool_name in _CROSS_DEVICE_TOOLS:
+        return ActionKind.CROSS_DEVICE, "Cross-Device"
+    if tool_name in _NATIVE_PLUGIN_TOOLS:
+        return ActionKind.NATIVE_PLUGIN, _NATIVE_PLUGIN_TOOLS[tool_name]
+
+    # MCP tools are discovered dynamically — check the global registry.
+    # If a tool isn't in any known set, check if it belongs to an MCP plugin.
+    try:
+        from app.services.plugin_registry import get_plugin_registry
+        registry = get_plugin_registry()
+        mcp_label = registry.get_tool_source(tool_name)
+        if mcp_label:
+            return ActionKind.MCP, mcp_label
+    except Exception:
+        pass
+
+    return ActionKind.TOOL, ""
+
+
 async def _process_event(
     websocket: WebSocket,
     event: Event,
@@ -614,10 +660,25 @@ async def _process_event(
 
     # ── Tool calls ────────────────────────────────────────────────
     for fc in event.get_function_calls():
+        # Agent transfer → emit dedicated message instead of generic tool_call
+        if fc.name == "transfer_to_agent":
+            target = (fc.args or {}).get("agent_name", "")
+            transfer_msg = AgentTransferMessage(
+                to_agent=target,
+                message=(fc.args or {}).get("message", ""),
+            )
+            json_str = transfer_msg.model_dump_json()
+            await websocket.send_text(json_str)
+            await _publish(bus, user_id, json_str)
+            continue
+
+        kind, label = _classify_tool(fc.name)
         msg = ToolCallMessage(
             tool_name=fc.name,
             arguments=dict(fc.args) if fc.args else {},
             status=ToolStatus.STARTED,
+            action_kind=kind,
+            source_label=label,
         )
         json_str = msg.model_dump_json()
         await websocket.send_text(json_str)
@@ -633,6 +694,10 @@ async def _process_event(
     from app.tools.image_gen import IMAGE_TOOL_NAMES, drain_pending_images
 
     for fr in event.get_function_responses():
+        # Skip transfer_to_agent responses (already handled above)
+        if fr.name == "transfer_to_agent":
+            continue
+
         # Drain pending images queued by the tool for this user
         if fr.name in IMAGE_TOOL_NAMES and user_id:
             for img_data in drain_pending_images(user_id):
@@ -641,11 +706,14 @@ async def _process_event(
                 await websocket.send_text(json_str)
                 await _publish(bus, user_id, json_str)
 
+        kind, label = _classify_tool(fr.name)
         # Always send the tool response (text summary for image tools)
         msg = ToolResponseMessage(
             tool_name=fr.name,
             result=str(fr.response) if fr.response else "",
             success=True,
+            action_kind=kind,
+            source_label=label,
         )
         json_str = msg.model_dump_json()
         await websocket.send_text(json_str)

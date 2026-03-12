@@ -34,7 +34,6 @@ const ICON_MAP = {
     'google-drive': { Icon: HardDrive, color: '#4285F4' },
     'google-maps': { Icon: Map, color: '#34A853' },
     'google-calendar': { Icon: Calendar, color: '#4285F4' },
-    'bigquery': { Icon: Database, color: '#669DF6' },
     'vertex-ai': { Icon: Bot, color: '#4285F4' },
     'cloud-sql': { Icon: Database, color: '#4285F4' },
     cloud: { Icon: Cloud, color: '#4285F4' },

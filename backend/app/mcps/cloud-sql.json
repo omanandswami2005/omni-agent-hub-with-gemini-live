@@ -18,5 +18,19 @@
         "data",
         "gcp",
         "sql"
+    ],
+    "tools_summary": [
+        {
+            "name": "query",
+            "description": "Run a read-only SQL query against the database"
+        },
+        {
+            "name": "list_tables",
+            "description": "List all tables in the database"
+        },
+        {
+            "name": "describe_table",
+            "description": "Get schema and column info for a table"
+        }
     ]
 }
