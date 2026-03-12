@@ -15,6 +15,14 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _safe_category(value: str) -> MCPCategory:
+    """Convert a category string to MCPCategory, defaulting to OTHER."""
+    try:
+        return MCPCategory(value)
+    except (ValueError, KeyError):
+        return MCPCategory.OTHER
+
+
 # ---------------------------------------------------------------------------
 # MCPManager — thin compatibility wrapper
 # ---------------------------------------------------------------------------
@@ -43,7 +51,7 @@ class MCPManager:
                 id=s.id,
                 name=s.name,
                 description=s.description,
-                category=MCPCategory(s.category) if s.category in MCPCategory.__members__.values() else MCPCategory.OTHER,
+                category=_safe_category(s.category),
                 icon=s.icon,
                 enabled=s.state in ("enabled", "connected"),
                 is_sandbox=s.kind == "e2b",
@@ -63,7 +71,7 @@ class MCPManager:
             id=manifest.id,
             name=manifest.name,
             description=manifest.description,
-            category=MCPCategory(manifest.category) if manifest.category in MCPCategory.__members__.values() else MCPCategory.OTHER,
+            category=_safe_category(manifest.category),
             transport=transport,
             command=manifest.command,
             args=manifest.args,

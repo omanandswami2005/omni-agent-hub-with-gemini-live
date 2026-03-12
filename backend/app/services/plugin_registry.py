@@ -21,6 +21,7 @@ backend code needs to change.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import importlib
 import os
@@ -31,6 +32,7 @@ from typing import Any
 from google.adk.tools import FunctionTool
 from google.adk.tools.mcp_tool.mcp_toolset import (
     McpToolset,
+    SseConnectionParams,
     StdioConnectionParams,
     StreamableHTTPConnectionParams,
 )
@@ -58,6 +60,14 @@ _TOOLSET_IDLE_TTL = 30 * 60
 # Built-in plugin catalog
 # ---------------------------------------------------------------------------
 
+def _sandbox_dir() -> str:
+    """Return a cross-platform temp sandbox directory, creating it if needed."""
+    import tempfile
+    d = os.path.join(tempfile.gettempdir(), "omni_sandbox")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def _builtin_plugins() -> list[PluginManifest]:
     """Return the built-in plugin catalog.
 
@@ -78,17 +88,9 @@ def _builtin_plugins() -> list[PluginManifest]:
                 ToolSummary(name="install_package", description="Install a package in the sandbox"),
             ],
         ),
-        # ── Wikipedia (remote HTTP MCP — no API key needed) ──
-        PluginManifest(
-            id="wikipedia",
-            name="Wikipedia",
-            description="Search and read Wikipedia articles for factual research.",
-            category=PluginCategory.SEARCH,
-            kind=PluginKind.MCP_HTTP,
-            url="https://mcp.wiki/api",
-            icon="wikipedia",
-        ),
-        # ── Filesystem (stdio MCP — sandboxed to /tmp/sandbox) ──
+        # Wikipedia is now a native plugin (app/plugins/wikipedia_search.py)
+        # Auto-discovered at startup — no manifest needed here.
+        # ── Filesystem (stdio MCP — sandboxed directory) ──
         PluginManifest(
             id="filesystem",
             name="Filesystem",
@@ -96,7 +98,7 @@ def _builtin_plugins() -> list[PluginManifest]:
             category=PluginCategory.OTHER,
             kind=PluginKind.MCP_STDIO,
             command="npx",
-            args=["-y", "@anthropic/mcp-filesystem", "/tmp/sandbox"],
+            args=["-y", "@modelcontextprotocol/server-filesystem", _sandbox_dir()],
             icon="folder",
         ),
         # ── Brave Search ──
@@ -211,7 +213,7 @@ class PluginRegistry:
         if not plugins_dir.is_dir():
             return
         for path in plugins_dir.glob("*.py"):
-            if path.name.startswith("_"):
+            if path.name.startswith("_") or path.name == "TEMPLATE.py":
                 continue
             module_name = f"app.plugins.{path.stem}"
             try:
@@ -316,9 +318,9 @@ class PluginRegistry:
 
     def _build_mcp_params(
         self, manifest: PluginManifest, env: dict[str, str] | None = None,
-    ) -> StdioConnectionParams | StreamableHTTPConnectionParams:
+    ) -> StdioConnectionParams | SseConnectionParams | StreamableHTTPConnectionParams:
         if manifest.kind == PluginKind.MCP_HTTP:
-            return StreamableHTTPConnectionParams(url=manifest.url)
+            return SseConnectionParams(url=manifest.url)
         return StdioConnectionParams(
             server_params=StdioServerParameters(
                 command=manifest.command,
@@ -373,31 +375,36 @@ class PluginRegistry:
             return False
 
         params = self._build_mcp_params(manifest, env)
-        toolset = McpToolset(connection_params=params)
 
-        # Try to discover tools (validates the connection)
-        try:
-            tools = await toolset.get_tools()
-            # Cache discovered tool summaries
-            self._discovered_summaries[plugin_id] = [
-                ToolSummary(
-                    name=getattr(t, "name", str(t)),
-                    description=getattr(t, "description", ""),
-                )
-                for t in tools
-            ]
-        except Exception as exc:
-            # Connection failed — clean up
-            with contextlib.suppress(Exception):
-                await toolset.close()
-            self._errors[key] = f"Connection failed: {exc}"
-            logger.warning("mcp_connect_failed", plugin_id=plugin_id, error=str(exc))
-            return False
+        # Try to discover tools with retry (MCP subprocess can race on first connect)
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            toolset = McpToolset(connection_params=params)
+            try:
+                tools = await toolset.get_tools()
+                # Cache discovered tool summaries
+                self._discovered_summaries[plugin_id] = [
+                    ToolSummary(
+                        name=getattr(t, "name", str(t)),
+                        description=getattr(t, "description", ""),
+                    )
+                    for t in tools
+                ]
+                self._mcp_toolsets[key] = (toolset, time.monotonic())
+                self._user_enabled.setdefault(user_id, {})[plugin_id] = True
+                logger.info("mcp_connected", user_id=user_id, plugin_id=plugin_id, tools=len(tools))
+                return True
+            except Exception as exc:
+                last_exc = exc
+                with contextlib.suppress(Exception):
+                    await toolset.close()
+                if attempt < 2:
+                    logger.info("Retrying get_tools due to error: %s", exc)
+                    await asyncio.sleep(1.5 * (attempt + 1))
 
-        self._mcp_toolsets[key] = (toolset, time.monotonic())
-        self._user_enabled.setdefault(user_id, {})[plugin_id] = True
-        logger.info("mcp_connected", user_id=user_id, plugin_id=plugin_id, tools=len(tools))
-        return True
+        self._errors[key] = f"Connection failed: {last_exc}"
+        logger.warning("mcp_connect_failed", plugin_id=plugin_id, error=str(last_exc))
+        return False
 
     def _connect_native(self, plugin_id: str, manifest: PluginManifest) -> bool:
         if plugin_id in self._native_tool_cache:
@@ -537,13 +544,20 @@ class PluginRegistry:
             name = getattr(t, "name", str(t))
             desc = getattr(t, "description", "")
             params = {}
-            # Try to extract parameter schema from ADK tool
-            func_decl = getattr(t, "_function_declaration", None)
-            if func_decl is not None:
-                params_schema = getattr(func_decl, "parameters", None)
+            # Extract parameter schema from ADK tool declaration
+            decl = None
+            if hasattr(t, "_get_declaration"):
+                try:
+                    decl = t._get_declaration()
+                except Exception:
+                    pass
+            if decl is None:
+                decl = getattr(t, "_function_declaration", None)
+            if decl is not None:
+                params_schema = getattr(decl, "parameters", None)
                 if params_schema is not None:
                     params = (
-                        params_schema.model_dump()
+                        params_schema.model_dump(exclude_none=True)
                         if hasattr(params_schema, "model_dump")
                         else dict(params_schema)
                     )

@@ -1,157 +1,51 @@
-"""Local test MCP server — runs via stdio for integration testing.
+"""Local test MCP server — proper MCP protocol via FastMCP.
 
-Provides simple tools for testing the MCP integration with ADK:
+Provides tools for testing MCP integration with ADK's McpToolset:
   - echo: Echo back a message
-  - get_time: Return current server time
+  - get_server_time: Return current UTC time
   - calculate: Basic arithmetic
 
-Run directly:  python -m scripts.local_mcp_server
-Or via the test script which launches it as a subprocess.
+Run via stdio:
+    python scripts/local_mcp_server.py
 """
 
-import json
-import sys
+from datetime import datetime, timezone
+
+from mcp.server import FastMCP
+
+mcp = FastMCP("local-test-mcp")
 
 
-def handle_request(request: dict) -> dict:
-    """Handle a JSON-RPC request from the MCP client."""
-    method = request.get("method", "")
-    req_id = request.get("id")
-    params = request.get("params", {})
-
-    if method == "initialize":
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "local-test-mcp", "version": "0.1.0"},
-            },
-        }
-
-    if method == "notifications/initialized":
-        return None  # No response needed
-
-    if method == "tools/list":
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {
-                "tools": [
-                    {
-                        "name": "echo",
-                        "description": "Echo back a message — useful for testing MCP connectivity",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "message": {"type": "string", "description": "Message to echo"},
-                            },
-                            "required": ["message"],
-                        },
-                    },
-                    {
-                        "name": "get_server_time",
-                        "description": "Get the current server time",
-                        "inputSchema": {"type": "object", "properties": {}},
-                    },
-                    {
-                        "name": "calculate",
-                        "description": "Perform basic arithmetic (add, subtract, multiply, divide)",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "operation": {
-                                    "type": "string",
-                                    "description": "Operation: add, subtract, multiply, divide",
-                                    "enum": ["add", "subtract", "multiply", "divide"],
-                                },
-                                "a": {"type": "number", "description": "First operand"},
-                                "b": {"type": "number", "description": "Second operand"},
-                            },
-                            "required": ["operation", "a", "b"],
-                        },
-                    },
-                ],
-            },
-        }
-
-    if method == "tools/call":
-        tool_name = params.get("name", "")
-        arguments = params.get("arguments", {})
-
-        if tool_name == "echo":
-            msg = arguments.get("message", "")
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": {
-                    "content": [{"type": "text", "text": f"Echo: {msg}"}],
-                },
-            }
-
-        if tool_name == "get_server_time":
-            from datetime import datetime, timezone
-            now = datetime.now(timezone.utc).isoformat()
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": {
-                    "content": [{"type": "text", "text": f"Current server time: {now}"}],
-                },
-            }
-
-        if tool_name == "calculate":
-            op = arguments.get("operation", "")
-            a = float(arguments.get("a", 0))
-            b = float(arguments.get("b", 0))
-            ops = {
-                "add": a + b,
-                "subtract": a - b,
-                "multiply": a * b,
-                "divide": a / b if b != 0 else "Error: division by zero",
-            }
-            result = ops.get(op, f"Unknown operation: {op}")
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": {
-                    "content": [{"type": "text", "text": f"{a} {op} {b} = {result}"}],
-                },
-            }
-
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"},
-        }
-
-    # Unknown method
-    if req_id is not None:
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "error": {"code": -32601, "message": f"Unknown method: {method}"},
-        }
-    return None
+@mcp.tool()
+def echo(message: str) -> str:
+    """Echo back a message — useful for testing MCP connectivity."""
+    return f"Echo: {message}"
 
 
-def main():
-    """Run the MCP server on stdio (JSON-RPC over stdin/stdout)."""
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            request = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+@mcp.tool()
+def get_server_time() -> str:
+    """Get the current server time in UTC."""
+    return f"Current server time: {datetime.now(timezone.utc).isoformat()}"
 
-        response = handle_request(request)
-        if response is not None:
-            sys.stdout.write(json.dumps(response) + "\n")
-            sys.stdout.flush()
+
+@mcp.tool()
+def calculate(operation: str, a: float, b: float) -> str:
+    """Perform basic arithmetic (add, subtract, multiply, divide).
+
+    Args:
+        operation: One of add, subtract, multiply, divide
+        a: First operand
+        b: Second operand
+    """
+    ops = {
+        "add": a + b,
+        "subtract": a - b,
+        "multiply": a * b,
+        "divide": a / b if b != 0 else "Error: division by zero",
+    }
+    result = ops.get(operation, f"Unknown operation: {operation}")
+    return f"{a} {operation} {b} = {result}"
 
 
 if __name__ == "__main__":
-    main()
+    mcp.run(transport="stdio")

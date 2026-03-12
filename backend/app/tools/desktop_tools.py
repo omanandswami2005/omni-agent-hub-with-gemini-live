@@ -1,8 +1,23 @@
-"""Desktop computer-use ADK tools — control the desktop tray client.
+"""Desktop computer-use tools — DEPRECATED / T3 CLIENT-LOCAL.
 
-These tools send commands to the desktop client via the cross-client
-action layer.  The desktop tray app receives these as WebSocket messages
-and executes them locally (screenshot, click, type, launch app).
+⚠️  DO NOT wire these into backend agents.
+
+Why: Desktop actions (screenshot, click, type, file ops) run on the USER'S
+machine, not the server. They belong to the T3 tier — the desktop client
+declares its capabilities at connect time via ``local_tools``:
+
+    # desktop_client.py (on user's machine)
+    ws.send({"type": "auth", "local_tools": ["capture_screen", "click_at", ...]})
+
+The backend's T3 proxy system (cross_client.py / tool_registry.py) then
+auto-generates stub tools that dispatch via WebSocket back to the client.
+The client executes the action locally and sends back the result.
+
+For file operations, use the 'filesystem' MCP plugin instead (server-side
+sandboxed via @modelcontextprotocol/server-filesystem).
+
+This file is kept for reference only. ``get_desktop_tools()`` returns an
+empty list so nothing breaks if it's accidentally imported.
 """
 
 from __future__ import annotations
@@ -142,12 +157,5 @@ press_key_tool = FunctionTool(press_key)
 
 
 def get_desktop_tools() -> list[FunctionTool]:
-    """Return all desktop computer-use tools."""
-    return [
-        capture_screen_tool,
-        click_at_tool,
-        type_text_tool,
-        open_application_tool,
-        manage_files_tool,
-        press_key_tool,
-    ]
+    """Deprecated — returns empty list. Desktop actions are T3 client-local."""
+    return []

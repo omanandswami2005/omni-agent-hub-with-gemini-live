@@ -36,7 +36,10 @@ async def list_enabled(user: CurrentUser):
 
 @router.post("/toggle")
 async def toggle_plugin(body: PluginToggle, user: CurrentUser):
-    """Enable or disable a plugin for the user."""
+    """Enable or disable a plugin for the user.
+
+    .. todo:: Add per-user ownership / admin check for multi-tenant deployment.
+    """
     registry = get_plugin_registry()
     manifest = registry.get_manifest(body.plugin_id)
     if manifest is None:

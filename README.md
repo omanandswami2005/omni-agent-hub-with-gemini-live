@@ -240,22 +240,24 @@ Create custom personas: *"Create a new persona called Chef with a warm voice and
 
 ## MCP Plugin Store
 
-Omni's agent capabilities are extensible at runtime through the MCP Plugin Store:
+Omni's agent capabilities are extensible at runtime through the **PluginRegistry** — a unified plugin system supporting MCP servers, native Python modules, and E2B sandboxes. Enable/disable any plugin with a single toggle — the agent adapts instantly. No restart required.
 
-| Plugin | What It Does | Source |
+| Plugin | What It Does | Kind |
 |---|---|---|
-| Brave Search | Web search via Brave API | Community MCP |
+| Brave Search | Web search via Brave API | MCP Stdio |
 | Google Maps | Location data and directions | Built-in (Grounding) |
-| GitHub | Repo management, issues, PRs | Community MCP |
-| Slack | Send/read messages | Community MCP |
-| Wikipedia | Encyclopedia lookups | Community MCP |
-| Context7 | Up-to-date code documentation | Community MCP |
-| Filesystem | Read/write local files | Community MCP |
-| Chrome DevTools | Browser automation and scraping | Community MCP |
-| E2B Sandbox | Code execution (100+ languages) | E2B Gateway |
-| Memory | Long-term memory storage | Agent Engine |
+| GitHub | Repo management, issues, PRs | MCP Stdio |
+| Slack | Send/read messages | MCP Stdio |
+| Wikipedia | Encyclopedia lookups | MCP Stdio |
+| Context7 | Up-to-date code documentation | MCP Stdio |
+| Filesystem | Read/write local files | MCP Stdio |
+| Chrome DevTools | Browser automation and scraping | MCP Stdio |
+| E2B Sandbox | Code execution (100+ languages) | E2B |
+| Notification Sender | Webhook/log notifications | Native Plugin |
 
-Enable/disable any plugin with a single toggle — the agent adapts instantly. No restart required.
+**Create your own plugin** in 5 minutes: copy `backend/app/plugins/TEMPLATE.py`, edit the MANIFEST, implement your tool functions. The registry auto-discovers it at startup.
+
+**54 tests** cover plugin lifecycle, tool discovery, T3 proxy tools, and hardening fixes.
 
 ---
 
@@ -264,33 +266,48 @@ Enable/disable any plugin with a single toggle — the agent adapts instantly. N
 ```
 omni-agent-hub-with-gemini-live/
 ├── backend/                    # Python FastAPI + ADK
-│   ├── agents/                 # Agent definitions
-│   │   ├── root_agent.py       # Root orchestrator
-│   │   ├── personas/           # Nova, Atlas, Sage, Spark, Claire
-│   │   └── task_architect.py   # Meta-orchestrator (CustomAgent)
-│   ├── mcp/                    # MCP plugin management
-│   ├── tools/                  # Custom ADK tools
-│   ├── services/               # Session, auth, storage services
-│   ├── websocket/              # WebSocket handler (binary audio + JSON)
-│   └── main.py                 # FastAPI app entry point
-├── frontend/                   # React 19 + Vite
+│   ├── app/
+│   │   ├── agents/             # Agent definitions
+│   │   │   ├── root_agent.py   # Root orchestrator + persona dispatch
+│   │   │   └── agent_factory.py # Per-persona ADK Agent builder
+│   │   ├── api/                # REST + WebSocket endpoints
+│   │   │   ├── ws_live.py      # /ws/live (audio) + /ws/chat (text)
+│   │   │   ├── plugins.py      # Plugin catalog, toggle, schemas
+│   │   │   └── init.py         # Bootstrap endpoint (single-trip load)
+│   │   ├── tools/              # T1 core tools
+│   │   │   └── cross_client.py # Cross-device action tools
+│   │   ├── services/           # Business logic singletons
+│   │   │   ├── plugin_registry.py   # T2 plugin lifecycle (MCP+native+E2B)
+│   │   │   ├── tool_registry.py     # T1+T2+T3 orchestrator + T3 proxy factory
+│   │   │   ├── connection_manager.py # WS registry + capability storage
+│   │   │   ├── mcp_manager.py       # Backward-compat wrapper
+│   │   │   └── event_bus.py         # Dashboard event fan-out
+│   │   ├── plugins/            # Auto-discovered native plugins
+│   │   │   ├── notification_sender.py # Example native plugin
+│   │   │   └── TEMPLATE.py     # Developer template (copy to create plugins)
+│   │   ├── models/             # Pydantic schemas
+│   │   ├── middleware/         # Auth, CORS
+│   │   └── utils/              # Logging, errors
+│   ├── scripts/                # MCP test servers
+│   ├── tests/                  # 54 pytest tests
+│   │   └── test_services/      # Plugin registry, tool registry, bug fixes
+│   └── cli/                    # CLI client
+│       └── omni_cli.py         # Text-only agent in terminal
+├── dashboard/                  # React 19 + Vite
 │   ├── src/
 │   │   ├── components/         # UI components (shadcn/ui)
 │   │   ├── pages/              # Dashboard, Personas, Plugins, Sessions...
 │   │   ├── stores/             # Zustand state stores
 │   │   ├── hooks/              # useWebSocket, useAudioPipeline, etc.
-│   │   ├── audio/              # AudioWorklet recorder + streamer
-│   │   └── genui/              # Dynamic GenUI component renderer
+│   │   └── lib/                # Utilities
 │   └── index.html
-├── clients/
-│   ├── chrome-extension/       # Manifest V3 + vanilla JS
-│   ├── desktop/                # Python + pystray + pyautogui
-│   └── esp32/                  # Arduino WebSocket client (protocol only)
+├── Docs/                       # Architecture & planning
+│   ├── UNIFIED_MULTI_CLIENT_ARCHITECTURE.md  # Master architecture doc
+│   ├── DEVELOPMENT_CHECKLIST.md
+│   └── ...
 ├── deploy/
 │   ├── terraform/              # Cloud Run + Firestore + GCS + Secret Manager
-│   ├── Dockerfile
 │   └── scripts/
-├── docs/                       # Architecture diagrams, API docs
 ├── .env.example
 └── README.md
 ```

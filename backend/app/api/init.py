@@ -33,12 +33,21 @@ async def bootstrap(
     mcp_mgr = get_mcp_manager()
     plugin_registry = get_plugin_registry()
 
-    # Run the async Firestore calls concurrently
-    sessions_result, personas_result = await asyncio.gather(
-        session_svc.list_sessions(user.uid),
-        persona_svc.list_personas(user.uid),
-        return_exceptions=True,
-    )
+    # Run the async Firestore calls concurrently (with timeout to prevent
+    # frontend hanging if Firestore is slow at a conference venue).
+    _INIT_TIMEOUT = 10  # seconds
+    try:
+        sessions_result, personas_result = await asyncio.wait_for(
+            asyncio.gather(
+                session_svc.list_sessions(user.uid),
+                persona_svc.list_personas(user.uid),
+                return_exceptions=True,
+            ),
+            timeout=_INIT_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("init_firestore_timeout", user_id=user.uid, timeout=_INIT_TIMEOUT)
+        sessions_result, personas_result = [], []
 
     # Gracefully handle partial failures — return what succeeded
     if isinstance(sessions_result, BaseException):

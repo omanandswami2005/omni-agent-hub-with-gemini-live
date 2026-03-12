@@ -141,8 +141,9 @@ def _get_vertex_session_service():
 # runner is discarded so that MCP tool changes are picked up.
 _RUNNER_TTL = 10 * 60  # 10 minutes
 
-# { user_id: (Runner, enabled_mcp_ids_frozenset, created_monotonic) }
-_runner_cache: dict[str, tuple["Runner", frozenset[str], float]] = {}
+# { user_id: (Runner, cache_key_tuple, created_monotonic) }
+_runner_cache: dict[str, tuple["Runner", tuple, float]] = {}
+_runner_lock = asyncio.Lock()
 
 
 async def _get_runner(user_id: str, session_service=None):
@@ -162,41 +163,55 @@ async def _get_runner(user_id: str, session_service=None):
     mcp_mgr = get_mcp_manager()
     enabled_ids = frozenset(mcp_mgr.get_enabled_ids(user_id))
 
-    cached = _runner_cache.get(user_id)
-    if cached is not None:
-        runner, cached_ids, ts = cached
-        if time.monotonic() - ts < _RUNNER_TTL and cached_ids == enabled_ids:
-            return runner
-        # Stale or MCP set changed → discard
-        _runner_cache.pop(user_id, None)
+    # Include T3 tool names in cache key so runner rebuilds when clients connect/disconnect
+    from app.services.tool_registry import get_tool_registry
+    t3_names = frozenset(get_tool_registry().get_t3_tool_names(user_id))
+    cache_key = (enabled_ids, t3_names)
 
-    # Evict expired entries from other users while we're here
-    now = time.monotonic()
-    expired = [uid for uid, (_, _, ts) in _runner_cache.items() if now - ts > _RUNNER_TTL]
-    for uid in expired:
-        _runner_cache.pop(uid, None)
+    async with _runner_lock:
+        cached = _runner_cache.get(user_id)
+        if cached is not None:
+            runner, cached_key, ts = cached
+            if time.monotonic() - ts < _RUNNER_TTL and cached_key == cache_key:
+                return runner
+            # Stale or tool set changed → discard
+            _runner_cache.pop(user_id, None)
 
-    mcp_tools: list = []
-    try:
-        mcp_tools = await mcp_mgr.get_tools(user_id)
-    except Exception:
-        logger.warning("mcp_tools_load_failed", user_id=user_id, exc_info=True)
+        # Evict expired entries from other users while we're here
+        now = time.monotonic()
+        expired = [uid for uid, (_, _, ts) in _runner_cache.items() if now - ts > _RUNNER_TTL]
+        for uid in expired:
+            _runner_cache.pop(uid, None)
 
-    root = build_root_agent(mcp_tools=mcp_tools)
-    runner = Runner(
-        app_name=APP_NAME,
-        agent=root,
-        session_service=ss,
-    )
-    _runner_cache[user_id] = (runner, enabled_ids, time.monotonic())
-    logger.debug("runner_cached", user_id=user_id, mcp_count=len(mcp_tools))
-    return runner
+        # Build tools via ToolRegistry (T2 + T3)
+        all_tools: list = []
+        try:
+            all_tools = await get_tool_registry().build_for_session(user_id)
+        except Exception:
+            logger.warning("tool_registry_build_failed", user_id=user_id, exc_info=True)
+
+        root = build_root_agent(mcp_tools=all_tools)
+        runner = Runner(
+            app_name=APP_NAME,
+            agent=root,
+            session_service=ss,
+        )
+        _runner_cache[user_id] = (runner, cache_key, time.monotonic())
+        logger.debug("runner_cached", user_id=user_id, tool_count=len(all_tools))
+        return runner
 
 
 def invalidate_runner(user_id: str) -> None:
     """Remove a cached runner for *user_id* (e.g. after MCP toggle)."""
-    _runner_cache.pop(user_id, None)
-    _chat_runner_cache.pop(user_id, None)
+    had_live = _runner_cache.pop(user_id, None) is not None
+    had_chat = _chat_runner_cache.pop(user_id, None) is not None
+    if had_live or had_chat:
+        logger.info(
+            "runner_invalidated",
+            user_id=user_id,
+            live=had_live,
+            chat=had_chat,
+        )
 
 
 # ── ADK session ID cache (Vertex assigns IDs; we cache per user) ──────
@@ -243,7 +258,8 @@ async def _get_or_create_adk_session(user_id: str, session_service=None) -> str:
 
 # ── Chat Runner pool — uses TEXT_MODEL for generateContent ────────────
 
-_chat_runner_cache: dict[str, tuple["Runner", frozenset[str], float]] = {}
+_chat_runner_cache: dict[str, tuple["Runner", tuple, float]] = {}
+_chat_runner_lock = asyncio.Lock()
 
 
 async def _get_chat_runner(user_id: str, session_service=None):
@@ -257,28 +273,33 @@ async def _get_chat_runner(user_id: str, session_service=None):
     mcp_mgr = get_mcp_manager()
     enabled_ids = frozenset(mcp_mgr.get_enabled_ids(user_id))
 
-    cached = _chat_runner_cache.get(user_id)
-    if cached is not None:
-        runner, cached_ids, ts = cached
-        if time.monotonic() - ts < _RUNNER_TTL and cached_ids == enabled_ids:
-            return runner
-        _chat_runner_cache.pop(user_id, None)
+    from app.services.tool_registry import get_tool_registry
+    t3_names = frozenset(get_tool_registry().get_t3_tool_names(user_id))
+    cache_key = (enabled_ids, t3_names)
 
-    mcp_tools: list = []
-    try:
-        mcp_tools = await mcp_mgr.get_tools(user_id)
-    except Exception:
-        logger.warning("mcp_tools_load_failed", user_id=user_id, exc_info=True)
+    async with _chat_runner_lock:
+        cached = _chat_runner_cache.get(user_id)
+        if cached is not None:
+            runner, cached_key, ts = cached
+            if time.monotonic() - ts < _RUNNER_TTL and cached_key == cache_key:
+                return runner
+            _chat_runner_cache.pop(user_id, None)
 
-    root = build_root_agent(mcp_tools=mcp_tools, model=TEXT_MODEL)
-    runner = Runner(
-        app_name=APP_NAME,
-        agent=root,
-        session_service=ss,
-    )
-    _chat_runner_cache[user_id] = (runner, enabled_ids, time.monotonic())
-    logger.debug("chat_runner_cached", user_id=user_id, model=TEXT_MODEL, mcp_count=len(mcp_tools))
-    return runner
+        all_tools: list = []
+        try:
+            all_tools = await get_tool_registry().build_for_session(user_id)
+        except Exception:
+            logger.warning("tool_registry_build_failed_chat", user_id=user_id, exc_info=True)
+
+        root = build_root_agent(mcp_tools=all_tools, model=TEXT_MODEL)
+        runner = Runner(
+            app_name=APP_NAME,
+            agent=root,
+            session_service=ss,
+        )
+        _chat_runner_cache[user_id] = (runner, cache_key, time.monotonic())
+        logger.debug("chat_runner_cached", user_id=user_id, model=TEXT_MODEL, tool_count=len(all_tools))
+        return runner
 
 
 def _build_run_config(voice: str = "Aoede"):
@@ -314,10 +335,10 @@ def _build_run_config(voice: str = "Aoede"):
 # ── Authentication helper ─────────────────────────────────────────────
 
 
-async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, ClientType, str, str] | None:
+async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, ClientType, str, str, list[str], list[dict]] | None:
     """Wait for the first JSON frame and validate it as an auth message.
 
-    Returns ``(AuthenticatedUser, client_type, os_name, requested_session_id)``
+    Returns ``(AuthenticatedUser, client_type, os_name, requested_session_id, capabilities, local_tools)``
     on success, or ``None`` after sending an error and closing the socket.
     The ``requested_session_id`` is the **Firestore** session the client wants
     to resume (empty string if new).
@@ -361,12 +382,22 @@ async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, Cli
     user_agent = data.get("user_agent", "")
     os_name = detect_os(user_agent)
 
-    logger.info("ws_auth_ok", uid=decoded.get("uid"), client=client_type_str)
+    # Parse capabilities + local_tools from auth message
+    capabilities = data.get("capabilities", [])
+    local_tools = data.get("local_tools", [])
+
+    logger.info(
+        "ws_auth_ok",
+        uid=decoded.get("uid"),
+        client=client_type_str,
+        capabilities=len(capabilities),
+        local_tools=len(local_tools),
+    )
 
     # Optional: client can request to resume a specific Firestore session
     requested_session_id = data.get("session_id", "")
 
-    return AuthenticatedUser(decoded), client_type, os_name, requested_session_id
+    return AuthenticatedUser(decoded), client_type, os_name, requested_session_id, capabilities, local_tools
 
 
 async def _send_auth_error(websocket: WebSocket, error: str) -> None:
@@ -384,12 +415,14 @@ async def _upstream(
     websocket: WebSocket,
     queue: LiveRequestQueue,
     user_id: str,
+    client_type: ClientType | None = None,
 ) -> None:
     """Receive frames from the client and push into the ADK queue.
 
     - **Binary frames** → PCM audio → ``send_realtime``
     - **JSON text frames** → control messages → ``send_content``
     """
+    _upstream_client_type = client_type or ClientType.WEB
     from google.genai import types
 
     try:
@@ -436,6 +469,31 @@ async def _upstream(
                             logger.info("mcp_toggle_during_session", user_id=user_id, mcp_id=mcp_id, enabled=enabled)
                         except Exception:
                             logger.warning("mcp_toggle_failed", user_id=user_id, mcp_id=mcp_id, exc_info=True)
+                elif msg_type == "tool_result":
+                    # T3 reverse-RPC: client returning a tool result
+                    from app.services.tool_registry import resolve_tool_result
+                    call_id = data.get("call_id", "")
+                    result = data.get("result", {})
+                    error = data.get("error", "")
+                    if call_id:
+                        resolved = resolve_tool_result(call_id, result, error)
+                        if not resolved:
+                            logger.warning("t3_result_orphaned", user_id=user_id, call_id=call_id)
+                elif msg_type == "capability_update":
+                    # Client updating capabilities mid-session
+                    mgr = get_connection_manager()
+                    from app.models.client import ClientType as CT
+                    # We need client_type — stored in closure by the caller
+                    mgr.update_capabilities(
+                        user_id,
+                        _upstream_client_type,
+                        added=data.get("added", []),
+                        removed=data.get("removed", []),
+                        added_tools=data.get("added_tools", []),
+                        removed_tools=data.get("removed_tools", []),
+                    )
+                    invalidate_runner(user_id)
+                    logger.info("capability_update_during_session", user_id=user_id)
                 # Other control messages (persona_switch)
                 # are handled at the API layer, not pushed to ADK
     except (WebSocketDisconnect, RuntimeError):
@@ -676,15 +734,17 @@ async def ws_live(websocket: WebSocket) -> None:
     auth_result = await _authenticate_ws(websocket)
     if auth_result is None:
         return
-    user, client_type, os_name, requested_session_id = auth_result
+    user, client_type, os_name, requested_session_id, capabilities, local_tools = auth_result
 
     mgr = get_connection_manager()
     
     # Check if OTHER client types are already online (for session continuity)
     other_clients = mgr.get_other_clients_online(user.uid, client_type)
     
-    # Phase 2 — Register connection + prepare ADK session
+    # Phase 2 — Register connection + store capabilities + prepare ADK session
     await mgr.connect(websocket, user.uid, client_type, os_name=os_name)
+    if capabilities or local_tools:
+        mgr.store_capabilities(user.uid, client_type, capabilities, local_tools)
     
     # Get or create the ADK session (InMemory; we cache the ID)
     active_session_service = _get_session_service()
@@ -720,10 +780,25 @@ async def ws_live(websocket: WebSocket) -> None:
     default_persona = get_default_personas()[0]
     run_config = _build_run_config(voice=default_persona.voice)
 
+    # Build available tool names for auth response
+    from app.services.tool_registry import get_tool_registry
+    tool_registry = get_tool_registry()
+    available_tool_names: list[str] = []
+    try:
+        session_tools = await tool_registry.build_for_session(user.uid)
+        available_tool_names = [
+            getattr(t, 'name', getattr(t, '__name__', str(t)))
+            for t in session_tools
+        ]
+    except Exception:
+        logger.debug("tool_registry_preview_failed", user_id=user.uid)
+
     # Send auth success + connected message
     auth_ok = AuthResponse(
         status="ok", user_id=user.uid, session_id=session_id,
         firestore_session_id=firestore_session_id or "",
+        available_tools=available_tool_names,
+        other_clients_online=[str(ct) for ct in other_clients],
     )
     connected = ConnectedMessage(session_id=session_id)
     await websocket.send_text(auth_ok.model_dump_json())
@@ -754,7 +829,7 @@ async def ws_live(websocket: WebSocket) -> None:
     down_task: asyncio.Task | None = None
     try:
         up_task = asyncio.create_task(
-            _upstream(websocket, queue, user.uid), name="upstream",
+            _upstream(websocket, queue, user.uid, client_type), name="upstream",
         )
         down_task = asyncio.create_task(
             _downstream(websocket, runner, user.uid, session_id, queue, run_config),
@@ -826,10 +901,14 @@ async def ws_chat(websocket: WebSocket) -> None:
     auth_result = await _authenticate_ws(websocket)
     if auth_result is None:
         return
-    user, client_type, os_name, requested_session_id = auth_result
+    user, client_type, os_name, requested_session_id, capabilities, local_tools = auth_result
 
     active_session_service = _get_session_service()
     session_id = await _get_or_create_adk_session(user.uid, active_session_service)
+
+    # Store capabilities if provided
+    if capabilities or local_tools:
+        get_connection_manager().store_capabilities(user.uid, client_type, capabilities, local_tools)
 
     # Link Firestore session to ADK session
     from app.services.session_service import get_session_service as _get_fs_svc

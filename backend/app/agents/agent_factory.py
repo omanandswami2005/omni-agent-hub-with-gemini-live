@@ -19,7 +19,6 @@ from app.models.persona import PersonaResponse
 from app.tools.code_exec import get_code_exec_tools
 from app.tools.cross_client import get_cross_client_tools
 from app.tools.image_gen import get_image_gen_tools
-from app.tools.rag import get_rag_tools
 from app.tools.search import get_search_tool
 from app.utils.logging import get_logger
 
@@ -38,8 +37,8 @@ _CODE_EXEC_PERSONA_IDS = {"coder", "analyst"}
 # Persona IDs that get image generation tools (all personas can generate images)
 _IMAGE_GEN_PERSONA_IDS = {"creative", "assistant", "researcher", "analyst", "coder"}
 
-# Persona IDs that get RAG document tools
-_RAG_PERSONA_IDS = {"researcher", "analyst"}
+# RAG tools are now in the 'rag-documents' plugin — enable via plugin store
+# (removed from hardcoded agent_factory)
 
 
 def _build_speech_config(voice_name: str) -> types.SpeechConfig:
@@ -62,8 +61,6 @@ def _default_tools_for_persona(persona_id: str) -> list:
         tools.extend(get_code_exec_tools())
     if persona_id in _IMAGE_GEN_PERSONA_IDS:
         tools.extend(get_image_gen_tools())
-    if persona_id in _RAG_PERSONA_IDS:
-        tools.extend(get_rag_tools())
     # All personas get cross-client action tools
     tools.extend(get_cross_client_tools())
     return tools

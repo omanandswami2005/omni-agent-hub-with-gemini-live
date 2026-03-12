@@ -31,7 +31,16 @@
 
 **T1** — Defined in `backend/app/tools/` as ADK `FunctionTool` instances. Always available. Assigned to personas via `agent_factory.py`.
 
-**T2** — User toggles MCP servers on/off via the web dashboard. Config stored in Firestore (`{user_id, mcp_id, enabled}`). `MCPManager` lazily creates `McpToolset` instances with `StreamableHTTPConnectionParams` (remote) or `StdioConnectionParams` (local). Evicted on idle by the heartbeat reaper.
+**T2** — Managed by the **PluginRegistry** (`app/services/plugin_registry.py`). User toggles plugins on/off via the dashboard. The registry supports four plugin kinds:
+
+| Kind | Transport | Example |
+|---|---|---|
+| `mcp_stdio` | ADK `McpToolset` + `StdioConnectionParams` (subprocess) | GitHub, Brave Search, Filesystem |
+| `mcp_http` | ADK `McpToolset` + `StreamableHTTPConnectionParams` (remote) | Any remote MCP server |
+| `native` | Python module exporting `list[FunctionTool]` | Notification sender, custom integrations |
+| `e2b` | E2B `AsyncSandbox` via `e2b_service.py` | Sandboxed code execution |
+
+Plugins auto-discovered from `app/plugins/` at startup. MCP toolsets are lazily created per-user and evicted after 30 min idle.
 
 **T3** — Client advertises `local_tools` at auth handshake. Backend creates **ephemeral proxy tools** that route calls back to the client via WebSocket reverse-RPC. Tools vanish when client disconnects.
 
@@ -182,15 +191,15 @@ def _create_proxy_tool(tool_def: dict, user_id: str, client_type: ClientType) ->
 class ToolRegistry:
     """Assembles the final tool list for an agent session."""
 
-    def build_for_session(self, user_id: str) -> list[BaseTool]:
+    async def build_for_session(self, user_id: str) -> list[BaseTool]:
         tools = []
 
         # T1 — Core backend tools (always)
         tools.extend(get_core_tools(persona_id))
 
-        # T2 — User-enabled MCPs
-        mcp_mgr = get_mcp_manager()
-        tools.extend(mcp_mgr.get_tools(user_id))
+        # T2 — All user-enabled plugins (MCP + native + E2B)
+        plugin_registry = get_plugin_registry()
+        tools.extend(await plugin_registry.get_tools(user_id))
 
         # T3 — Client-local tools (from ConnectionManager capabilities)
         cm = get_connection_manager()
@@ -203,7 +212,217 @@ class ToolRegistry:
 
 ---
 
-## 6. ConnectionManager Extensions
+## 6. Plugin Architecture — T2 Deep Dive
+
+The **PluginRegistry** (`app/services/plugin_registry.py`) is the unified lifecycle manager for all T2 plugins. It replaces the old `MCPManager` with a scalable, pluggable system that any developer can extend independently.
+
+### 6.1 Plugin Manifest
+
+Every plugin is described by a `PluginManifest` — a self-contained configuration:
+
+```python
+class PluginManifest(BaseModel):
+    id: str                              # Unique identifier
+    name: str                            # Display name
+    description: str                     # One-line description
+    category: PluginCategory             # search, dev, productivity, etc.
+    kind: PluginKind                     # mcp_stdio | mcp_http | native | e2b
+
+    # MCP_STDIO fields
+    command: str = ""                    # e.g. "python", "npx"
+    args: list[str] = []                 # e.g. ["scripts/local_mcp_server.py"]
+    env_keys: list[str] = []             # Required env vars / secrets
+
+    # MCP_HTTP fields
+    url: str = ""                        # StreamableHTTP endpoint
+
+    # Native plugin fields
+    module: str = ""                     # e.g. "app.plugins.telegram_notify"
+    factory: str = "get_tools"           # Function returning list[FunctionTool]
+
+    # Behaviour
+    lazy: bool = True                    # Load tools only when user activates
+    requires_auth: bool = False          # User must provide API keys first
+    max_context_tokens: int = 0          # Context budget per turn (0 = unlimited)
+    tools_summary: list[ToolSummary] = []  # Pre-declared lightweight summaries
+```
+
+### 6.2 Plugin Lifecycle
+
+```
+           ┌──────────┐
+           │ AVAILABLE │ ← In catalog, not enabled
+           └────┬─────┘
+                │ user toggles ON
+                ▼
+           ┌──────────┐
+           │ ENABLED   │ ← Marked active, toolset not connected yet
+           └────┬─────┘
+                │ first tool access / lazy connect
+                ▼
+           ┌──────────┐
+           │ CONNECTED │ ← Toolset active, tools discovered
+           └────┬─────┘
+                │ error / disconnect
+                ▼
+           ┌──────────┐
+           │  ERROR    │ → retry on next access
+           └──────────┘
+```
+
+**MCP lifecycle via ADK:**
+```python
+# 1. Create toolset (ADK handles subprocess/HTTP lifecycle)
+toolset = McpToolset(
+    connection_params=StdioConnectionParams(
+        server_params=StdioServerParameters(
+            command="python",
+            args=["scripts/local_mcp_server.py"],
+        )
+    )
+)
+
+# 2. Discover tools (validates connection)
+tools = await toolset.get_tools()  # Returns list of ADK-compatible tools
+
+# 3. Call tools (ADK routes to MCP server transparently)
+result = await echo_tool.run_async(args={"message": "hello"}, tool_context=None)
+
+# 4. Close (ADK cleans up subprocess/connection)
+await toolset.close()
+```
+
+### 6.3 Plugin Kinds
+
+**MCP Stdio** — Spawns a subprocess that speaks MCP protocol over stdin/stdout. ADK manages the process lifecycle. Best for local tools.
+```python
+# Uses: python, npx, uvx, node, etc.
+PluginManifest(kind=PluginKind.MCP_STDIO, command="python", args=["server.py"])
+```
+
+**MCP HTTP** — Connects to a remote MCP server via StreamableHTTP. No subprocess needed.
+```python
+PluginManifest(kind=PluginKind.MCP_HTTP, url="https://mcp-server.example.com/mcp")
+```
+
+**Native** — A Python module in `app/plugins/` that exports ADK `FunctionTool` instances. Zero network overhead.
+```python
+PluginManifest(kind=PluginKind.NATIVE, module="app.plugins.telegram_notify", factory="get_tools")
+```
+
+**E2B** — Special built-in for sandboxed code execution via E2B cloud.
+```python
+PluginManifest(kind=PluginKind.E2B)  # Always e2b-sandbox
+```
+
+### 6.4 Auto-Discovery
+
+Developers add plugins by placing a Python file in `app/plugins/` with a `MANIFEST` attribute:
+
+```python
+# app/plugins/telegram_notify.py
+from google.adk.tools import FunctionTool
+from app.models.plugin import PluginManifest, PluginKind, PluginCategory
+
+async def send_telegram(chat_id: str, message: str) -> str:
+    """Send a Telegram message to a user or group."""
+    # ... implementation ...
+    return f"Message sent to {chat_id}"
+
+def get_tools() -> list[FunctionTool]:
+    return [FunctionTool(send_telegram)]
+
+MANIFEST = PluginManifest(
+    id="telegram-notify",
+    name="Telegram Notifications",
+    description="Send messages via Telegram Bot API.",
+    category=PluginCategory.COMMUNICATION,
+    kind=PluginKind.NATIVE,
+    module="app.plugins.telegram_notify",
+    factory="get_tools",
+    env_keys=["TELEGRAM_BOT_TOKEN"],
+    requires_auth=True,
+)
+```
+
+At startup, `PluginRegistry._discover_plugin_modules()` scans `app/plugins/*.py`, imports each module, and registers any `PluginManifest` it finds. **No other backend code needs to change.**
+
+### 6.5 Lazy Tool Loading — On-Demand Strategy
+
+To keep the agent's context window lean:
+
+1. **Summaries first** — Agent receives `ToolSummary` (name + one-line description) for every enabled plugin. This is ~20 tokens per tool.
+2. **Schemas on demand** — When the user asks for a specific capability, the API returns full `ToolSchema` (name + description + JSON Schema parameters). The agent then has everything to make the call.
+3. **Context budget** — Each plugin can declare `max_context_tokens` to cap how much context its tools consume per turn.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Agent System Prompt (always)                                    │
+│                                                                 │
+│ You have access to these plugins:                              │
+│   - E2B Sandbox: execute_code, install_package                 │  ← summaries only
+│   - GitHub: github_create_issue, github_list_repos             │     (~20 tokens each)
+│   - Telegram: send_telegram                                    │
+│                                                                 │
+│ When the user asks to use a plugin, call its tools directly.   │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ On-demand schema load (only when needed)                        │
+│                                                                 │
+│ GET /api/v1/plugins/github/tools                               │
+│ → [{name: "create_issue", params: {title: str, body: str}},   │
+│    {name: "list_repos", params: {org: str, page: int}}]        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 6.6 Plugin API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/v1/plugins/catalog` | Full catalog with per-user state |
+| `GET` | `/api/v1/plugins/enabled` | List of enabled plugin IDs |
+| `POST` | `/api/v1/plugins/toggle` | Enable/disable a plugin |
+| `POST` | `/api/v1/plugins/secrets` | Set user API keys for a plugin |
+| `GET` | `/api/v1/plugins/summaries` | Lightweight tool summaries (for agent) |
+| `GET` | `/api/v1/plugins/{id}/tools` | Full tool schemas (on-demand) |
+| `GET` | `/api/v1/plugins/{id}` | Plugin detail |
+
+### 6.7 Architecture Diagram
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                     PluginRegistry                            │
+│                                                               │
+│  ┌─────────────┐  ┌─────────────┐  ┌──────────────────────┐ │
+│  │  Built-in    │  │ Auto-       │  │   Runtime             │ │
+│  │  Catalog     │  │ Discovered  │  │   Registered          │ │
+│  │  (8 plugins) │  │ app/plugins/│  │   (API)               │ │
+│  └──────┬──────┘  └──────┬──────┘  └──────────┬───────────┘ │
+│         └────────────────┼─────────────────────┘             │
+│                          ▼                                    │
+│                   ┌──────────────┐                            │
+│                   │  _catalog    │  { id → PluginManifest }  │
+│                   └──────┬───────┘                            │
+│                          │                                    │
+│            ┌─────────────┼──────────────┐                    │
+│            ▼             ▼              ▼                     │
+│     ┌──────────┐  ┌──────────┐  ┌──────────────┐            │
+│     │MCP Stdio │  │MCP HTTP  │  │Native Module │            │
+│     │McpToolset│  │McpToolset│  │FunctionTool[]│            │
+│     │(per user)│  │(per user)│  │  (shared)    │            │
+│     └────┬─────┘  └────┬─────┘  └──────┬───────┘            │
+│          └──────────────┼───────────────┘                    │
+│                         ▼                                     │
+│                 ┌───────────────┐                             │
+│                 │  get_tools()  │ → list[ADK BaseTool]       │
+│                 └───────────────┘                             │
+└──────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 7. ConnectionManager Extensions
 
 ### Current State (Already Implemented)
 
@@ -226,7 +445,7 @@ The existing `ConnectionManager` already supports:
 
 ---
 
-## 7. WebSocket Message Protocol (Unified)
+## 8. WebSocket Message Protocol (Unified)
 
 ### Client → Server Messages
 
@@ -264,7 +483,7 @@ The existing `ConnectionManager` already supports:
 
 ---
 
-## 8. Cross-Client Action System
+## 9. Cross-Client Action System
 
 The `cross_client_action` tool lets the agent coordinate across connected devices:
 
@@ -292,7 +511,7 @@ async def cross_client_action(
 
 ---
 
-## 9. Client Types for Hackathon Presentation
+## 10. Client Types for Hackathon Presentation
 
 ### Currently Implemented
 
@@ -329,44 +548,45 @@ For a 5-minute hackathon demo, show **4 clients simultaneously**:
 
 ---
 
-## 10. Data Flow Diagram
+## 11. Data Flow Diagram
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                          BACKEND (Cloud Run)                          │
-│                                                                        │
-│  ┌───────────────┐  ┌──────────────────┐  ┌─────────────────────────┐ │
-│  │ ToolRegistry  │  │ ConnectionManager│  │    MCPManager           │ │
-│  │               │  │                  │  │                         │ │
-│  │ build_for_    │  │ { user_id:       │  │ { user_id:              │ │
-│  │  session()    │──│   { web: ws,     │  │   { github: toolset,    │ │
-│  │               │  │     desktop: ws, │  │     playwright: ... }   │ │
-│  │ T1 + T2 + T3 │  │     mobile: ws } │  │ }                       │ │
-│  └───────┬───────┘  │ }                │  └─────────────────────────┘ │
-│          │          │                  │                               │
-│          │          │ capabilities:    │                               │
-│          │          │ { desktop:       │                               │
-│          │          │   [write_file],  │                               │
-│          │          │   mobile:        │                               │
-│          │          │   [send_sms] }   │                               │
-│          │          └────────┬─────────┘                               │
-│          │                   │                                         │
-│          └─────┐    ┌───────┘                                         │
-│                │    │                                                  │
-│                ▼    ▼                                                  │
-│         ┌─────────────────┐                                           │
-│         │   ADK Runner    │ ← Agent sees ONE flat tool list           │
-│         │  run_live() /   │                                           │
-│         │  run_async()    │                                           │
-│         └────────┬────────┘                                           │
-│                  │                                                     │
-│    ┌─────────────┼──────────────┬──────────────┐                      │
-│    │             │              │              │                      │
-│    ▼             ▼              ▼              ▼                      │
-│  T1 exec      T2 exec       T3 route       T3 route                 │
-│  (local)      (MCP RPC)     → desktop WS    → mobile WS             │
-│                                                                        │
-└──────────┬─────────┬────────────┬──────────────┬──────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          BACKEND (Cloud Run)                            │
+│                                                                          │
+│  ┌───────────────┐  ┌──────────────────┐  ┌───────────────────────────┐ │
+│  │ ToolRegistry  │  │ ConnectionManager│  │     PluginRegistry        │ │
+│  │               │  │                  │  │                           │ │
+│  │ build_for_    │  │ { user_id:       │  │ MCP Stdio (McpToolset)    │ │
+│  │  session()    │──│   { web: ws,     │  │ MCP HTTP  (McpToolset)    │ │
+│  │               │  │     desktop: ws, │  │ Native    (FunctionTool)  │ │
+│  │ T1 + T2 + T3 │  │     mobile: ws } │  │ E2B       (AsyncSandbox)  │ │
+│  └───────┬───────┘  │ }                │  └───────────────────────────┘ │
+│          │          │                  │                                 │
+│          │          │ capabilities:    │  ┌───────────────────────────┐ │
+│          │          │ { desktop:       │  │     app/plugins/          │ │
+│          │          │   [write_file],  │  │  Auto-discovered modules  │ │
+│          │          │   mobile:        │  │  (MANIFEST attribute)     │ │
+│          │          │   [send_sms] }   │  └───────────────────────────┘ │
+│          │          └────────┬─────────┘                                 │
+│          │                   │                                           │
+│          └─────┐    ┌───────┘                                           │
+│                │    │                                                    │
+│                ▼    ▼                                                    │
+│         ┌─────────────────┐                                             │
+│         │   ADK Runner    │ ← Agent sees ONE flat tool list             │
+│         │  run_live() /   │    (summaries first, schemas on demand)     │
+│         │  run_async()    │                                             │
+│         └────────┬────────┘                                             │
+│                  │                                                       │
+│    ┌─────────────┼──────────────┬──────────────┐                        │
+│    │             │              │              │                        │
+│    ▼             ▼              ▼              ▼                        │
+│  T1 exec      T2 plugin     T3 route       T3 route                   │
+│  (local)      (MCP/Native/  → desktop WS    → mobile WS               │
+│               E2B)                                                      │
+│                                                                          │
+└──────────┬─────────┬────────────┬──────────────┬────────────────────────┘
            │         │            │              │
            ▼         ▼            ▼              ▼
        ┌───────┐ ┌────────┐ ┌─────────┐   ┌──────────┐
@@ -377,7 +597,7 @@ For a 5-minute hackathon demo, show **4 clients simultaneously**:
 
 ---
 
-## 11. Implementation Phases
+## 12. Implementation Phases
 
 ### Phase 1: Hackathon MVP (Current → March 17)
 
@@ -387,34 +607,48 @@ For a 5-minute hackathon demo, show **4 clients simultaneously**:
 - [x] Heartbeat reaper
 - [x] `cross_client_action` tool
 - [x] `EventBus` for multi-client event distribution
-- [ ] Extend auth handshake with `capabilities` + `local_tools`
-- [ ] Implement `store_capabilities()` in ConnectionManager
-- [ ] Build T3 proxy tool factory
-- [ ] CLI client (100-line Python script)
+- [x] **PluginRegistry** — unified plugin lifecycle manager (MCP + native + E2B)
+- [x] **Plugin manifest system** — `PluginManifest` with 4 kinds, auto-discovery
+- [x] **MCP via ADK** — `McpToolset` + `StdioConnectionParams` tested end-to-end
+- [x] **Native plugin example** — `app/plugins/notification_sender.py`
+- [x] **Lazy tool loading** — summaries first, schemas on demand
+- [x] **Plugin API** — `/api/v1/plugins/` catalog, toggle, secrets, schemas
+- [x] **MCPManager compat layer** — backward-compatible wrapper
+- [x] **E2B sandbox** — tested with 5 real scenarios
+- [x] **16 pytest tests** — plugin registry, MCP, native, lazy loading
+- [x] Extend auth handshake with `capabilities` + `local_tools`
+- [x] Implement `store_capabilities()` in ConnectionManager
+- [x] Build T3 proxy tool factory
+- [x] CLI client (100-line Python script)
+- [x] Plugin developer template (`app/plugins/TEMPLATE.py`)
+- [x] **Hardening audit (13 fixes)** — memory leak, race conditions, enum safety, timeouts, JSON validation
+- [x] **54 pytest tests passing** — 29 tool registry + 16 plugin registry + 9 bug-fix verification
 - [ ] Show 3+ clients in demo
 
 ### Phase 2: Production (Post-Hackathon)
 
 - [ ] Hard-gating in ToolRegistry (filter tools per-session based on capabilities)
 - [ ] `capability_update` WS message for dynamic permissions
-- [ ] Firestore persistence for T3 tool definitions (remember what desktop offers)
+- [ ] Firestore persistence for plugin state & T3 tool definitions
 - [ ] Tool call analytics & routing metrics
+- [ ] Plugin marketplace (community-contributed plugins via registry)
 - [ ] Formal OpenAPI spec for the WS protocol
 - [ ] VS Code extension client
 - [ ] Mobile (Capacitor) client with phone-native tools
 - [ ] Rate limiting per-user tool calls
+- [ ] Plugin health monitoring & auto-restart for failed MCP processes
 
 ### Phase 3: Scale
 
 - [ ] Multi-region with Cloud Run + Firestore global
 - [ ] Session handoff between clients (start on phone, continue on desktop)
 - [ ] Client capability negotiation (version compatibility)
-- [ ] Tool marketplace (community-contributed T2 MCPs)
+- [ ] Plugin sandboxing (resource limits per plugin)
 - [ ] Client SDK (npm/pip package for building new clients)
 
 ---
 
-## 12. Security Considerations
+## 13. Security Considerations
 
 | Concern | Mitigation |
 |---|---|
@@ -427,12 +661,68 @@ For a 5-minute hackathon demo, show **4 clients simultaneously**:
 
 ---
 
-## 13. Summary
+## 14. Summary
 
-The unified architecture combines three design patterns into one coherent system:
+The unified architecture combines four design patterns into one coherent system:
 
 1. **Tool tiering** (T1/T2/T3) — Every tool has a home, clear lifecycle, and routing path
-2. **Capability advertisement** — Clients declare what they can do; the backend adapts
-3. **Reverse-RPC** — Client-local tools are first-class agent tools, no client-specific backend code
+2. **Plugin architecture** — Scalable, pluggable T2 system where any developer can create MCP servers, native modules, or E2B tools independently — just add a file to `app/plugins/`
+3. **Capability advertisement** — Clients declare what they can do; the backend adapts
+4. **Reverse-RPC** — Client-local tools are first-class agent tools, no client-specific backend code
 
-The result: **one backend, unlimited client types, one conversation**. A new client (smart fridge, car, VR headset) just connects, advertises capabilities, and the agent immediately knows how to use it.
+The result: **one backend, unlimited client types, unlimited plugins, one conversation**. A new client (smart fridge, car, VR headset) just connects and advertises capabilities. A new plugin (Telegram, Spotify, custom MCP) just drops a manifest file. The agent immediately knows how to use everything.
+
+---
+
+## 15. Hardening Audit (March 12, 2026)
+
+Systematic audit of all backend services for hackathon demo stability and multi-developer extensibility. All fixes have dedicated tests in `TestBugFixes`.
+
+### 15.1 Critical Fixes
+
+| # | Issue | File | Fix |
+|---|---|---|---|
+| 1 | **Memory leak** — `resolve_tool_result()` didn't clean up `_pending_results` after resolving | `tool_registry.py` | Changed `.get()` to `.pop()` so call_id is removed immediately |
+| 2 | **Deprecated API** — `asyncio.get_event_loop()` emits warnings on Python 3.14 | `tool_registry.py` | Replaced with `asyncio.get_running_loop()` |
+| 3 | **Race condition** — `_runner_cache` and `_chat_runner_cache` had no concurrency protection | `ws_live.py` | Added `asyncio.Lock` to both `_get_runner()` and `_get_chat_runner()` |
+| 4 | **JSON injection** — `cross_client_action` payload forwarded LLM output without validation | `cross_client.py` | Added `_safe_parse_json()` — returns raw string on malformed JSON instead of crashing |
+| 5 | **Unsafe enum** — `MCPCategory(value)` crashes on unknown category strings | `mcp_manager.py` | Added `_safe_category()` with try/except, defaults to `MCPCategory.OTHER` |
+
+### 15.2 Reliability Fixes
+
+| # | Issue | File | Fix |
+|---|---|---|---|
+| 6 | **Silent event drops** — Dashboard queue (256) too small for active sessions | `event_bus.py` | Increased `_DEFAULT_QUEUE_MAXSIZE` from 256 to 1024 |
+| 7 | **Iteration mutation** — `_ping_all()` inner dict not copied before async iteration | `connection_manager.py` | Added `dict(user_conns)` copy before iterating |
+| 8 | **No timeout** — Bootstrap `asyncio.gather()` waits forever if Firestore is slow | `init.py` | Wrapped in `asyncio.wait_for(..., timeout=10)` with graceful fallback |
+
+### 15.3 Extensibility Fixes
+
+| # | Issue | File | Fix |
+|---|---|---|---|
+| 9 | **Limited T3 types** — Proxy tool type map only had string/int/float/bool | `tool_registry.py` | Added `array → list` and `object → dict` |
+| 10 | **No plugin template** — New developers had no starting point | `app/plugins/TEMPLATE.py` | Created documented template with MANIFEST schema, tool contract, and factory pattern |
+| 11 | **Silent invalidation** — Runner cache invalidation logged nothing | `ws_live.py` | `invalidate_runner()` now logs whether live/chat runners were evicted |
+| 12 | **Missing auth TODO** — Plugin toggle has no per-user ownership check | `plugins.py` | Added `.. todo::` docstring noting multi-tenant auth needed |
+| 13 | **Template auto-load** — `TEMPLATE.py` would be auto-discovered as a real plugin | `plugin_registry.py` | Added `TEMPLATE.py` to the exclusion list in `_discover_plugin_modules()` |
+
+### Key Files
+
+| File | Purpose |
+|---|---|
+| `app/models/plugin.py` | Plugin manifest & state Pydantic schemas |
+| `app/models/client.py` | ClientType enum (11 types) + ClientInfo |
+| `app/models/ws_messages.py` | WS message schemas incl. T3 reverse-RPC messages |
+| `app/services/plugin_registry.py` | Central plugin lifecycle manager (singleton) |
+| `app/services/tool_registry.py` | T1+T2+T3 tool orchestrator + T3 proxy factory |
+| `app/services/connection_manager.py` | WS registry with capability storage |
+| `app/services/mcp_manager.py` | Backward-compatible wrapper → PluginRegistry |
+| `app/api/plugins.py` | REST API for plugin catalog, toggle, schemas |
+| `app/api/ws_live.py` | WS endpoints with extended auth + T3 handling |
+| `app/plugins/__init__.py` | Auto-discovery package |
+| `app/plugins/notification_sender.py` | Example native plugin |
+| `scripts/local_mcp_server.py` | Test MCP server (FastMCP, stdio) |
+| `cli/omni_cli.py` | CLI client — text-only agent in terminal |
+| `tests/test_services/test_plugin_registry.py` | 16 pytest tests — plugin registry |
+| `tests/test_services/test_tool_registry.py` | 38 pytest tests — capabilities, T3, ToolRegistry, bug-fix verification |
+| `app/plugins/TEMPLATE.py` | Plugin developer template (excluded from auto-discovery) |

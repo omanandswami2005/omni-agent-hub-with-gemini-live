@@ -12,6 +12,12 @@ class ClientType(StrEnum):
     CHROME = "chrome"
     MOBILE = "mobile"
     GLASSES = "glasses"
+    CLI = "cli"
+    TV = "tv"
+    CAR = "car"
+    IOT = "iot"
+    VSCODE = "vscode"
+    BOT = "bot"
 
 
 def detect_os(user_agent: str) -> str:

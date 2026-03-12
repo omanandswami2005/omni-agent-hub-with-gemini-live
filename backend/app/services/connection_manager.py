@@ -40,6 +40,8 @@ class ConnectionManager:
     def __init__(self) -> None:
         # { user_id: { client_type: (WebSocket, connected_at, os_name) } }
         self._connections: dict[str, dict[ClientType, tuple[WebSocket, datetime, str]]] = {}
+        # { user_id: { client_type: { "capabilities": [...], "local_tools": [...] } } }
+        self._capabilities: dict[str, dict[ClientType, dict]] = {}
         self._reaper_task: asyncio.Task | None = None
 
     # ── Connect / Disconnect ──────────────────────────────────────────
@@ -83,6 +85,12 @@ class ConnectionManager:
         user_conns.pop(client_type, None)
         if not user_conns:
             self._connections.pop(user_id, None)
+        # Clean up capabilities for this client
+        user_caps = self._capabilities.get(user_id)
+        if user_caps is not None:
+            user_caps.pop(client_type, None)
+            if not user_caps:
+                self._capabilities.pop(user_id, None)
         logger.info("client_disconnected", user_id=user_id, client_type=client_type)
         await self._broadcast_client_status(user_id, event="disconnected", changed_client_type=client_type)
 
@@ -143,6 +151,74 @@ class ConnectionManager:
             await ws.send_text(message)
         except Exception:
             await self.disconnect(user_id, client_type)
+
+    # ── Capabilities ────────────────────────────────────────────────────
+
+    def store_capabilities(
+        self,
+        user_id: str,
+        client_type: ClientType,
+        capabilities: list[str] | None = None,
+        local_tools: list[dict] | None = None,
+    ) -> None:
+        """Store advertised capabilities and local tools for a client."""
+        user_caps = self._capabilities.setdefault(user_id, {})
+        user_caps[client_type] = {
+            "capabilities": capabilities or [],
+            "local_tools": local_tools or [],
+        }
+        logger.info(
+            "capabilities_stored",
+            user_id=user_id,
+            client_type=client_type,
+            capability_count=len(capabilities or []),
+            tool_count=len(local_tools or []),
+        )
+
+    def get_capabilities(self, user_id: str) -> dict[ClientType, dict]:
+        """Return capabilities for all connected clients of a user."""
+        return dict(self._capabilities.get(user_id, {}))
+
+    def update_capabilities(
+        self,
+        user_id: str,
+        client_type: ClientType,
+        added: list[str] | None = None,
+        removed: list[str] | None = None,
+        added_tools: list[dict] | None = None,
+        removed_tools: list[str] | None = None,
+    ) -> None:
+        """Update capabilities mid-session (add/remove)."""
+        user_caps = self._capabilities.setdefault(user_id, {})
+        entry = user_caps.setdefault(client_type, {"capabilities": [], "local_tools": []})
+
+        caps = set(entry["capabilities"])
+        if added:
+            caps.update(added)
+        if removed:
+            caps -= set(removed)
+        entry["capabilities"] = sorted(caps)
+
+        if added_tools:
+            existing_names = {t["name"] for t in entry["local_tools"]}
+            for t in added_tools:
+                if t.get("name") and t["name"] not in existing_names:
+                    entry["local_tools"].append(t)
+                    existing_names.add(t["name"])
+
+        if removed_tools:
+            entry["local_tools"] = [
+                t for t in entry["local_tools"]
+                if t.get("name") not in set(removed_tools)
+            ]
+
+        logger.info(
+            "capabilities_updated",
+            user_id=user_id,
+            client_type=client_type,
+            total_capabilities=len(entry["capabilities"]),
+            total_tools=len(entry["local_tools"]),
+        )
 
     # ── Queries ───────────────────────────────────────────────────────
 
@@ -215,7 +291,7 @@ class ConnectionManager:
         """Send a WebSocket ping to every connection; disconnect failures."""
         dead: list[tuple[str, ClientType]] = []
         for user_id, user_conns in list(self._connections.items()):
-            for ct, (ws, _, _os) in list(user_conns.items()):
+            for ct, (ws, _, _os) in list(dict(user_conns).items()):
                 try:
                     await asyncio.wait_for(ws.send_text('{"type":"ping"}'), timeout=_PING_TIMEOUT)
                 except Exception:

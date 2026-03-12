@@ -26,10 +26,23 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 ROOT_INSTRUCTION = (
-    "You are Omni, a multi-persona AI hub. "
-    "Route the user's request to the most appropriate specialist persona. "
-    "If the user explicitly asks for a persona by name, switch to it. "
-    "Otherwise, use your judgement based on the topic."
+    "You are Omni, a multi-persona AI hub that routes requests to specialist personas. "
+    "You MUST use the transfer_to_agent tool to delegate every user request to the correct persona. "
+    "NEVER try to answer directly or call tools yourself — always transfer first.\n\n"
+    "Available personas (use these exact names with transfer_to_agent):\n"
+    "- assistant — Claire: general questions, scheduling, everyday help\n"
+    "- researcher — Sage: Google Search, web research, Wikipedia, fact-finding, citations\n"
+    "- coder — Dev: code generation, debugging, code execution (execute_code tool)\n"
+    "- analyst — Nova: data analysis, charts, statistics, financial insights\n"
+    "- creative — Muse: brainstorming, writing, image generation\n\n"
+    "Routing rules:\n"
+    "1. If the user names a persona explicitly (e.g. 'use the researcher'), transfer to that persona.\n"
+    "2. For ANY search, research, or factual query → transfer to researcher.\n"
+    "3. For code writing or execution → transfer to coder.\n"
+    "4. For image generation → transfer to creative.\n"
+    "5. For data/charts/analysis → transfer to analyst.\n"
+    "6. For everything else → transfer to assistant.\n\n"
+    "IMPORTANT: Do NOT invent tool names. You only have transfer_to_agent."
 )
 
 
@@ -68,7 +81,8 @@ def build_root_agent(
         model=effective_model,
         instruction=ROOT_INSTRUCTION,
         sub_agents=sub_agents,
-        tools=mcp_tools or [],
+        # Root agent has NO tools — it only routes via transfer_to_agent.
+        # MCP tools are given to sub-agents via extra_tools in create_agent.
     )
     logger.info("root_agent_built", sub_agents=names, mcp_tool_count=len(mcp_tools or []))
     return root

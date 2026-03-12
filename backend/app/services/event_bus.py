@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 __all__ = ["EventBus", "get_event_bus"]
 
 # Max events buffered per subscriber queue before back-pressure kicks in.
-_DEFAULT_QUEUE_MAXSIZE = 256
+_DEFAULT_QUEUE_MAXSIZE = 1024
 
 
 class EventBus:

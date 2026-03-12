@@ -21,6 +21,14 @@ logger = get_logger(__name__)
 _ACTION_TIMEOUT = 10.0
 
 
+def _safe_parse_json(payload: str) -> dict | list | str:
+    """Parse a JSON string, returning the raw string on failure."""
+    try:
+        return json.loads(payload)
+    except (json.JSONDecodeError, TypeError):
+        return payload
+
+
 # ---------------------------------------------------------------------------
 # ADK tool functions
 # ---------------------------------------------------------------------------
@@ -153,7 +161,7 @@ async def _send_action(
     message = json.dumps({
         "type": "cross_client_action",
         "action": action,
-        "payload": json.loads(payload) if isinstance(payload, str) else payload,
+        "payload": _safe_parse_json(payload) if isinstance(payload, str) else payload,
     })
 
     await mgr.send_to_client(user_id, client_type, message)

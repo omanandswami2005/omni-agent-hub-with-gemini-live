@@ -55,7 +55,9 @@ class AuthMessage(BaseModel):
 
     type: Literal["auth"] = "auth"
     token: str
-    client_type: str = "web"  # web, mobile, desktop, chrome
+    client_type: str = "web"
+    capabilities: list[str] = []
+    local_tools: list[dict] = []
 
 
 class TextMessage(BaseModel):
@@ -110,6 +112,8 @@ class AuthResponse(BaseModel):
     user_id: str = ""
     session_id: str = ""  # ADK session ID
     firestore_session_id: str = ""  # Firestore session ID (for URL routing)
+    available_tools: list[str] = []  # Tool names available for this session
+    other_clients_online: list[str] = []  # Other connected client types
     error: str = ""
 
 
@@ -222,22 +226,53 @@ class ClientStatusUpdateMessage(BaseModel):
     client_type: str = ""
 
 
+# ── T3 Reverse-RPC Messages ─────────────────────────────────────────
+
+
+class CapabilityUpdateMessage(BaseModel):
+    """Client updates its capabilities mid-session."""
+
+    type: Literal["capability_update"] = "capability_update"
+    added: list[str] = []
+    removed: list[str] = []
+    added_tools: list[dict] = []  # New local_tools to register
+    removed_tools: list[str] = []  # Tool names to unregister
+
+
+class ToolInvocationMessage(BaseModel):
+    """Server → client: invoke a T3 local tool on the client."""
+
+    type: Literal["tool_invocation"] = "tool_invocation"
+    call_id: str
+    tool: str
+    args: dict = {}
+
+
+class ToolResultMessage(BaseModel):
+    """Client → server: result of a T3 local tool invocation."""
+
+    type: Literal["tool_result"] = "tool_result"
+    call_id: str
+    result: dict | str = {}
+    error: str = ""
+
+
 # ── Discriminated Union ──────────────────────────────────────────────
 
 ClientMessage = Annotated[
-    AuthMessage | TextMessage | ImageMessage | PersonaSwitchMessage | MCPToggleMessage | ControlMessage,
+    AuthMessage | TextMessage | ImageMessage | PersonaSwitchMessage | MCPToggleMessage | ControlMessage | CapabilityUpdateMessage | ToolResultMessage,
     Field(discriminator="type"),
 ]
 """Any JSON frame the **client** may send (excluding binary audio)."""
 
 ServerMessage = Annotated[
-    AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ImageResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage | ClientStatusUpdateMessage,
+    AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ImageResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage | ClientStatusUpdateMessage | ToolInvocationMessage,
     Field(discriminator="type"),
 ]
 """Any JSON frame the **server** may send (excluding binary audio)."""
 
 WSMessage = Annotated[
-    AuthMessage | TextMessage | ImageMessage | PersonaSwitchMessage | MCPToggleMessage | ControlMessage | AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ImageResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage | ClientStatusUpdateMessage,
+    AuthMessage | TextMessage | ImageMessage | PersonaSwitchMessage | MCPToggleMessage | ControlMessage | CapabilityUpdateMessage | ToolResultMessage | AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ImageResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage | ClientStatusUpdateMessage | ToolInvocationMessage,
     Field(discriminator="type"),
 ]
 """Parse any WS JSON frame: ``TypeAdapter(WSMessage).validate_json(raw)``."""

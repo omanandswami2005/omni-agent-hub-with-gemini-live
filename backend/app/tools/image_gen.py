@@ -17,17 +17,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import uuid
-from typing import TYPE_CHECKING
 
 from google import genai
 from google.adk.tools import FunctionTool
+from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
 from app.config import get_settings
 from app.utils.logging import get_logger
-
-if TYPE_CHECKING:
-    from google.adk.tools.tool_context import ToolContext
 
 logger = get_logger(__name__)
 

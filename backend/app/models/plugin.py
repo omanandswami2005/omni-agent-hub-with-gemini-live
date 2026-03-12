@@ -36,6 +36,7 @@ class PluginCategory(StrEnum):
     SANDBOX = "sandbox"
     DATA = "data"
     CREATIVE = "creative"
+    KNOWLEDGE = "knowledge"
     OTHER = "other"
 
 
