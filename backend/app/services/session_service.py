@@ -1,7 +1,7 @@
 """Session management — Firestore-backed CRUD.
 
 All sessions are scoped to a user_id. Firestore collection layout:
-  sessions/{session_id}  →  { user_id, persona_id, title, message_count, created_at, updated_at }
+  sessions/{session_id}  →  { user_id, persona_id, title, message_count, adk_session_id, created_at, updated_at }
 
 Indexed on (user_id, created_at DESC) for efficient list queries.
 """
@@ -102,6 +102,29 @@ class SessionService:
         await self.get_session(user_id, session_id)
         self.db.collection(COLLECTION).document(session_id).delete()
         logger.info("session_deleted", session_id=session_id, user_id=user_id)
+
+    # ── Link to ADK session ───────────────────────────────────────────
+
+    async def link_adk_session(
+        self, session_id: str, adk_session_id: str,
+    ) -> None:
+        """Store the ADK session ID on a Firestore session doc."""
+        self.db.collection(COLLECTION).document(session_id).update({
+            "adk_session_id": adk_session_id,
+            "updated_at": datetime.now(UTC),
+        })
+
+    async def get_latest_session_for_user(self, user_id: str) -> SessionResponse | None:
+        """Return the most recent session for a user, or None."""
+        query = (
+            self.db.collection(COLLECTION)
+            .where(filter=firestore.FieldFilter("user_id", "==", user_id))
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .limit(1)
+        )
+        for snap in query.stream():
+            return SessionResponse(id=snap.id, **snap.to_dict())
+        return None
 
 
 # ── Module-level singleton ────────────────────────────────────────────

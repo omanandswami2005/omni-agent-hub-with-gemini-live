@@ -75,45 +75,64 @@ APP_NAME = "omni-hub"
 AUDIO_INPUT_MIME = "audio/pcm;rate=16000"
 
 _adk_session_service = None  # lazy — built on first call to _get_session_service()
+_vertex_session_service = None  # lazy — for background persistence only
 
 
 def _get_session_service():
-    """Lazy singleton: build the ADK session service on first access.
+    """Always returns InMemorySessionService for zero-latency run_live().
 
-    When ``USE_AGENT_ENGINE_SESSIONS`` is *True* (requires Vertex AI),
-    uses ``VertexAiSessionService`` backed by Agent Engine — failures are
-    **not** silently swallowed so misconfigurations surface immediately.
-
-    When *False*, uses ``InMemorySessionService`` (local dev / offline).
+    VertexAiSessionService adds ~200-500ms per append_event() network call.
+    During run_live(), ADK calls append_event for EVERY model event —
+    this kills real-time audio latency.  We use InMemory for streaming
+    and rely on:
+      - Live API session resumption for cross-connection continuity
+      - Memory bank sync for conversation persistence
+      - Background Vertex AI persist for Agent Engine session history
     """
     global _adk_session_service
     if _adk_session_service is not None:
         return _adk_session_service
 
-    if not settings.USE_AGENT_ENGINE_SESSIONS:
-        from google.adk.sessions import InMemorySessionService
-        _adk_session_service = InMemorySessionService()
-        logger.info("session_service_init", backend="in_memory")
-        return _adk_session_service
-
-    # Vertex AI path — fail loudly on misconfiguration
-    from google.adk.sessions import VertexAiSessionService
-    from app.services.agent_engine_service import get_agent_engine_service
-
-    ae = get_agent_engine_service()
-    agent_engine_id = ae.get_reasoning_engine_id()
-    _adk_session_service = VertexAiSessionService(
-        project=settings.GOOGLE_CLOUD_PROJECT,
-        location=settings.GOOGLE_CLOUD_LOCATION,
-        agent_engine_id=agent_engine_id,
-    )
-    logger.info(
-        "session_service_init",
-        backend="vertex_ai",
-        project=settings.GOOGLE_CLOUD_PROJECT,
-        agent_engine_id=agent_engine_id,
-    )
+    from google.adk.sessions import InMemorySessionService
+    _adk_session_service = InMemorySessionService()
+    logger.info("session_service_init", backend="in_memory", reason="zero_latency_hot_path")
     return _adk_session_service
+
+
+def _get_vertex_session_service():
+    """Optional lazy singleton: VertexAiSessionService for background persistence.
+
+    Only initialised when USE_AGENT_ENGINE_SESSIONS is True.  Never used
+    in the hot path (run_live / run_async) — only for cold-path background
+    persistence after the live session ends.
+    """
+    global _vertex_session_service
+    if _vertex_session_service is not None:
+        return _vertex_session_service
+    if not settings.USE_AGENT_ENGINE_SESSIONS:
+        return None
+
+    try:
+        from google.adk.sessions import VertexAiSessionService
+        from app.services.agent_engine_service import get_agent_engine_service
+
+        ae = get_agent_engine_service()
+        agent_engine_id = ae.get_reasoning_engine_id()
+        _vertex_session_service = VertexAiSessionService(
+            project=settings.GOOGLE_CLOUD_PROJECT,
+            location=settings.GOOGLE_CLOUD_LOCATION,
+            agent_engine_id=agent_engine_id,
+        )
+        logger.info(
+            "vertex_session_service_init",
+            backend="vertex_ai",
+            project=settings.GOOGLE_CLOUD_PROJECT,
+            agent_engine_id=agent_engine_id,
+        )
+        return _vertex_session_service
+    except Exception:
+        logger.warning("vertex_session_service_init_failed", exc_info=True)
+        return None
 
 
 # ── Runner pool — cached per user_id ──────────────────────────────────
@@ -180,15 +199,46 @@ def invalidate_runner(user_id: str) -> None:
     _chat_runner_cache.pop(user_id, None)
 
 
-def _make_session_id(user_id: str) -> str:
-    """Return a Vertex-AI-safe session ID for *user_id*.
+# ── ADK session ID cache (Vertex assigns IDs; we cache per user) ──────
 
-    Vertex AI Agent Engine session IDs must be lowercase alphanumeric + hyphens
-    only.  Firebase UIDs are alphanumeric (mixed case) so we lowercase them and
-    append a fixed suffix with hyphens instead of underscores.
+# { user_id: session_id }  — populated lazily on first connect
+_adk_session_id_cache: dict[str, str] = {}
+
+
+async def _get_or_create_adk_session(user_id: str, session_service=None) -> str:
+    """Return the ADK session ID for *user_id*, creating one if needed.
+
+    VertexAiSessionService does NOT accept user-provided session IDs —
+    it assigns them on create.  We cache the assigned ID in memory so
+    that reconnects reuse the same session (conversation continuity).
+
+    On first call per user (or after a server restart):
+      1. List existing sessions for the user — reuse the most-recent one.
+      2. If none exist, create a fresh session and cache the new ID.
     """
-    safe_uid = user_id.lower()
-    return f"{safe_uid}-main"
+    if user_id in _adk_session_id_cache:
+        return _adk_session_id_cache[user_id]
+
+    ss = session_service or _get_session_service()
+
+    # Try to find an existing session first
+    try:
+        response = await ss.list_sessions(app_name=APP_NAME, user_id=user_id)
+        sessions = getattr(response, "sessions", [])
+        if sessions:
+            # Pick the most recently updated session
+            best = max(sessions, key=lambda s: getattr(s, "last_update_time", 0))
+            _adk_session_id_cache[user_id] = best.id
+            logger.info("adk_session_reused", user_id=user_id, session_id=best.id)
+            return best.id
+    except Exception:
+        logger.warning("adk_session_list_failed", user_id=user_id, exc_info=True)
+
+    # No existing session — create one (Vertex assigns the ID)
+    session = await ss.create_session(app_name=APP_NAME, user_id=user_id)
+    _adk_session_id_cache[user_id] = session.id
+    logger.info("adk_session_created", user_id=user_id, session_id=session.id)
+    return session.id
 
 
 # ── Chat Runner pool — uses TEXT_MODEL for generateContent ────────────
@@ -264,11 +314,13 @@ def _build_run_config(voice: str = "Aoede"):
 # ── Authentication helper ─────────────────────────────────────────────
 
 
-async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, ClientType] | None:
+async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, ClientType, str, str] | None:
     """Wait for the first JSON frame and validate it as an auth message.
 
-    Returns ``(AuthenticatedUser, client_type)`` on success, or ``None`` after sending
-    an error and closing the socket.
+    Returns ``(AuthenticatedUser, client_type, os_name, requested_session_id)``
+    on success, or ``None`` after sending an error and closing the socket.
+    The ``requested_session_id`` is the **Firestore** session the client wants
+    to resume (empty string if new).
     """
     from firebase_admin import auth as firebase_auth
     from app.models.client import ClientType
@@ -291,7 +343,7 @@ async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, Cli
 
     _get_firebase_app()
     try:
-        decoded = firebase_auth.verify_id_token(data["token"])
+        decoded = firebase_auth.verify_id_token(data["token"], clock_skew_seconds=5)
     except Exception as exc:
         logger.warning("ws_auth_failed", client=websocket.client.host if websocket.client else "?", error=str(exc))
         await _send_auth_error(websocket, "Invalid or expired token")
@@ -310,8 +362,11 @@ async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, Cli
     os_name = detect_os(user_agent)
 
     logger.info("ws_auth_ok", uid=decoded.get("uid"), client=client_type_str)
-    
-    return AuthenticatedUser(decoded), client_type, os_name
+
+    # Optional: client can request to resume a specific Firestore session
+    requested_session_id = data.get("session_id", "")
+
+    return AuthenticatedUser(decoded), client_type, os_name, requested_session_id
 
 
 async def _send_auth_error(websocket: WebSocket, error: str) -> None:
@@ -366,12 +421,7 @@ async def _upstream(
                         mime_type=data.get("mime_type", "image/jpeg"),
                         data=image_bytes,
                     )
-                    queue.send_content(
-                        types.Content(
-                            parts=[types.Part(inline_data=blob)],
-                            role="user",
-                        )
-                    )
+                    queue.send_realtime(blob)
                 elif msg_type == "mcp_toggle":
                     # Handle MCP toggle during live session
                     mcp_id = data.get("mcp_id")
@@ -435,10 +485,17 @@ async def _downstream(
     except (WebSocketDisconnect, RuntimeError):
         logger.info("ws_downstream_disconnected", user_id=user_id)
     except Exception as exc:
-        # Gemini Live sends code 1000 ("The operation was cancelled") as a normal
-        # graceful session end — treat it as info, not an error.
+        # Classify expected WebSocket closure conditions as info, not errors.
         exc_str = str(exc)
-        if "1000" in exc_str and "cancelled" in exc_str.lower():
+        normal_closure = (
+            # Graceful cancel from Gemini side
+            ("1000" in exc_str and "cancelled" in exc_str.lower())
+            # Keepalive ping timeout — network drop between backend and Gemini
+            or "keepalive ping timeout" in exc_str.lower()
+            # Any other normal close (1001 going away, 1006 abnormal)
+            or "connection closed" in exc_str.lower()
+        )
+        if normal_closure:
             logger.info("ws_downstream_session_ended", user_id=user_id, reason=exc_str)
         else:
             logger.exception("ws_downstream_error", user_id=user_id)
@@ -549,6 +606,64 @@ async def _publish(bus: EventBus | None, user_id: str, json_str: str) -> None:
         await bus.publish(user_id, json_str)
 
 
+# ── Background Vertex AI session persistence ─────────────────────────
+
+
+async def _background_persist_to_vertex(
+    user_id: str,
+    session_id: str,
+    in_memory_service,
+) -> str | None:
+    """Copy session events from InMemory → Vertex AI.
+
+    Called after a live session ends.  Returns the Vertex session resource
+    name on success (used for memory generation), or *None* on failure.
+    """
+    try:
+        vertex_ss = _get_vertex_session_service()
+        if vertex_ss is None:
+            return None
+
+        # Retrieve the in-memory session (still alive in the singleton dict)
+        session = await in_memory_service.get_session(
+            app_name=APP_NAME, user_id=user_id, session_id=session_id,
+        )
+        if session is None or not session.events:
+            logger.debug("vertex_persist_skip_no_events", user_id=user_id)
+            return None
+
+        # Create a new Vertex session to hold the persisted events
+        vertex_session = await vertex_ss.create_session(
+            app_name=APP_NAME, user_id=user_id,
+        )
+
+        persisted = 0
+        for event in session.events:
+            try:
+                await vertex_ss.append_event(session=vertex_session, event=event)
+                persisted += 1
+            except Exception:
+                # Skip individual events that fail (e.g. unsupported blob types)
+                continue
+
+        logger.info(
+            "vertex_session_persisted",
+            user_id=user_id,
+            vertex_session_id=vertex_session.id,
+            events_total=len(session.events),
+            events_persisted=persisted,
+        )
+        return vertex_session.id
+    except Exception:
+        logger.warning(
+            "vertex_session_persist_failed",
+            user_id=user_id,
+            session_id=session_id,
+            exc_info=True,
+        )
+        return None
+
+
 # ── Main WebSocket endpoint ──────────────────────────────────────────
 
 
@@ -561,7 +676,7 @@ async def ws_live(websocket: WebSocket) -> None:
     auth_result = await _authenticate_ws(websocket)
     if auth_result is None:
         return
-    user, client_type, os_name = auth_result
+    user, client_type, os_name, requested_session_id = auth_result
 
     mgr = get_connection_manager()
     
@@ -571,19 +686,34 @@ async def ws_live(websocket: WebSocket) -> None:
     # Phase 2 — Register connection + prepare ADK session
     await mgr.connect(websocket, user.uid, client_type, os_name=os_name)
     
-    # Use a unified session ID for cross-device continuity
-    # All devices share the same session for this user
-    session_id = _make_session_id(user.uid)
-
-    # Ensure ADK session exists — no silent fallback; misconfiguration must surface
+    # Get or create the ADK session (InMemory; we cache the ID)
     active_session_service = _get_session_service()
-    session = await active_session_service.get_session(
-        app_name=APP_NAME, user_id=user.uid, session_id=session_id,
-    )
-    if session is None:
-        await active_session_service.create_session(
-            app_name=APP_NAME, user_id=user.uid, session_id=session_id,
-        )
+    session_id = await _get_or_create_adk_session(user.uid, active_session_service)
+
+    # Create/link Firestore session to ADK session (non-blocking best-effort)
+    from app.services.session_service import get_session_service as _get_fs_svc
+    from app.models.session import SessionCreate
+    _fs_svc = _get_fs_svc()
+    firestore_session_id = None
+    try:
+        if requested_session_id:
+            # Client wants to resume a specific Firestore session
+            fs_session = await _fs_svc.get_session(user.uid, requested_session_id)
+            firestore_session_id = fs_session.id
+            if not fs_session.adk_session_id:
+                await _fs_svc.link_adk_session(firestore_session_id, session_id)
+        else:
+            fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
+            firestore_session_id = fs_session.id
+            await _fs_svc.link_adk_session(firestore_session_id, session_id)
+    except Exception:
+        # Requested session not found or creation failed — create a new one
+        try:
+            fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
+            firestore_session_id = fs_session.id
+            await _fs_svc.link_adk_session(firestore_session_id, session_id)
+        except Exception:
+            logger.debug("firestore_session_link_failed", user_id=user.uid)
 
     # Determine voice from active persona (default: first default persona)
     from app.agents.personas import get_default_personas
@@ -591,7 +721,10 @@ async def ws_live(websocket: WebSocket) -> None:
     run_config = _build_run_config(voice=default_persona.voice)
 
     # Send auth success + connected message
-    auth_ok = AuthResponse(status="ok", user_id=user.uid, session_id=session_id)
+    auth_ok = AuthResponse(
+        status="ok", user_id=user.uid, session_id=session_id,
+        firestore_session_id=firestore_session_id or "",
+    )
     connected = ConnectedMessage(session_id=session_id)
     await websocket.send_text(auth_ok.model_dump_json())
     await websocket.send_text(connected.model_dump_json())
@@ -646,10 +779,25 @@ async def ws_live(websocket: WebSocket) -> None:
     finally:
         # Phase 4 — Cleanup
         queue.close()  # Ensure queue is closed (upstream also closes, but be safe)
-        try:
-            await get_memory_service().sync_from_session(user.uid, session_id)
-        except Exception:
-            logger.warning("memory_bank_sync_failed", user_id=user.uid, session_id=session_id, exc_info=True)
+
+        # Persist session to Vertex AI first so memory sync can reference it.
+        # Memory generation requires a valid Vertex AI session resource name.
+        vertex_session_id: str | None = None
+        if settings.USE_AGENT_ENGINE_SESSIONS:
+            vertex_session_id = await _background_persist_to_vertex(
+                user.uid, session_id, active_session_service,
+            )
+
+        # Generate memories from the Vertex session (not the InMemory one)
+        if vertex_session_id:
+            try:
+                await get_memory_service().sync_from_session(user.uid, vertex_session_id)
+            except Exception as exc:
+                exc_str = str(exc).lower()
+                if "throttled" in exc_str or "quota" in exc_str or "resource_exhausted" in exc_str:
+                    logger.debug("memory_bank_sync_throttled", user_id=user.uid, session_id=session_id)
+                else:
+                    logger.warning("memory_bank_sync_failed", user_id=user.uid, session_id=session_id, exc_info=True)
 
         await mgr.disconnect(user.uid, client_type)
         logger.info("ws_live_closed", user_id=user.uid, session_id=session_id)
@@ -678,19 +826,43 @@ async def ws_chat(websocket: WebSocket) -> None:
     auth_result = await _authenticate_ws(websocket)
     if auth_result is None:
         return
-    user, client_type, os_name = auth_result
+    user, client_type, os_name, requested_session_id = auth_result
 
-    session_id = _make_session_id(user.uid)
     active_session_service = _get_session_service()
-    session = await active_session_service.get_session(
-        app_name=APP_NAME, user_id=user.uid, session_id=session_id,
-    )
-    if session is None:
-        await active_session_service.create_session(
-            app_name=APP_NAME, user_id=user.uid, session_id=session_id,
-        )
+    session_id = await _get_or_create_adk_session(user.uid, active_session_service)
 
-    auth_ok = AuthResponse(status="ok", user_id=user.uid, session_id=session_id)
+    # Link Firestore session to ADK session
+    from app.services.session_service import get_session_service as _get_fs_svc
+    from app.models.session import SessionCreate
+    _fs_svc = _get_fs_svc()
+    firestore_session_id = None
+    try:
+        if requested_session_id:
+            # Client wants to resume a specific Firestore session
+            fs_session = await _fs_svc.get_session(user.uid, requested_session_id)
+            firestore_session_id = fs_session.id
+            if not fs_session.adk_session_id:
+                await _fs_svc.link_adk_session(firestore_session_id, session_id)
+        else:
+            latest = await _fs_svc.get_latest_session_for_user(user.uid)
+            if latest and latest.adk_session_id == session_id:
+                firestore_session_id = latest.id
+            else:
+                fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
+                firestore_session_id = fs_session.id
+                await _fs_svc.link_adk_session(fs_session.id, session_id)
+    except Exception:
+        try:
+            fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
+            firestore_session_id = fs_session.id
+            await _fs_svc.link_adk_session(fs_session.id, session_id)
+        except Exception:
+            logger.debug("firestore_session_link_failed_chat", user_id=user.uid)
+
+    auth_ok = AuthResponse(
+        status="ok", user_id=user.uid, session_id=session_id,
+        firestore_session_id=firestore_session_id or "",
+    )
     await websocket.send_text(auth_ok.model_dump_json())
 
     bus = get_event_bus()
@@ -738,4 +910,16 @@ async def ws_chat(websocket: WebSocket) -> None:
     except Exception:
         logger.exception("ws_chat_error", user_id=user.uid)
     finally:
+        # Persist chat session to Vertex + generate memories (same as ws_live)
+        vertex_session_id: str | None = None
+        if settings.USE_AGENT_ENGINE_SESSIONS:
+            vertex_session_id = await _background_persist_to_vertex(
+                user.uid, session_id, active_session_service,
+            )
+        if vertex_session_id:
+            try:
+                await get_memory_service().sync_from_session(user.uid, vertex_session_id)
+            except Exception:
+                logger.warning("memory_bank_sync_failed_chat", user_id=user.uid, exc_info=True)
+
         logger.info("ws_chat_closed", user_id=user.uid, session_id=session_id)

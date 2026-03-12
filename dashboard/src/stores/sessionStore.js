@@ -5,6 +5,7 @@ export const useSessionStore = create((set, get) => ({
     sessions: [],
     activeSessionId: null,
     loading: false,
+    messagesLoading: false,
     error: null,
 
     loadSessions: async () => {
@@ -14,6 +15,18 @@ export const useSessionStore = create((set, get) => ({
             set({ sessions, loading: false });
         } catch (err) {
             set({ error: err.message, loading: false });
+        }
+    },
+
+    loadMessages: async (sessionId) => {
+        set({ messagesLoading: true });
+        try {
+            const messages = await api.get(`/sessions/${sessionId}/messages`);
+            return messages || [];
+        } catch {
+            return [];
+        } finally {
+            set({ messagesLoading: false });
         }
     },
 
@@ -34,4 +47,20 @@ export const useSessionStore = create((set, get) => ({
     switchSession: (id) => set({ activeSessionId: id }),
     setSessions: (sessions) => set({ sessions }),
     setActiveSession: (id) => set({ activeSessionId: id }),
+
+    /**
+     * Ensure a session exists in the local list (fetch from API if missing).
+     * Called when the WS creates a session server-side.
+     */
+    ensureSession: async (id) => {
+        if (!id) return;
+        const existing = get().sessions.find((s) => s.id === id);
+        if (existing) return;
+        try {
+            const session = await api.get(`/sessions/${id}`);
+            set({ sessions: [session, ...get().sessions] });
+        } catch {
+            // Session might not be ready yet — silently ignore
+        }
+    },
 }));

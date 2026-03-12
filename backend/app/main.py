@@ -99,8 +99,13 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown — stop reaper + close MCP connections
+    # Shutdown — stop reaper + close MCP/plugin connections
     mgr.stop_reaper()
+    try:
+        from app.services.plugin_registry import get_plugin_registry
+        await get_plugin_registry().shutdown()
+    except Exception:
+        pass
     try:
         from app.services.mcp_manager import get_mcp_manager
         await get_mcp_manager().shutdown()

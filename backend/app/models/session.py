@@ -1,6 +1,7 @@
 """Session Pydantic schemas."""
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -33,6 +34,7 @@ class SessionResponse(BaseModel):
     persona_id: str
     title: str = ""
     message_count: int = 0
+    adk_session_id: str = ""
     created_at: datetime
     updated_at: datetime
 
@@ -44,5 +46,20 @@ class SessionListItem(BaseModel):
     persona_id: str
     title: str = ""
     message_count: int = 0
+    adk_session_id: str = ""
     created_at: datetime
     updated_at: datetime
+
+
+# ── Chat message schema (for API responses, not stored in Firestore) ───
+
+
+class ChatMessage(BaseModel):
+    """A chat message extracted from ADK session events."""
+
+    role: str  # 'user' | 'assistant' | 'system'
+    content: str = ""
+    type: str = "text"  # 'text' | 'tool_call' | 'tool_response'
+    source: str = "text"  # 'text' | 'voice'
+    tool_name: str | None = None
+    arguments: dict[str, Any] | None = None

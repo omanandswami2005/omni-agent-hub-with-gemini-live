@@ -11,7 +11,7 @@ import TranscriptLine from '@/components/chat/TranscriptLine';
 import TypingIndicator from '@/components/chat/TypingIndicator';
 import { Mic } from 'lucide-react';
 
-export default function ChatPanel({ onSend, isRecording, captureVolume, playbackVolume }) {
+export default function ChatPanel({ onSend, isRecording, captureVolume, playbackVolume, isChatConnected }) {
   const messages = useChatStore((s) => s.messages);
   const agentState = useChatStore((s) => s.agentState);
   const transcript = useChatStore((s) => s.transcript);
@@ -68,7 +68,7 @@ export default function ChatPanel({ onSend, isRecording, captureVolume, playback
 
       {/* Text input */}
       <div className="border-t border-border/40 p-3">
-        <ChatInput onSend={onSend} disabled={agentState === 'speaking'} />
+        <ChatInput onSend={onSend} disabled={agentState === 'speaking'} disconnected={!isChatConnected} />
       </div>
     </div>
   );

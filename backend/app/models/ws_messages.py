@@ -108,7 +108,8 @@ class AuthResponse(BaseModel):
     type: Literal["auth_response"] = "auth_response"
     status: str  # "ok" | "error"
     user_id: str = ""
-    session_id: str = ""
+    session_id: str = ""  # ADK session ID
+    firestore_session_id: str = ""  # Firestore session ID (for URL routing)
     error: str = ""
 
 

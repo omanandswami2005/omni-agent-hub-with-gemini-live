@@ -26,7 +26,7 @@ export function VoiceProvider({ children }) {
     const { sendAudio, sendImage, sendControl, isConnected, disconnect } = useWebSocket();
     // Text chat goes through the dedicated /ws/chat endpoint (ADK runner.run_async)
     // for reliable responses independent of the live audio session.
-    const { sendText, isConnected: isChatConnected } = useChatWebSocket();
+    const { sendText, isConnected: isChatConnected, serverSessionId, reconnect: reconnectChat } = useChatWebSocket();
     const { startRecording, stopRecording, isRecording, volume: captureVolume, permissionError: micError, clearError: clearMicError, setMuted } = useAudioCapture({
         onAudioData: sendAudio,
     });
@@ -62,13 +62,14 @@ export function VoiceProvider({ children }) {
     // ── Toggles ──────────────────────────────────────────────────────
 
     const toggleRecording = useCallback(() => {
+        if (!isConnected && !isRecording) return; // Can't start if live WS disconnected
         if (isRecording) {
             stopRecording();
         } else {
             stopPlayback();
             startRecording();
         }
-    }, [isRecording, startRecording, stopRecording, stopPlayback]);
+    }, [isRecording, isConnected, startRecording, stopRecording, stopPlayback]);
 
     const toggleMute = useCallback(() => {
         const next = !isMuted;
@@ -77,6 +78,7 @@ export function VoiceProvider({ children }) {
     }, [isMuted, setMuted]);
 
     const toggleScreen = useCallback(async () => {
+        if (!isConnected && !isScreenSharing) return; // Can't start if live WS disconnected
         if (isScreenSharing) {
             stopCapture();
             sendControl('screen_share_stop');
@@ -89,9 +91,10 @@ export function VoiceProvider({ children }) {
             await startCapture('screen');
             sendControl('screen_share_start');
         }
-    }, [isScreenSharing, isCameraOn, startCapture, stopCapture, sendControl]);
+    }, [isConnected, isScreenSharing, isCameraOn, startCapture, stopCapture, sendControl]);
 
     const toggleCamera = useCallback(async () => {
+        if (!isConnected && !isCameraOn) return; // Can't start if live WS disconnected
         if (isCameraOn) {
             stopCapture();
             sendControl('camera_stop');
@@ -104,7 +107,7 @@ export function VoiceProvider({ children }) {
             await startCapture('camera');
             sendControl('camera_start');
         }
-    }, [isCameraOn, isScreenSharing, startCapture, stopCapture, sendControl]);
+    }, [isConnected, isCameraOn, isScreenSharing, startCapture, stopCapture, sendControl]);
 
     // Stop all media (voice + video) – used by Escape shortcut
     const stopAll = useCallback(() => {
@@ -136,7 +139,10 @@ export function VoiceProvider({ children }) {
             sendImage,
             sendControl,
             isConnected,
+            isChatConnected,
             disconnect,
+            reconnectChat,
+            serverSessionId,
             // Audio state
             isRecording,
             isMuted,
@@ -161,7 +167,8 @@ export function VoiceProvider({ children }) {
             stopAll,
         }),
         [
-            sendText, sendAudio, sendImage, sendControl, isConnected, disconnect,
+            sendText, sendAudio, sendImage, sendControl, isConnected, isChatConnected, disconnect,
+            reconnectChat, serverSessionId,
             isRecording, isMuted, captureVolume, playbackVolume,
             isScreenSharing, isCameraOn, isVideoActive, videoSource, getPreviewStream,
             permissionError, clearPermissionError,

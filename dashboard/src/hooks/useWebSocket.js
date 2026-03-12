@@ -9,6 +9,7 @@ import { auth } from '@/lib/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useClientStore } from '@/stores/clientStore';
+import { useSessionStore } from '@/stores/sessionStore';
 
 export function useWebSocket() {
   const wsRef = useRef(null);
@@ -50,10 +51,12 @@ export function useWebSocket() {
       attemptRef.current = 0;
       // Send auth handshake as first frame (token NOT in URL for security)
       // Include platform/OS info so the server can display it in the clients panel
+      const activeId = useSessionStore.getState().activeSessionId;
       sendJsonMessage(ws, {
         type: 'auth',
         token: freshToken,
         user_agent: navigator.userAgent,
+        ...(activeId ? { session_id: activeId } : {}),
       });
     };
 
@@ -133,6 +136,11 @@ export function useWebSocket() {
         case 'auth_response':
           if (msg.status === 'ok') {
             setIsConnected(true);
+            if (msg.firestore_session_id) {
+              const ss = useSessionStore.getState();
+              ss.setActiveSession(msg.firestore_session_id);
+              ss.ensureSession(msg.firestore_session_id);
+            }
           }
           break;
         case 'client_status_update':

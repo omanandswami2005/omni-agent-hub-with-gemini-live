@@ -21,9 +21,8 @@ export default function SessionsPage() {
 
   const handleSelect = (session) => {
     switchSession(session.id);
-    // Clear current chat and navigate to dashboard to start/resume session
     clearMessages?.();
-    navigate('/');
+    navigate(`/session/${session.id}`);
   };
 
   return (

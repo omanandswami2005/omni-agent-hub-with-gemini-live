@@ -19,7 +19,7 @@
 
 import { useRef, useState, useCallback, useEffect } from 'react';
 
-const DEFAULT_FPS = 2;
+const DEFAULT_FPS = 1;
 const DEFAULT_QUALITY = 0.7;
 const MAX_DIMENSION = 1024;
 

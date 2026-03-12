@@ -14,6 +14,7 @@ The ``_pending_images`` queue is drained by ``_process_event()`` in
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import uuid
 from typing import TYPE_CHECKING
@@ -77,7 +78,7 @@ GEMINI_IMAGE_MODEL = "gemini-2.0-flash-preview-image-generation"
 # Nano Banana 2 — best interleaved TEXT+IMAGE model.  Supports thinking,
 # 4K output, and Google Search grounding.  Fall back to the legacy model
 # above if the preview is unavailable in your region.
-GEMINI_IMAGE_MODEL_V2 = "gemini-2.5-flash-preview-image-generation"
+GEMINI_IMAGE_MODEL_V2 = "gemini-2.0-flash-preview-image-generation"
 
 
 async def generate_image(
@@ -103,7 +104,8 @@ async def generate_image(
     full_prompt = f"{prompt}, {style}" if style else prompt
 
     client = _get_client()
-    response = client.models.generate_images(
+    # Use async API to avoid blocking the event loop (critical for voice mode)
+    response = await client.aio.models.generate_images(
         model=IMAGEN_MODEL,
         prompt=full_prompt,
         config=types.GenerateImagesConfig(
@@ -121,13 +123,15 @@ async def generate_image(
     image_bytes = generated.image.image_bytes
     mime_type = generated.image.mime_type or "image/png"
 
-    # Upload to GCS
+    # Upload to GCS (sync SDK — offload to thread pool)
     from app.services.storage_service import get_storage_service
 
     ext = mime_type.split("/")[-1]
     filename = f"{uuid.uuid4().hex}.{ext}"
     svc = get_storage_service()
-    gcs_uri = svc.upload_image(image_bytes, filename=filename, content_type=mime_type)
+    gcs_uri = await asyncio.to_thread(
+        svc.upload_image, image_bytes, filename=filename, content_type=mime_type,
+    )
 
     image_b64 = base64.b64encode(image_bytes).decode()
 
@@ -148,6 +152,8 @@ async def generate_image(
             "image_url": gcs_uri,
             "description": full_prompt,
         })
+    else:
+        logger.warning("image_generated_no_user_id", prompt=prompt[:80])
 
     return (
         f"Successfully generated an image of: {full_prompt}. "
@@ -178,7 +184,8 @@ async def generate_rich_image(
         A text summary describing the generated content (spoken by the agent).
     """
     client = _get_client()
-    response = client.models.generate_content(
+    # Use async API to avoid blocking the event loop (critical for voice mode)
+    response = await client.aio.models.generate_content(
         model=GEMINI_IMAGE_MODEL_V2,
         contents=[prompt],
         config=types.GenerateContentConfig(
@@ -209,7 +216,7 @@ async def generate_rich_image(
                     "mime_type": part.inline_data.mime_type,
                 })
 
-    # Persist images to GCS
+    # Persist images to GCS (sync SDK — offload to thread pool)
     from app.services.storage_service import get_storage_service
 
     svc = get_storage_service()
@@ -217,7 +224,9 @@ async def generate_rich_image(
         ext = (img["mime_type"] or "image/png").split("/")[-1]
         filename = f"{uuid.uuid4().hex}.{ext}"
         raw = base64.b64decode(img["base64"])
-        gcs_uri = svc.upload_image(raw, filename=filename, content_type=img["mime_type"])
+        gcs_uri = await asyncio.to_thread(
+            svc.upload_image, raw, filename=filename, content_type=img["mime_type"],
+        )
         img["gcs_uri"] = gcs_uri
 
     summary = "\n".join(text_parts) or f"Generated {len(images)} image(s)."
@@ -238,6 +247,8 @@ async def generate_rich_image(
             "images": images,
             "parts": ordered_parts,
         })
+    else:
+        logger.warning("rich_image_generated_no_user_id", prompt=prompt[:80])
 
     img_count = len(images)
     return (

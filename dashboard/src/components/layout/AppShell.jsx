@@ -12,6 +12,7 @@ import FloatingVoiceBubble from '@/components/chat/FloatingVoiceBubble';
 import MediaPreviewOverlay from '@/components/chat/MediaPreviewOverlay';
 import PermissionErrorBanner from '@/components/chat/PermissionErrorBanner';
 import { VoiceProvider, useVoice } from '@/hooks/useVoiceProvider';
+import { useBootstrap } from '@/hooks/useBootstrap';
 import { useIsMobile } from '@/hooks/useMediaQuery';
 
 export function AppShell() {
@@ -26,6 +27,7 @@ function ShellLayout() {
   const isMobile = useIsMobile();
   const navigate = useNavigate();
   const voice = useVoice();
+  useBootstrap();
 
   return (
     <div className="flex h-screen bg-background text-foreground">

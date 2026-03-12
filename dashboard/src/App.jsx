@@ -32,6 +32,7 @@ export default function App() {
           <Route element={<AuthGuard />}>
             <Route element={<AppShell />}>
               <Route path="/" element={<DashboardPage />} />
+              <Route path="/session/:sessionId" element={<DashboardPage />} />
               <Route path="/personas" element={<PersonasPage />} />
               <Route path="/mcp-store" element={<MCPStorePage />} />
               <Route path="/sessions" element={<SessionsPage />} />

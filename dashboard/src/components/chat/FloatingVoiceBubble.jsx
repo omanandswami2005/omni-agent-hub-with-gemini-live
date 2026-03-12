@@ -93,31 +93,35 @@ export default function FloatingVoiceBubble({
     const controls = [
         {
             icon: isMuted ? MicOff : Mic,
-            label: isMuted ? 'Unmute' : 'Mute',
+            label: !isConnected ? 'Mute (disconnected)' : isMuted ? 'Unmute' : 'Mute',
             onClick: onToggleMute,
             active: !isMuted,
-            color: isMuted ? 'text-red-400' : 'text-emerald-400',
+            color: !isConnected ? 'text-muted-foreground/50' : isMuted ? 'text-red-400' : 'text-emerald-400',
+            disabled: !isConnected,
         },
         {
             icon: isRecording ? PhoneOff : Phone,
-            label: isRecording ? 'Stop' : 'Start',
+            label: !isConnected && !isRecording ? 'Start (disconnected)' : isRecording ? 'Stop' : 'Start',
             onClick: onToggleRecording,
             active: isRecording,
-            color: isRecording ? 'text-red-400' : 'text-emerald-400',
+            color: !isConnected && !isRecording ? 'text-muted-foreground/50' : isRecording ? 'text-red-400' : 'text-emerald-400',
+            disabled: !isConnected && !isRecording,
         },
         {
             icon: isScreenSharing ? MonitorOff : Monitor,
-            label: isScreenSharing ? 'Stop Share' : 'Share Screen',
+            label: !isConnected && !isScreenSharing ? 'Share Screen (disconnected)' : isScreenSharing ? 'Stop Share' : 'Share Screen',
             onClick: onToggleScreen,
             active: isScreenSharing,
-            color: isScreenSharing ? 'text-blue-400' : 'text-muted-foreground',
+            color: !isConnected && !isScreenSharing ? 'text-muted-foreground/50' : isScreenSharing ? 'text-blue-400' : 'text-muted-foreground',
+            disabled: !isConnected && !isScreenSharing,
         },
         {
             icon: isCameraOn ? CameraOff : Camera,
-            label: isCameraOn ? 'Camera Off' : 'Camera On',
+            label: !isConnected && !isCameraOn ? 'Camera (disconnected)' : isCameraOn ? 'Camera Off' : 'Camera On',
             onClick: onToggleCamera,
             active: isCameraOn,
-            color: isCameraOn ? 'text-blue-400' : 'text-muted-foreground',
+            color: !isConnected && !isCameraOn ? 'text-muted-foreground/50' : isCameraOn ? 'text-blue-400' : 'text-muted-foreground',
+            disabled: !isConnected && !isCameraOn,
         },
     ];
 
@@ -173,16 +177,19 @@ export default function FloatingVoiceBubble({
 
             {/* Main orb */}
             <button
-                onClick={onToggleRecording}
+                onClick={isConnected || isRecording ? onToggleRecording : undefined}
                 className={cn(
                     'group relative flex h-14 w-14 items-center justify-center rounded-full shadow-2xl',
                     'bg-gradient-to-br transition-all duration-300',
-                    'hover:scale-110 active:scale-95',
                     'ring-2 ring-white/10 backdrop-blur-xl',
+                    isConnected || isRecording
+                        ? 'hover:scale-110 active:scale-95'
+                        : 'cursor-not-allowed opacity-60',
                     ORB_COLORS[state] || ORB_COLORS.idle,
                     PULSE_CLASSES[state],
                 )}
-                aria-label={`Voice — ${state}`}
+                aria-label={isConnected ? `Voice — ${state}` : 'Voice — disconnected'}
+                title={!isConnected && !isRecording ? 'Voice disconnected — reconnecting…' : undefined}
             >
                 {/* Volume ring */}
                 <div
@@ -240,16 +247,20 @@ export default function FloatingVoiceBubble({
     );
 }
 
-function ControlButton({ icon: Icon, label, onClick, active, color }) {
+function ControlButton({ icon: Icon, label, onClick, active, color, disabled }) {
     return (
         <div className="group/btn relative">
             <button
-                onClick={onClick}
+                onClick={disabled ? undefined : onClick}
+                disabled={disabled}
                 className={cn(
                     'flex h-10 w-10 items-center justify-center rounded-full',
                     'border border-border/60 bg-background/90 backdrop-blur-xl shadow-lg',
-                    'transition-all duration-200 hover:scale-110 active:scale-95',
-                    active && 'ring-2 ring-primary/30',
+                    'transition-all duration-200',
+                    disabled
+                        ? 'cursor-not-allowed opacity-40'
+                        : 'hover:scale-110 active:scale-95',
+                    active && !disabled && 'ring-2 ring-primary/30',
                 )}
                 aria-label={label}
             >

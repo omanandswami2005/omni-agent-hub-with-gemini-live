@@ -11,6 +11,7 @@ import { auth } from '@/lib/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useClientStore } from '@/stores/clientStore';
+import { useSessionStore } from '@/stores/sessionStore';
 import { parseServerMessage, reconnectDelay } from '@/lib/ws';
 
 const CHAT_WS_URL =
@@ -24,6 +25,8 @@ export function useChatWebSocket() {
     const intentionalClose = useRef(false);
     const connectGenRef = useRef(0);
     const [isConnected, setIsConnected] = useState(false);
+    // Firestore session ID returned by the server after auth
+    const [serverSessionId, setServerSessionId] = useState(null);
 
     const connect = useCallback(async () => {
         const gen = ++connectGenRef.current;
@@ -48,11 +51,14 @@ export function useChatWebSocket() {
 
         ws.onopen = () => {
             attemptRef.current = 0;
+            // Send session_id if we have one so the server resumes that session
+            const activeId = useSessionStore.getState().activeSessionId;
             ws.send(
                 JSON.stringify({
                     type: 'auth',
                     token,
                     user_agent: navigator.userAgent,
+                    ...(activeId ? { session_id: activeId } : {}),
                 }),
             );
         };
@@ -117,7 +123,16 @@ export function useChatWebSocket() {
                     });
                     break;
                 case 'auth_response':
-                    if (msg.status === 'ok') setIsConnected(true);
+                    if (msg.status === 'ok') {
+                        setIsConnected(true);
+                        // Capture the Firestore session ID for URL routing
+                        if (msg.firestore_session_id) {
+                            setServerSessionId(msg.firestore_session_id);
+                            const ss = useSessionStore.getState();
+                            ss.setActiveSession(msg.firestore_session_id);
+                            ss.ensureSession(msg.firestore_session_id);
+                        }
+                    }
                     break;
                 case 'client_status_update':
                     useClientStore.getState().setClients(msg.clients);
@@ -151,6 +166,15 @@ export function useChatWebSocket() {
         setIsConnected(false);
     }, []);
 
+    // Reconnect when session changes (user navigated to a different session)
+    const reconnect = useCallback(() => {
+        if (wsRef.current) {
+            wsRef.current.close();
+            wsRef.current = null;
+        }
+        connect();
+    }, [connect]);
+
     useEffect(() => {
         const unsub = useAuthStore.subscribe((state) => {
             if (state.token && !wsRef.current) connect();
@@ -164,17 +188,26 @@ export function useChatWebSocket() {
     }, [connect, disconnect]);
 
     const sendText = useCallback((text) => {
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({ type: 'text', content: text }));
-        }
-        // Add user message to chat immediately
+        // Add user message to chat immediately (optimistic)
         useChatStore.getState().addMessage({
             id: Date.now().toString(),
             role: 'user',
             content: text,
             timestamp: new Date().toISOString(),
         });
+
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'text', content: text }));
+        } else {
+            // WS not connected — inform the user instead of silently dropping
+            useChatStore.getState().addMessage({
+                id: `err-${Date.now()}`,
+                role: 'system',
+                content: 'Message could not be sent — reconnecting…',
+                timestamp: new Date().toISOString(),
+            });
+        }
     }, []);
 
-    return { sendText, isConnected };
+    return { sendText, isConnected, serverSessionId, reconnect };
 }

@@ -1,9 +1,10 @@
-"""CRUD /sessions — session history management."""
+"""CRUD /sessions + message retrieval from ADK session events."""
 
 from fastapi import APIRouter, Depends
 
 from app.middleware.auth_middleware import CurrentUser
 from app.models.session import (
+    ChatMessage,
     SessionCreate,
     SessionListItem,
     SessionResponse,
@@ -41,6 +42,130 @@ async def get_session(
 ) -> SessionResponse:
     """Get a single session by ID."""
     return await svc.get_session(user.uid, session_id)
+
+
+@router.get("/{session_id}/messages")
+async def list_messages(
+    session_id: str,
+    user: CurrentUser,
+    svc: SessionService = Depends(get_session_service),  # noqa: B008
+) -> list[ChatMessage]:
+    """Return chat messages by reading ADK session events.
+
+    Tries InMemorySessionService first (fast, current process),
+    then falls back to VertexAiSessionService (persisted across restarts).
+    """
+    fs_session = await svc.get_session(user.uid, session_id)
+    adk_sid = fs_session.adk_session_id
+    if not adk_sid:
+        return []
+
+    from app.api.ws_live import _get_session_service, _get_vertex_session_service, APP_NAME
+
+    # Try InMemory first (zero-latency, available while server is running)
+    inmem = _get_session_service()
+    session = None
+    try:
+        session = await inmem.get_session(
+            app_name=APP_NAME, user_id=user.uid, session_id=adk_sid,
+        )
+    except Exception:
+        pass
+
+    # Fall back to Vertex AI (persisted sessions)
+    if session is None or not session.events:
+        vertex_ss = _get_vertex_session_service()
+        if vertex_ss:
+            try:
+                session = await vertex_ss.get_session(
+                    app_name=APP_NAME, user_id=user.uid, session_id=adk_sid,
+                )
+            except Exception:
+                pass
+
+    if session is None or not session.events:
+        return []
+
+    return _events_to_messages(session.events)
+
+
+def _events_to_messages(events: list) -> list[ChatMessage]:
+    """Convert ADK session events into a flat list of chat messages.
+
+    Extracts:
+    - Finished input transcriptions → user voice messages
+    - Finished output transcriptions → assistant voice messages
+    - Text content with role=user → user text messages
+    - Text content with role=model → assistant text messages
+    - Function calls → system tool_call messages
+    - Function responses → system tool_response messages
+    """
+    messages: list[ChatMessage] = []
+
+    for event in events:
+        # User text input (from ws_chat run_async)
+        if event.content and event.content.role == "user" and event.content.parts:
+            for part in event.content.parts:
+                if hasattr(part, "text") and part.text and part.text.strip():
+                    messages.append(ChatMessage(
+                        role="user", content=part.text.strip(),
+                        type="text", source="text",
+                    ))
+
+        # Agent text response
+        if event.content and event.content.role == "model" and event.content.parts:
+            for part in event.content.parts:
+                if hasattr(part, "text") and part.text and part.text.strip():
+                    messages.append(ChatMessage(
+                        role="assistant", content=part.text.strip(),
+                        type="text", source="text",
+                    ))
+
+        # Finished voice transcriptions
+        if (
+            event.input_transcription
+            and getattr(event.input_transcription, "finished", False)
+            and event.input_transcription.text
+            and event.input_transcription.text.strip()
+        ):
+            messages.append(ChatMessage(
+                role="user",
+                content=event.input_transcription.text.strip(),
+                type="text", source="voice",
+            ))
+
+        if (
+            event.output_transcription
+            and getattr(event.output_transcription, "finished", False)
+            and event.output_transcription.text
+            and event.output_transcription.text.strip()
+        ):
+            messages.append(ChatMessage(
+                role="assistant",
+                content=event.output_transcription.text.strip(),
+                type="text", source="voice",
+            ))
+
+        # Tool calls
+        for fc in event.get_function_calls():
+            messages.append(ChatMessage(
+                role="system",
+                content=f"Using tool: {fc.name}",
+                type="tool_call",
+                tool_name=fc.name,
+                arguments=dict(fc.args) if fc.args else {},
+            ))
+
+        # Tool responses
+        for fr in event.get_function_responses():
+            messages.append(ChatMessage(
+                role="system",
+                content=str(fr.response) if fr.response else f"Tool {fr.name} completed",
+                type="tool_response",
+                tool_name=fr.name,
+            ))
+
+    return messages
 
 
 @router.put("/{session_id}")
