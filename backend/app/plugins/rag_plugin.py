@@ -31,6 +31,7 @@ MANIFEST = PluginManifest(
     category=PluginCategory.KNOWLEDGE,
     kind=PluginKind.NATIVE,
     icon="document-search",
+    tags=["knowledge"],
     module="app.plugins.rag_plugin",
     factory="get_tools",
     tools_summary=[

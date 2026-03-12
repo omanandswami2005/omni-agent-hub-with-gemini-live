@@ -23,8 +23,29 @@ class PluginKind(StrEnum):
     """How the plugin is executed."""
     MCP_STDIO = "mcp_stdio"
     MCP_HTTP = "mcp_http"
+    MCP_OAUTH = "mcp_oauth"
     NATIVE = "native"
     E2B = "e2b"
+
+
+class ToolCapability(StrEnum):
+    """Predefined capability tags for tool↔persona matching.
+
+    Plugins declare which capabilities they provide via ``tags``.
+    Personas declare which capabilities they need via ``capabilities``.
+    The ToolRegistry matches tools to personas by tag intersection.
+    """
+    SEARCH = "search"
+    CODE_EXECUTION = "code_execution"
+    KNOWLEDGE = "knowledge"
+    CREATIVE = "creative"
+    COMMUNICATION = "communication"
+    WEB = "web"
+    SANDBOX = "sandbox"
+    DATA = "data"
+    MEDIA = "media"
+    DEVICE = "device"
+    WILDCARD = "*"
 
 
 class PluginCategory(StrEnum):
@@ -58,6 +79,26 @@ class ToolSchema(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
+class OAuthConfig(BaseModel):
+    """OAuth 2.0 configuration for MCP_OAUTH plugins.
+
+    Fields are auto-discovered via RFC 9470 + RFC 8414 at runtime,
+    so only ``client_name`` and ``scopes`` are typically specified in JSON.
+    """
+    client_name: str = Field(
+        default="Omni Hub",
+        description="Display name used during dynamic client registration.",
+    )
+    scopes: list[str] = Field(
+        default_factory=list,
+        description="OAuth scopes to request (empty = server default).",
+    )
+    redirect_uri: str = Field(
+        default="",
+        description="Override redirect URI. Auto-generated if empty.",
+    )
+
+
 class PluginManifest(BaseModel):
     """Self-describing plugin configuration.
 
@@ -73,6 +114,14 @@ class PluginManifest(BaseModel):
     kind: PluginKind = PluginKind.MCP_STDIO
     icon: str = ""
 
+    # ── Capability tags (for persona matching) ──
+    tags: list[str] = Field(
+        default_factory=list,
+        description="Capability tags this plugin provides. "
+        "Matched against persona capabilities for tool distribution. "
+        "Use '*' to match all personas.",
+    )
+
     # ── MCP_STDIO fields ──
     command: str = ""
     args: list[str] = Field(default_factory=list)
@@ -84,6 +133,12 @@ class PluginManifest(BaseModel):
 
     # ── MCP_HTTP fields ──
     url: str = ""
+
+    # ── MCP_OAUTH fields ──
+    oauth: OAuthConfig | None = Field(
+        default=None,
+        description="OAuth 2.0 configuration for mcp_oauth plugins.",
+    )
 
     # ── Native plugin fields ──
     module: str = Field(
@@ -143,6 +198,7 @@ class PluginStatus(BaseModel):
     error: str | None = None
     tools_summary: list[ToolSummary] = Field(default_factory=list)
     requires_auth: bool = False
+    env_keys: list[str] = Field(default_factory=list)
     version: str = "0.1.0"
     author: str = ""
 

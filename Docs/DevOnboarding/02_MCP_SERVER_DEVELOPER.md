@@ -14,6 +14,7 @@ An MCP server exposes **tools** (functions) over a standardised protocol so that
 Omni Hub consumes MCP servers through its plugin system:
 - **mcp_stdio**: The backend spawns the MCP server as a subprocess (`stdin`/`stdout` communication)
 - **mcp_http**: The backend connects to a remote MCP server over HTTP/SSE
+- **mcp_oauth**: The backend connects to a remote MCP server over HTTP with OAuth 2.0 authorization (PKCE, dynamic client registration, automatic token refresh)
 
 ---
 
@@ -174,6 +175,30 @@ PluginManifest(
 )
 ```
 
+### MCP_OAUTH (remote server with OAuth 2.0)
+
+```python
+from app.models.plugin import OAuthConfig
+
+PluginManifest(
+    id="notion",
+    kind=PluginKind.MCP_OAUTH,
+    url="https://mcp.notion.com/mcp",             # StreamableHTTP endpoint
+    oauth=OAuthConfig(client_name="Omni Hub"),     # OAuth config
+    requires_auth=True,
+)
+```
+
+The backend handles the entire OAuth 2.0 flow automatically:
+1. **Discovery**: RFC 9470 (Protected Resource Metadata) + RFC 8414 (Authorization Server Metadata)
+2. **Client Registration**: RFC 7591 (Dynamic Client Registration) — no manual client_id needed
+3. **Authorization**: PKCE S256 code challenge, popup-based flow in the dashboard
+4. **Token Management**: Automatic refresh when tokens expire (~1 hour)
+
+Users click "Connect with OAuth" in the MCP Store UI → authorize in a popup → done.
+
+> **When to use `mcp_oauth` vs `mcp_http`**: Use `mcp_oauth` when the server implements the MCP OAuth spec (RFC 9470 + 8414 + 7591). Use `mcp_http` with `env_keys` for servers that accept static API keys or no auth.
+
 ---
 
 ## Reference Server
@@ -251,7 +276,7 @@ The following MCP servers are pre-registered. Use them as examples or extend the
 | `brave-search` | MCP_STDIO | `npx -y @anthropic/mcp-brave-search` |
 | `github` | MCP_STDIO | `npx -y @anthropic/mcp-github` |
 | `playwright` | MCP_STDIO | `npx -y @anthropic/mcp-playwright` |
-| `notion` | MCP_STDIO | `npx -y @anthropic/mcp-notion` |
+| `notion` | MCP_OAUTH | `https://mcp.notion.com/mcp` (official remote) |
 | `slack` | MCP_STDIO | `npx -y @anthropic/mcp-slack` |
 
 ---

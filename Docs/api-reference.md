@@ -10,7 +10,11 @@
 | POST | `/auth/verify` | Firebase token verification |
 | GET/POST/PUT/DELETE | `/personas` | Persona CRUD |
 | GET/DELETE | `/sessions` | Session history |
-| GET/POST | `/mcp` | MCP plugin management |
+| GET/POST | `/mcp` | MCP plugin management (legacy wrapper) |
+| GET/POST | `/plugins` | Unified plugin management (catalog, toggle, secrets, tools, OAuth) |
+| POST | `/plugins/{id}/oauth/start` | Start OAuth flow for MCP_OAUTH plugin |
+| GET | `/plugins/oauth/callback` | OAuth callback (handles token exchange) |
+| POST | `/plugins/{id}/oauth/disconnect` | Revoke OAuth tokens and disconnect |
 | GET | `/clients` | Connected device status |
 
 ## WebSocket Endpoints

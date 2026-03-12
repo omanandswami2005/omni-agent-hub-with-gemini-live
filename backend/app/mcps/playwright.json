@@ -1,0 +1,16 @@
+{
+    "id": "playwright",
+    "name": "Playwright",
+    "description": "Browser automation — navigate, click, screenshot.",
+    "kind": "mcp_stdio",
+    "category": "dev",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@anthropic/mcp-playwright"
+    ],
+    "icon": "playwright",
+    "tags": [
+        "web"
+    ]
+}

@@ -1,0 +1,20 @@
+{
+    "id": "slack",
+    "name": "Slack",
+    "description": "Send messages, read channels in Slack.",
+    "kind": "mcp_stdio",
+    "category": "communication",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@anthropic/mcp-slack"
+    ],
+    "env_keys": [
+        "SLACK_TOKEN"
+    ],
+    "requires_auth": true,
+    "icon": "slack",
+    "tags": [
+        "communication"
+    ]
+}

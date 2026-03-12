@@ -36,6 +36,7 @@ MANIFEST = PluginManifest(
     category=PluginCategory.COMMUNICATION,
     kind=PluginKind.NATIVE,
     icon="bell",
+    tags=["communication"],
     module="app.plugins.notification_sender",
     factory="get_tools",
     tools_summary=[

@@ -18,7 +18,7 @@ from enum import StrEnum
 
 from google.adk.agents import Agent, LoopAgent, ParallelAgent, SequentialAgent
 
-from app.agents.agent_factory import TEXT_MODEL, _default_tools_for_persona
+from app.agents.agent_factory import TEXT_MODEL, get_tools_for_capabilities
 from app.services.event_bus import get_event_bus
 from app.utils.logging import get_logger
 
@@ -319,7 +319,16 @@ class TaskArchitect:
 
     def _create_sub_agent(self, task: SubTask) -> Agent:
         """Build a focused LlmAgent for a single sub-task."""
-        tools = _default_tools_for_persona(task.persona_id)
+        # Map persona_id to typical capabilities for task pipeline agents
+        _PERSONA_CAPS: dict[str, list[str]] = {
+            "assistant": ["search", "web", "knowledge", "communication", "media"],
+            "coder": ["code_execution", "sandbox", "search", "web"],
+            "researcher": ["search", "web", "knowledge"],
+            "analyst": ["code_execution", "sandbox", "search", "data", "web"],
+            "creative": ["creative", "media"],
+        }
+        caps = _PERSONA_CAPS.get(task.persona_id, ["search"])
+        tools = get_tools_for_capabilities(caps)
         return Agent(
             name=task.id,
             model=TEXT_MODEL,

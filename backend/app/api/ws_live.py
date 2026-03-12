@@ -157,11 +157,12 @@ async def _get_runner(user_id: str, session_service=None):
     """
     from google.adk.runners import Runner
     from app.agents.root_agent import build_root_agent
+    from app.agents.personas import get_default_personas
 
     ss = session_service or _get_session_service()
 
-    mcp_mgr = get_mcp_manager()
-    enabled_ids = frozenset(mcp_mgr.get_enabled_ids(user_id))
+    from app.services.plugin_registry import get_plugin_registry
+    enabled_ids = frozenset(get_plugin_registry().get_enabled_ids(user_id))
 
     # Include T3 tool names in cache key so runner rebuilds when clients connect/disconnect
     from app.services.tool_registry import get_tool_registry
@@ -183,21 +184,23 @@ async def _get_runner(user_id: str, session_service=None):
         for uid in expired:
             _runner_cache.pop(uid, None)
 
-        # Build tools via ToolRegistry (T2 + T3)
-        all_tools: list = []
+        # Build per-persona T2+T3 tool map
+        personas = get_default_personas()
+        tools_by_persona: dict[str, list] = {}
         try:
-            all_tools = await get_tool_registry().build_for_session(user_id)
+            tools_by_persona = await get_tool_registry().build_for_session(user_id, personas)
         except Exception:
             logger.warning("tool_registry_build_failed", user_id=user_id, exc_info=True)
 
-        root = build_root_agent(mcp_tools=all_tools)
+        root = build_root_agent(personas=personas, tools_by_persona=tools_by_persona)
         runner = Runner(
             app_name=APP_NAME,
             agent=root,
             session_service=ss,
         )
+        t2_total = sum(len(v) for k, v in tools_by_persona.items() if k != "__device__")
         _runner_cache[user_id] = (runner, cache_key, time.monotonic())
-        logger.debug("runner_cached", user_id=user_id, tool_count=len(all_tools))
+        logger.debug("runner_cached", user_id=user_id, t2_tool_count=t2_total)
         return runner
 
 
@@ -267,11 +270,12 @@ async def _get_chat_runner(user_id: str, session_service=None):
     from google.adk.runners import Runner
     from app.agents.root_agent import build_root_agent
     from app.agents.agent_factory import TEXT_MODEL
+    from app.agents.personas import get_default_personas
 
     ss = session_service or _get_session_service()
 
-    mcp_mgr = get_mcp_manager()
-    enabled_ids = frozenset(mcp_mgr.get_enabled_ids(user_id))
+    from app.services.plugin_registry import get_plugin_registry
+    enabled_ids = frozenset(get_plugin_registry().get_enabled_ids(user_id))
 
     from app.services.tool_registry import get_tool_registry
     t3_names = frozenset(get_tool_registry().get_t3_tool_names(user_id))
@@ -285,20 +289,22 @@ async def _get_chat_runner(user_id: str, session_service=None):
                 return runner
             _chat_runner_cache.pop(user_id, None)
 
-        all_tools: list = []
+        personas = get_default_personas()
+        tools_by_persona: dict[str, list] = {}
         try:
-            all_tools = await get_tool_registry().build_for_session(user_id)
+            tools_by_persona = await get_tool_registry().build_for_session(user_id, personas)
         except Exception:
             logger.warning("tool_registry_build_failed_chat", user_id=user_id, exc_info=True)
 
-        root = build_root_agent(mcp_tools=all_tools, model=TEXT_MODEL)
+        root = build_root_agent(personas=personas, tools_by_persona=tools_by_persona, model=TEXT_MODEL)
         runner = Runner(
             app_name=APP_NAME,
             agent=root,
             session_service=ss,
         )
+        t2_total = sum(len(v) for k, v in tools_by_persona.items() if k != "__device__")
         _chat_runner_cache[user_id] = (runner, cache_key, time.monotonic())
-        logger.debug("chat_runner_cached", user_id=user_id, model=TEXT_MODEL, tool_count=len(all_tools))
+        logger.debug("chat_runner_cached", user_id=user_id, model=TEXT_MODEL, t2_tool_count=t2_total)
         return runner
 
 
@@ -785,11 +791,12 @@ async def ws_live(websocket: WebSocket) -> None:
     tool_registry = get_tool_registry()
     available_tool_names: list[str] = []
     try:
-        session_tools = await tool_registry.build_for_session(user.uid)
-        available_tool_names = [
-            getattr(t, 'name', getattr(t, '__name__', str(t)))
-            for t in session_tools
-        ]
+        tools_map = await tool_registry.build_for_session(user.uid)
+        for tools in tools_map.values():
+            for t in tools:
+                name = getattr(t, 'name', getattr(t, '__name__', str(t)))
+                if name not in available_tool_names:
+                    available_tool_names.append(name)
     except Exception:
         logger.debug("tool_registry_preview_failed", user_id=user.uid)
 

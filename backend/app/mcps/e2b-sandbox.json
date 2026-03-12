@@ -1,0 +1,23 @@
+{
+    "id": "e2b-sandbox",
+    "name": "E2B Sandbox",
+    "description": "Sandboxed code execution — run Python, Node.js, shell commands with full file system.",
+    "kind": "e2b",
+    "category": "sandbox",
+    "icon": "sandbox",
+    "tags": [
+        "code_execution",
+        "sandbox"
+    ],
+    "lazy": false,
+    "tools_summary": [
+        {
+            "name": "execute_code",
+            "description": "Run code in a sandboxed environment"
+        },
+        {
+            "name": "install_package",
+            "description": "Install a package in the sandbox"
+        }
+    ]
+}

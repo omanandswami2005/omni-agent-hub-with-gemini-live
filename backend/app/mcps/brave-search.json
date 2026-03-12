@@ -1,0 +1,21 @@
+{
+    "id": "brave-search",
+    "name": "Brave Search",
+    "description": "Web search via the Brave Search API.",
+    "kind": "mcp_stdio",
+    "category": "search",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@anthropic/mcp-brave-search"
+    ],
+    "env_keys": [
+        "BRAVE_API_KEY"
+    ],
+    "requires_auth": true,
+    "icon": "brave",
+    "tags": [
+        "search",
+        "web"
+    ]
+}

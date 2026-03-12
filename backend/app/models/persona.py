@@ -14,6 +14,7 @@ class PersonaCreate(BaseModel):
     system_instruction: str = ""
     mcp_ids: list[str] = []
     avatar_url: str = ""
+    capabilities: list[str] = []  # ToolCapability tags this persona needs
 
 
 class PersonaUpdate(BaseModel):
@@ -24,6 +25,7 @@ class PersonaUpdate(BaseModel):
     system_instruction: str | None = None
     mcp_ids: list[str] | None = None
     avatar_url: str | None = None
+    capabilities: list[str] | None = None
 
 
 class PersonaResponse(BaseModel):
@@ -38,3 +40,4 @@ class PersonaResponse(BaseModel):
     avatar_url: str = ""
     is_default: bool = False
     created_at: Optional[datetime] = None
+    capabilities: list[str] = []

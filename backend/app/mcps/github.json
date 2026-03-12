@@ -1,0 +1,20 @@
+{
+    "id": "github",
+    "name": "GitHub",
+    "description": "Interact with GitHub repos, issues, PRs.",
+    "kind": "mcp_stdio",
+    "category": "dev",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@anthropic/mcp-github"
+    ],
+    "env_keys": [
+        "GITHUB_TOKEN"
+    ],
+    "requires_auth": true,
+    "icon": "github",
+    "tags": [
+        "code_execution"
+    ]
+}

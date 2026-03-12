@@ -1,2 +1,0 @@
-email: omanand@gmail.com
-pass: 123456

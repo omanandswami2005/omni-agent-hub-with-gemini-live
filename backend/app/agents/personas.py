@@ -32,6 +32,7 @@ DEFAULT_PERSONAS: list[dict] = [
         "mcp_ids": [],
         "avatar_url": "",
         "is_default": True,
+        "capabilities": ["search", "web", "knowledge", "communication", "media"],
     },
     {
         "id": "coder",
@@ -48,6 +49,7 @@ DEFAULT_PERSONAS: list[dict] = [
         "mcp_ids": ["code_exec", "github"],
         "avatar_url": "",
         "is_default": True,
+        "capabilities": ["code_execution", "sandbox", "search", "web"],
     },
     {
         "id": "researcher",
@@ -64,6 +66,7 @@ DEFAULT_PERSONAS: list[dict] = [
         "mcp_ids": ["brave_search"],
         "avatar_url": "",
         "is_default": True,
+        "capabilities": ["search", "web", "knowledge"],
     },
     {
         "id": "analyst",
@@ -77,6 +80,7 @@ DEFAULT_PERSONAS: list[dict] = [
         "mcp_ids": ["code_exec", "brave_search"],
         "avatar_url": "",
         "is_default": True,
+        "capabilities": ["code_execution", "sandbox", "search", "data", "web"],
     },
     {
         "id": "creative",
@@ -90,6 +94,7 @@ DEFAULT_PERSONAS: list[dict] = [
         "mcp_ids": [],
         "avatar_url": "",
         "is_default": True,
+        "capabilities": ["creative", "media"],
     },
 ]
 

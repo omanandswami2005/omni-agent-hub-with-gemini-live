@@ -135,7 +135,7 @@ After implementing, verify:
   - `StatusMessage` (type: "status", state — connected/thinking/speaking/idle)
   - `WSMessage` discriminated union of all types
 - [ ] **4.2** — Implement `backend/app/models/client.py` with `ClientInfo`, `ClientType` (web, desktop, chrome, mobile, glasses), `ClientStatus`
-- [ ] **4.3** — Implement `backend/app/models/persona.py` with `PersonaCreate`, `PersonaUpdate`, `PersonaResponse` — fields: name, voice, system_instruction, mcp_ids, avatar_url
+- [ ] **4.3** — Implement `backend/app/models/persona.py` with `PersonaCreate`, `PersonaUpdate`, `PersonaResponse` — fields: name, voice, system_instruction, mcp_ids, avatar_url, **capabilities** (list of `ToolCapability` tags)
 - [ ] **4.4** — Implement `backend/app/models/mcp.py` with `MCPConfig`, `MCPCatalogItem`, `MCPCategory`
 - [ ] **4.5** — Write test: `backend/tests/test_api/test_ws_messages.py` — test serialization/deserialization of each message type, discriminated union parsing
 
@@ -167,28 +167,34 @@ After implementing, verify:
 
 ---
 
-### Task 6: ADK Root Agent & Persona System
+### Task 6: ADK Root Agent & Persona System (3-Layer Architecture)
 
-- [ ] **6.1** — Implement `backend/app/agents/root_agent.py` with ADK `LlmAgent` as the router agent:
-  - Model: `gemini-2.5-flash` (for routing decisions)
-  - Instruction: Analyze user intent and route to appropriate persona sub-agent
-  - Uses `transfer_to_agent` to hand off to persona agents
-- [ ] **6.2** — Implement `backend/app/agents/personas.py` with 5 default persona agents:
-  - **Assistant** (Claire): General help, scheduling, email drafts. Voice: `Aoede`
-  - **Coder** (Dev): Code generation, debugging, architecture. Voice: `Charon`
-  - **Researcher** (Sage): Web research, summarization, citations. Voice: `Kore`
-  - **Analyst** (Nova): Data analysis, charts, financial insights. Voice: `Puck`
-  - **Creative** (Muse): Writing, brainstorming, image generation. Voice: `Leda`
-  - Each with: unique `system_instruction`, specific `tools` list, configured `voice` via `RunConfig`
-- [ ] **6.3** — Implement `backend/app/agents/agent_factory.py` with `create_agent(persona_config)` factory that builds an ADK agent from a Firestore persona document (supports user-created personas)
-- [ ] **6.4** — Implement `backend/app/services/persona_service.py` with Firestore-backed persona CRUD: `list_personas(user_id)`, `create_persona()`, `update_persona()`, `delete_persona()`, `get_default_personas()`
-- [ ] **6.5** — Implement `backend/app/api/personas.py` with REST endpoints: `GET /personas`, `POST /personas`, `PUT /personas/{id}`, `DELETE /personas/{id}`
-- [ ] **6.6** — Write test: `backend/tests/test_agents/test_root_agent.py` — test that root agent routes "write code for..." to Coder, "research..." to Researcher, etc.
+- [ ] **6.1** — Implement `backend/app/agents/root_agent.py` — `build_root_agent(personas, tools_by_persona, model, mcp_tools)` with 3-layer routing:
+  - Layer 1: Persona Pool — each persona gets capability-matched T1+T2 tools
+  - Layer 2: `plan_task` FunctionTool — delegates to TaskArchitect for complex multi-step requests
+  - Layer 3: `device_agent` — cross-client orchestration with T3 proxy tools
+  - Dynamic instruction listing all available personas and their capabilities
+- [ ] **6.2** — Implement `backend/app/agents/personas.py` with 5 DEFAULT_PERSONAS (each with `capabilities` list):
+  - **assistant**: capabilities=[search, web, knowledge, communication, media]. Voice: `Puck`
+  - **coder**: capabilities=[code_execution, sandbox, search, web]. Voice: `Kore`
+  - **researcher**: capabilities=[search, web, knowledge]. Voice: `Aoede`
+  - **analyst**: capabilities=[code_execution, sandbox, search, data, web]. Voice: `Charon`
+  - **creative**: capabilities=[creative, media]. Voice: `Leda`
+- [ ] **6.3** — Implement `backend/app/agents/agent_factory.py` with:
+  - `ToolCapability(StrEnum)` enum (11 tags) + `T1_TOOL_REGISTRY` mapping capabilities to tool factories
+  - `get_tools_for_capabilities(caps)` — returns only the T1 tools matching a persona's declared capabilities
+  - `build_persona_agent(persona, tools)` — builds an ADK `LlmAgent` with matched tools
+- [ ] **6.3b** — Implement `backend/app/agents/cross_client_agent.py` — `build_cross_client_agent(device_tools, model)` returns `device_agent`
+- [ ] **6.3c** — Implement `backend/app/agents/task_planner_tool.py` — `get_task_planner_tool()` returns `plan_task FunctionTool` wrapping TaskArchitect
+- [ ] **6.4** — Implement `backend/app/services/tool_registry.py` — `build_for_session(user_id, personas)` returns `dict[str, list]` (per-persona tools + `__device__` key) using capability matching
+- [ ] **6.5** — Implement `backend/app/services/persona_service.py` with Firestore-backed persona CRUD: `list_personas(user_id)`, `create_persona()`, `update_persona()`, `delete_persona()`, `get_default_personas()`
+- [ ] **6.6** — Implement `backend/app/api/personas.py` with REST endpoints: `GET /personas`, `POST /personas`, `PUT /personas/{id}`, `DELETE /personas/{id}`
+- [ ] **6.7** — Write test: `backend/tests/test_agents/test_root_agent.py` — test that root agent builds with 6 sub-agents (5 personas + device_agent) and `plan_task` tool
 
 **Dependencies**: Task 1, Task 2, Task 3
-**Files**: `backend/app/agents/root_agent.py`, `backend/app/agents/personas.py`, `backend/app/agents/agent_factory.py`, `backend/app/services/persona_service.py`, `backend/app/api/personas.py`, `backend/tests/test_agents/test_root_agent.py`
+**Files**: `backend/app/agents/root_agent.py`, `backend/app/agents/personas.py`, `backend/app/agents/agent_factory.py`, `backend/app/agents/cross_client_agent.py`, `backend/app/agents/task_planner_tool.py`, `backend/app/services/tool_registry.py`, `backend/app/services/persona_service.py`, `backend/app/api/personas.py`, `backend/tests/test_agents/test_root_agent.py`
 **Research Refs**: R&P Section 2 (ADK Agent Types), R&P Section 3 (Voice Config — 8 voices), R&P Section 9 (Multi-Agent Architecture), GCP Tier 1 (ADK)
-**Verify**: Root agent correctly delegates to persona sub-agents, each persona has distinct voice config
+**Verify**: Root agent correctly builds with 3-layer architecture — persona pool with capability-matched tools, plan_task tool, and device_agent
 
 ---
 
@@ -427,7 +433,7 @@ After implementing, verify:
 
 ### Task 18: Desktop Client Tools
 
-- [ ] **18.1** — Implement `backend/app/tools/desktop_tools.py` with ADK tools for desktop automation:
+- [ ] **18.1** — Implement `backend/app/mcps/desktop_tools.py` as MCP for desktop automation:
   - `capture_screen()` — request screenshot from desktop client
   - `click_at(x, y)` — click at screen coordinates
   - `type_text(text)` — type text at cursor position

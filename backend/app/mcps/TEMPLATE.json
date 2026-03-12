@@ -1,0 +1,29 @@
+{
+    "_comment": "TEMPLATE — Copy this file and rename to <your-server>.json",
+    "_comment2": "For OAuth MCP servers, use kind=mcp_oauth with url and oauth fields",
+    "id": "my-mcp-server",
+    "name": "My MCP Server",
+    "description": "Describe what this MCP server does.",
+    "kind": "mcp_stdio",
+    "category": "other",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@some-org/mcp-server-name"
+    ],
+    "env": {},
+    "env_keys": [],
+    "requires_auth": false,
+    "tags": [
+        "search"
+    ],
+    "icon": "puzzle",
+    "version": "0.1.0",
+    "author": "Your Name",
+    "tools_summary": [
+        {
+            "name": "example_tool",
+            "description": "Brief description of what this tool does"
+        }
+    ]
+}

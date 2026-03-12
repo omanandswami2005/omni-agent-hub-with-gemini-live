@@ -11,13 +11,15 @@ the heavy ADK/genai stack.
 
 from __future__ import annotations
 
+from typing import Callable
+
 from google.adk.agents import Agent
 from google.genai import types
 
 from app.config import settings
 from app.models.persona import PersonaResponse
+from app.models.plugin import ToolCapability as TC
 from app.tools.code_exec import get_code_exec_tools
-from app.tools.cross_client import get_cross_client_tools
 from app.tools.image_gen import get_image_gen_tools
 from app.tools.search import get_search_tool
 from app.utils.logging import get_logger
@@ -28,17 +30,29 @@ logger = get_logger(__name__)
 LIVE_MODEL = settings.LIVE_MODEL
 TEXT_MODEL = settings.TEXT_MODEL
 
-# Persona IDs that get Google Search grounding by default
-_SEARCH_PERSONA_IDS = {"assistant", "researcher", "analyst"}
+# ── Capability → T1 tool factory mapping ──────────────────────────────
+# Each capability tag maps to a factory function that returns a list of
+# ADK tools.  Persona.capabilities drives which T1 tools it receives.
+T1_TOOL_REGISTRY: dict[str, Callable[[], list]] = {
+    TC.SEARCH: lambda: [get_search_tool()],
+    TC.CODE_EXECUTION: get_code_exec_tools,
+    TC.MEDIA: get_image_gen_tools,
+    # TC.DEVICE tools go to the cross-client orchestrator, not persona agents
+}
 
-# Persona IDs that get code execution tools
-_CODE_EXEC_PERSONA_IDS = {"coder", "analyst"}
 
-# Persona IDs that get image generation tools (all personas can generate images)
-_IMAGE_GEN_PERSONA_IDS = {"creative", "assistant", "researcher", "analyst", "coder"}
-
-# RAG tools are now in the 'rag-documents' plugin — enable via plugin store
-# (removed from hardcoded agent_factory)
+def get_tools_for_capabilities(capabilities: list[str]) -> list:
+    """Return T1 tools matching any of the given capability tags."""
+    tools: list = []
+    seen: set[str] = set()
+    for cap in capabilities:
+        if cap in seen:
+            continue
+        factory = T1_TOOL_REGISTRY.get(cap)
+        if factory:
+            seen.add(cap)
+            tools.extend(factory())
+    return tools
 
 
 def _build_speech_config(voice_name: str) -> types.SpeechConfig:
@@ -52,18 +66,9 @@ def _build_speech_config(voice_name: str) -> types.SpeechConfig:
     )
 
 
-def _default_tools_for_persona(persona_id: str) -> list:
-    """Return default tools for a persona based on its ID."""
-    tools: list = []
-    if persona_id in _SEARCH_PERSONA_IDS:
-        tools.append(get_search_tool())
-    if persona_id in _CODE_EXEC_PERSONA_IDS:
-        tools.extend(get_code_exec_tools())
-    if persona_id in _IMAGE_GEN_PERSONA_IDS:
-        tools.extend(get_image_gen_tools())
-    # All personas get cross-client action tools
-    tools.extend(get_cross_client_tools())
-    return tools
+def _default_tools_for_persona(persona: PersonaResponse) -> list:
+    """Return T1 tools matched by the persona's capability tags."""
+    return get_tools_for_capabilities(persona.capabilities)
 
 
 def create_agent(
@@ -79,7 +84,8 @@ def create_agent(
         A :class:`PersonaResponse` with at least ``id``, ``name``,
         ``voice``, and ``system_instruction``.
     extra_tools:
-        Additional tools to include (e.g., MCP tools from get_mcp_manager().get_tools()).
+        Pre-filtered T2 plugin tools matched by capability tags.
+        Only tools whose tags intersect with persona.capabilities are passed.
     model:
         Override the default model. Defaults to ``LIVE_MODEL``.
 
@@ -88,7 +94,7 @@ def create_agent(
     Agent
         A configured ADK agent ready for use as a sub-agent of the root.
     """
-    tools = _default_tools_for_persona(persona.id)
+    tools = _default_tools_for_persona(persona)
     if extra_tools:
         tools.extend(extra_tools)
 

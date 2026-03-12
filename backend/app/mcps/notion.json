@@ -1,0 +1,19 @@
+{
+    "id": "notion",
+    "name": "Notion",
+    "description": "Read and write Notion pages and databases via Notion's hosted MCP server.",
+    "kind": "mcp_oauth",
+    "category": "productivity",
+    "url": "https://mcp.notion.com/mcp",
+    "oauth": {
+        "client_name": "Omni Hub",
+        "scopes": [],
+        "redirect_uri": ""
+    },
+    "requires_auth": true,
+    "icon": "notion",
+    "tags": [
+        "knowledge",
+        "communication"
+    ]
+}

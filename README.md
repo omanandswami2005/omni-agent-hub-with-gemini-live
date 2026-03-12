@@ -57,44 +57,58 @@ AI assistants today live in text boxes on single screens. You can't speak to you
 
 ## Architecture
 
+### 3-Layer Capability-Based Agent Routing
+
 ```
-                    ┌─────────────────────────┐
-                    │       OMNI HUB           │
-                    │    (Cloud Run)           │
-                    │                         │
-                    │  ┌───────────────────┐  │
-                    │  │   Root Agent      │  │
-                    │  │   (ADK)           │  │
-                    │  │                   │  │
-                    │  │  ┌─────┐ ┌─────┐  │  │
-                    │  │  │Nova │ │Atlas│  │  │
-                    │  │  │     │ │     │  │  │
-                    │  │  └─────┘ └─────┘  │  │
-                    │  │  ┌─────┐ ┌─────┐  │  │
-                    │  │  │Sage │ │Spark│  │  │
-                    │  │  └─────┘ └─────┘  │  │
-                    │  └────────┬──────────┘  │
-                    │           │              │
-                    │  ┌────────┴──────────┐  │
-                    │  │  MCP Plugin System │  │
-                    │  │  (Dynamic Tools)   │  │
-                    │  └───────────────────┘  │
-                    └────────┬────────────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              │     Raw WebSocket (Binary    │
-              │     audio + JSON control)    │
-              │              │               │
-     ┌────────┴───┐  ┌──────┴──────┐  ┌────┴────────┐
-     │ Web        │  │ Mobile      │  │ Chrome      │
-     │ Dashboard  │  │ PWA         │  │ Extension   │
-     │ (React)    │  │ (Camera)    │  │ (Voice)     │
-     └────────────┘  └─────────────┘  └─────────────┘
-     ┌─────────────┐  ┌─────────────┐
-     │ Desktop     │  │ ESP32       │
-     │ Tray App    │  │ Glasses     │
-     │ (Python)    │  │ (Protocol)  │
-     └─────────────┘  └─────────────┘
+                    ┌────────────────────────────────────────────┐
+                    │              OMNI HUB (Cloud Run)          │
+                    │                                            │
+                    │  ┌──────────────────────────────────────┐  │
+                    │  │        Root Agent "omni_root"        │  │
+                    │  │         tools: [plan_task]            │  │
+                    │  ├──────────────────────────────────────┤  │
+                    │  │                                      │  │
+                    │  │  LAYER 1 — Persona Pool              │  │
+                    │  │  ┌──────────┐  ┌──────────┐         │  │
+                    │  │  │assistant │  │  coder   │         │  │
+                    │  │  │search,web│  │code,sandbox│       │  │
+                    │  │  └──────────┘  └──────────┘         │  │
+                    │  │  ┌──────────┐  ┌──────────┐         │  │
+                    │  │  │researcher│  │ analyst  │         │  │
+                    │  │  │search,kb │  │data,code │         │  │
+                    │  │  └──────────┘  └──────────┘         │  │
+                    │  │  ┌──────────┐                       │  │
+                    │  │  │ creative │                       │  │
+                    │  │  │media,art │                       │  │
+                    │  │  └──────────┘                       │  │
+                    │  │                                      │  │
+                    │  │  LAYER 2 — TaskArchitect             │  │
+                    │  │  (plan_task FunctionTool)            │  │
+                    │  │  Decomposes complex multi-step tasks │  │
+                    │  │                                      │  │
+                    │  │  LAYER 3 — device_agent              │  │
+                    │  │  Cross-client orchestration (T3)     │  │
+                    │  │                                      │  │
+                    │  ├──────────────────────────────────────┤  │
+                    │  │  MCP Plugin System (Dynamic T2 Tools)│  │
+                    │  │  Capability-tagged per persona       │  │
+                    │  └──────────────────────────────────────┘  │
+                    └────────────────┬───────────────────────────┘
+                                    │
+                 ┌──────────────────┼──────────────────┐
+                 │     Raw WebSocket (Binary audio     │
+                 │        + JSON control)              │
+                 │                  │                   │
+        ┌────────┴───┐  ┌──────────┴──┐  ┌────────────┴──┐
+        │ Web        │  │ Mobile      │  │ Chrome        │
+        │ Dashboard  │  │ PWA         │  │ Extension     │
+        │ (React)    │  │ (Camera)    │  │ (Voice)       │
+        └────────────┘  └─────────────┘  └───────────────┘
+        ┌─────────────┐  ┌─────────────┐
+        │ Desktop     │  │ ESP32       │
+        │ Tray App    │  │ Glasses     │
+        │ (Python)    │  │ (Protocol)  │
+        └─────────────┘  └─────────────┘
 ```
 
 ### Key Design Decisions
@@ -222,40 +236,82 @@ gcloud run deploy omni-backend \
 
 ## Agent Personas
 
-Omni ships with 5 specialized AI personas, each with a unique voice, personality, and toolset:
+Omni ships with 5 specialized AI personas. Each persona declares **capabilities** and receives only the tools that match via the `ToolCapability` tag system:
 
-| Persona | Role | Voice | Specialization |
-|---|---|---|---|
-| **Nova** | Analyst | Charon | Financial analysis, data interpretation, market research |
-| **Atlas** | Coder | Kore | Code generation, debugging, architecture, E2B execution |
-| **Sage** | Researcher | Aoede | Deep research, fact-checking, academic analysis |
-| **Spark** | Creative | Fenrir | Writing, brainstorming, content creation, image generation |
-| **Claire** | Assistant | Leda | General tasks, scheduling, email, daily planning |
+| Persona | Role | Voice | Capabilities | Tools Received |
+|---|---|---|---|---|
+| **assistant** | General Assistant | Puck | search, web, knowledge, communication, media | google_search, rag_query, notification_sender + matched MCP |
+| **coder** | Code & Debug | Kore | code_execution, sandbox, search, web | google_search, code_execution, e2b_sandbox + matched MCP |
+| **researcher** | Deep Research | Aoede | search, web, knowledge | google_search + matched MCP |
+| **analyst** | Data & Finance | Charon | code_execution, sandbox, search, data, web | google_search, code_execution, e2b_sandbox + matched MCP |
+| **creative** | Content Creation | Fenrir | creative, media | imagen, creative_tools + matched MCP |
 
-Switch personas by voice: *"Switch to Atlas"* — or click the persona panel on the dashboard.
+Switch personas by voice: *"Switch to coder"* — or click the persona panel on the dashboard.
 
-Create custom personas: *"Create a new persona called Chef with a warm voice and cooking knowledge."*
+Create custom personas with capability tags: *"Create a new persona called Chef with knowledge and search capabilities."*
 
 ---
 
 ## MCP Plugin Store
 
-Omni's agent capabilities are extensible at runtime through the **PluginRegistry** — a unified plugin system supporting MCP servers, native Python modules, and E2B sandboxes. Enable/disable any plugin with a single toggle — the agent adapts instantly. No restart required.
+Omni's agent capabilities are extensible at runtime through the **PluginRegistry** — a unified plugin system supporting MCP servers (local, remote, and OAuth-secured), native Python modules, and E2B sandboxes. Enable/disable any plugin with a single toggle — the agent adapts instantly. No restart required.
+
+### Extension Points
+
+| Method | What | How |
+|---|---|---|
+| **Native plugin** | Python function tools | Drop `.py` in `backend/app/plugins/` with a `MANIFEST` → auto-discovered |
+| **MCP server** | Stdio, HTTP, or OAuth MCP servers | Drop `.json` in `backend/app/mcps/` → auto-discovered at startup |
+| **OAuth MCP** | Remote servers with OAuth 2.0 | Set `kind: "mcp_oauth"` with `url` + `oauth` config → one-click connect in UI |
+| **Runtime API** | Register via HTTP | `POST /api/v1/plugins/register` → persisted to `mcps/` JSON + live immediately |
+
+### Built-in Catalog
 
 | Plugin | What It Does | Kind |
 |---|---|---|
 | Brave Search | Web search via Brave API | MCP Stdio |
-| Google Maps | Location data and directions | Built-in (Grounding) |
 | GitHub | Repo management, issues, PRs | MCP Stdio |
 | Slack | Send/read messages | MCP Stdio |
-| Wikipedia | Encyclopedia lookups | MCP Stdio |
-| Context7 | Up-to-date code documentation | MCP Stdio |
-| Filesystem | Read/write local files | MCP Stdio |
-| Chrome DevTools | Browser automation and scraping | MCP Stdio |
+| Notion | Read/write Notion pages (official) | MCP OAuth |
+| Playwright | Browser automation and scraping | MCP Stdio |
+| Filesystem | Read/write sandboxed files | MCP Stdio |
 | E2B Sandbox | Code execution (100+ languages) | E2B |
+| Wikipedia | Encyclopedia lookups | Native Plugin |
+| RAG Documents | Upload & search documents | Native Plugin |
 | Notification Sender | Webhook/log notifications | Native Plugin |
 
-**Create your own plugin** in 5 minutes: copy `backend/app/plugins/TEMPLATE.py`, edit the MANIFEST, implement your tool functions. The registry auto-discovers it at startup.
+### Add a New MCP Server (3 ways)
+
+**1. JSON config file (recommended)**
+```bash
+# Copy the template
+cp backend/app/mcps/TEMPLATE.json backend/app/mcps/my-server.json
+# Edit id, name, command, args, tags — restart backend
+```
+
+**2. API registration (runtime, no restart)**
+```bash
+curl -X POST http://localhost:8000/api/v1/plugins/register \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "my-server",
+    "name": "My MCP Server",
+    "kind": "mcp_stdio",
+    "command": "npx",
+    "args": ["-y", "@my-org/mcp-server"],
+    "tags": ["search", "web"]
+  }'
+# Immediately available in catalog — persisted to mcps/my-server.json
+```
+
+**3. Native Python plugin**
+```bash
+cp backend/app/plugins/TEMPLATE.py backend/app/plugins/my_plugin.py
+# Edit MANIFEST, implement tool functions — restart backend
+```
+
+**Create your own plugin** in 5 minutes. See [TEMPLATE.py](backend/app/plugins/TEMPLATE.py) or [TEMPLATE.json](backend/app/mcps/TEMPLATE.json).
 
 **54 tests** cover plugin lifecycle, tool discovery, T3 proxy tools, and hardening fixes.
 
@@ -268,8 +324,10 @@ omni-agent-hub-with-gemini-live/
 ├── backend/                    # Python FastAPI + ADK
 │   ├── app/
 │   │   ├── agents/             # Agent definitions
-│   │   │   ├── root_agent.py   # Root orchestrator + persona dispatch
-│   │   │   └── agent_factory.py # Per-persona ADK Agent builder
+│   │   │   ├── root_agent.py   # Root orchestrator (3-layer routing)
+│   │   │   ├── agent_factory.py # Capability-based per-persona builder
+│   │   │   ├── cross_client_agent.py # device_agent (Layer 3)
+│   │   │   └── task_planner_tool.py  # TaskArchitect plan_task tool (Layer 2)
 │   │   ├── api/                # REST + WebSocket endpoints
 │   │   │   ├── ws_live.py      # /ws/live (audio) + /ws/chat (text)
 │   │   │   ├── plugins.py      # Plugin catalog, toggle, schemas
@@ -278,13 +336,17 @@ omni-agent-hub-with-gemini-live/
 │   │   │   └── cross_client.py # Cross-device action tools
 │   │   ├── services/           # Business logic singletons
 │   │   │   ├── plugin_registry.py   # T2 plugin lifecycle (MCP+native+E2B)
-│   │   │   ├── tool_registry.py     # T1+T2+T3 orchestrator + T3 proxy factory
+│   │   │   ├── tool_registry.py     # Per-persona T1+T2+T3 via capability matching
 │   │   │   ├── connection_manager.py # WS registry + capability storage
 │   │   │   ├── mcp_manager.py       # Backward-compat wrapper
 │   │   │   └── event_bus.py         # Dashboard event fan-out
 │   │   ├── plugins/            # Auto-discovered native plugins
 │   │   │   ├── notification_sender.py # Example native plugin
 │   │   │   └── TEMPLATE.py     # Developer template (copy to create plugins)
+│   │   ├── mcps/               # MCP server configs (JSON auto-discovery)
+│   │   │   ├── TEMPLATE.json   # Copy to add a new MCP server
+│   │   │   ├── brave-search.json # Brave Search, GitHub, Slack, etc.
+│   │   │   └── ...             # Drop JSON here → auto-discovered at startup
 │   │   ├── models/             # Pydantic schemas
 │   │   ├── middleware/         # Auth, CORS
 │   │   └── utils/              # Logging, errors

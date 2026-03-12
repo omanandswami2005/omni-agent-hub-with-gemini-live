@@ -54,12 +54,14 @@ agent-hub/
 │   │   │   ├── clients.py              # GET /clients — connected device status
 │   │   │   └── health.py               # GET /health — Cloud Run healthcheck
 │   │   │
-│   │   ├── agents/                     # ADK agent definitions
+│   │   ├── agents/                     # ADK agent definitions (3-layer architecture)
 │   │   │   ├── __init__.py
-│   │   │   ├── root_agent.py           # Root router agent (LlmAgent)
-│   │   │   ├── personas.py             # Persona sub-agents (Assistant, Coder, Researcher, Analyst, Creative)
+│   │   │   ├── root_agent.py           # Root router "omni_root" — 3-layer routing
+│   │   │   ├── personas.py             # DEFAULT_PERSONAS with capability tags
 │   │   │   ├── task_architect.py       # Meta-orchestrator (CustomAgent)
-│   │   │   └── agent_factory.py        # Dynamic agent creation from persona config
+│   │   │   ├── task_planner_tool.py    # plan_task FunctionTool (Layer 2 entry)
+│   │   │   ├── cross_client_agent.py   # device_agent builder (Layer 3)
+│   │   │   └── agent_factory.py        # Capability-based T1 tool matching
 │   │   │
 │   │   ├── tools/                      # ADK custom tool functions
 │   │   │   ├── __init__.py
@@ -69,13 +71,29 @@ agent-hub/
 │   │   │   ├── code_exec.py            # execute_code() — E2B sandbox
 │   │   │   └── search.py               # google_search grounding
 │   │   │
+│   │   ├── mcps/                       # MCP server configs (JSON auto-discovery)
+│   │   │   ├── README.md               # How to add new MCP servers
+│   │   │   ├── TEMPLATE.json           # Copy to create a new MCP config
+│   │   │   ├── brave-search.json       # Brave Search MCP
+│   │   │   ├── github.json             # GitHub MCP
+│   │   │   ├── filesystem.json         # Sandboxed filesystem MCP
+│   │   │   ├── playwright.json         # Browser automation MCP
+│   │   │   ├── notion.json             # Notion MCP
+│   │   │   ├── slack.json              # Slack MCP
+│   │   │   └── e2b-sandbox.json        # E2B sandbox config
+│   │   │
 │   │   ├── services/                   # Business logic (stateless)
 │   │   │   ├── __init__.py
+│   │   │   ├── plugin_registry.py      # T2 plugin lifecycle (MCP+native+E2B+OAuth)
+│   │   │   ├── oauth_service.py        # OAuth 2.0 flow for MCP_OAUTH plugins
+│   │   │   ├── tool_registry.py        # Per-persona T1+T2+T3 via capability matching
 │   │   │   ├── client_registry.py      # In-memory client tracking
-│   │   │   ├── mcp_manager.py          # Dynamic McpToolset instantiation
+│   │   │   ├── connection_manager.py   # WS registry + capability storage
+│   │   │   ├── mcp_manager.py          # Backward-compat wrapper
 │   │   │   ├── e2b_service.py          # E2B sandbox lifecycle
 │   │   │   ├── persona_service.py      # Firestore CRUD for personas
 │   │   │   ├── session_service.py      # ADK session management
+│   │   │   ├── event_bus.py            # Dashboard event fan-out
 │   │   │   └── storage_service.py      # GCS image/file storage
 │   │   │
 │   │   ├── middleware/                 # FastAPI middleware
@@ -86,7 +104,7 @@ agent-hub/
 │   │   │
 │   │   ├── models/                     # Pydantic schemas
 │   │   │   ├── __init__.py
-│   │   │   ├── persona.py              # PersonaCreate, PersonaResponse
+│   │   │   ├── persona.py              # PersonaCreate, PersonaResponse (+ capabilities field)
 │   │   │   ├── session.py              # SessionInfo, SessionList
 │   │   │   ├── mcp.py                  # MCPConfig, MCPToggle
 │   │   │   ├── client.py              # ClientInfo, ClientStatus

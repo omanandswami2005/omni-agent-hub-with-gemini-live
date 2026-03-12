@@ -1667,60 +1667,73 @@ content_refiner = LoopAgent(
 )
 ```
 
-#### Full Agent Tree — Nested Composition
+#### Full Agent Tree — 3-Layer Capability-Based Architecture
 
-This is the **complete agent hierarchy** using all 4 types in a nested tree:
+This is the **complete agent hierarchy** using the implemented 3-layer routing design:
 
 ```
-Root Agent "Hub" (LlmAgent — Router)
+Root Agent "omni_root" (LlmAgent — Router)
+│  tools: [plan_task]                            ← Layer 2 entry-point
 │
-├── "Assistant" (LlmAgent)                      ← Simple Q&A, daily tasks
-│   voice: Puck | MCPs: [Google Calendar, Slack, Notion, Gmail]
+│  ┌─── LAYER 1: Persona Pool (capability-matched T1 + T2 tools) ───┐
+│  │                                                                  │
+│  ├── "assistant" (LlmAgent)                    ← General Q&A, daily tasks
+│  │   capabilities: [search, web, knowledge, communication, media]
+│  │   T1 tools: [google_search, rag_query, notification_sender]
+│  │   T2 (MCP): capability-matched plugins
+│  │                                                                  │
+│  ├── "coder" (LlmAgent)                        ← Code execution & debugging
+│  │   capabilities: [code_execution, sandbox, search, web]
+│  │   T1 tools: [google_search, code_execution, e2b_sandbox]
+│  │   T2 (MCP): capability-matched plugins
+│  │                                                                  │
+│  ├── "researcher" (LlmAgent)                   ← Deep research tasks
+│  │   capabilities: [search, web, knowledge]
+│  │   T1 tools: [google_search]
+│  │   T2 (MCP): capability-matched plugins
+│  │                                                                  │
+│  ├── "analyst" (LlmAgent)                      ← Finance & data analysis
+│  │   capabilities: [code_execution, sandbox, search, data, web]
+│  │   T1 tools: [google_search, code_execution, e2b_sandbox]
+│  │   T2 (MCP): capability-matched plugins
+│  │                                                                  │
+│  └── "creative" (LlmAgent)                     ← Content creation
+│      capabilities: [creative, media]
+│      T1 tools: [imagen, creative_tools]
+│      T2 (MCP): capability-matched plugins
+│  └────────────────────────────────────────────────────────────────┘
 │
-├── "Coder" (LlmAgent)                          ← Code execution & debugging
-│   voice: Kore | MCPs: [E2B, GitHub, Filesystem]
-│   └── debug_loop (LoopAgent)                   ← Fix → Test → Fix until passing
-│       ├── fix_agent (LlmAgent)
-│       └── test_agent (LlmAgent + E2B)
+│  ┌─── LAYER 2: TaskArchitect (plan_task FunctionTool) ────────────┐
+│  │  Decomposes complex multi-step requests into stage blueprints   │
+│  │  Each stage specifies: persona, action, dependencies            │
+│  └────────────────────────────────────────────────────────────────┘
 │
-├── "Researcher" (LlmAgent)                     ← Deep research tasks
-│   voice: Aoede | MCPs: [Brave Search, Wikipedia, Scholarly, bioRxiv]
-│   └── deep_research (SequentialAgent)          ← Search → Synthesize → Format
-│       ├── search_agent (LlmAgent + Brave)
-│       ├── synthesize_agent (LlmAgent)
-│       └── format_agent (LlmAgent)
-│
-├── "Analyst" (LlmAgent)                        ← Finance & data analysis
-│   voice: Charon | MCPs: [Financial Datasets, FRED, E2B]
-│   └── analysis_pipeline (SequentialAgent)      ← Fetch → Analyze → Chart
-│       ├── data_fetch (ParallelAgent)           ← Multiple sources at once
-│       │   ├── stock_fetcher (LlmAgent)
-│       │   └── economic_fetcher (LlmAgent)
-│       ├── analyze_agent (LlmAgent)
-│       └── chart_agent (LlmAgent + E2B matplotlib)
-│
-├── "Morning Briefing" (ParallelAgent)           ← All-at-once daily briefing
-│   ├── news_agent (LlmAgent + Brave)
-│   ├── calendar_agent (LlmAgent + Google Calendar)
-│   ├── stock_agent (LlmAgent + Financial Datasets)
-│   └── weather_agent (LlmAgent)
-│
-└── "Creative" (LlmAgent)                       ← Content creation
-    voice: Leda | MCPs: [Plus AI Slides, LinkedIn, WaveSpeed]
-    └── content_loop (LoopAgent)                 ← Draft → Critique → Refine
-        ├── draft_agent (LlmAgent)
-        └── critic_agent (LlmAgent)
+└── "device_agent" (LlmAgent)                    ← LAYER 3: Cross-client
+    T3 tools: [send_to_device, list_devices, broadcast_message,
+               get_device_status, sync_clipboard]
 ```
+
+**Capability → Tool Matching (ToolCapability enum):**
+| Capability | T1 Tools Provided |
+|---|---|
+| `search` | `google_search` |
+| `code_execution` | `code_execution` |
+| `sandbox` | `e2b_sandbox` |
+| `knowledge` | `rag_query` |
+| `communication` | `notification_sender` |
+| `creative` | `imagen` |
+| `media` | `creative_tools` |
+| `web`, `data`, `calendar`, `financial` | *(reserved for T2/MCP plugins)* |
 
 #### Architecture Diagram Strategy (for Submission)
 
 Use **color-coded boxes** in the architecture diagram:
-- 🔵 **Blue** = `LlmAgent` (decision makers, personas)
-- 🟢 **Green** = `SequentialAgent` (ordered pipelines)
-- 🟠 **Orange** = `ParallelAgent` (concurrent execution)
-- 🟣 **Purple** = `LoopAgent` (iterative refinement)
+- 🔵 **Blue** = `LlmAgent` (decision makers, personas, root)
+- 🟢 **Green** = `FunctionTool` (plan_task — TaskArchitect entry)
+- 🟠 **Orange** = Capability tags (search, code_execution, sandbox, …)
+- 🟣 **Purple** = `device_agent` (cross-client orchestration)
 
-This single diagram immediately communicates architectural sophistication. Most hackathon entries use a single flat agent — a **nested multi-agent tree** is a fundamentally different level of engineering.
+This single diagram communicates the **3-layer capability-based routing** that differentiates Omni Hub from flat single-agent entries.
 
 #### Judging Criteria Impact of Multi-Agent Architecture
 
@@ -1732,7 +1745,7 @@ This single diagram immediately communicates architectural sophistication. Most 
 | **LoopAgent refinement** | Self-improving output quality — "agent iterates until good" | High — shows autonomous quality control |
 | **Nested composition** | `ParallelAgent` inside `SequentialAgent` inside `LlmAgent` | **Very High** — deep technical architecture |
 | **Per-agent voice configs** | Each persona sounds different when speaking | High — live audio differentiation |
-| **Per-agent MCP toolsets** | Each persona has domain-specific capabilities | High — shows modular design |
+| **Capability-based tool matching** | Personas get only relevant tools via `ToolCapability` tags | High — shows modular, scalable design |
 
 #### Key Demo Moments to Showcase Multi-Agent Architecture
 

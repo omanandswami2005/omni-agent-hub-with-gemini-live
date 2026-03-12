@@ -1,0 +1,22 @@
+{
+    "id": "cloud-sql",
+    "name": "Cloud SQL",
+    "description": "Query Google Cloud SQL databases — PostgreSQL, MySQL, SQL Server.",
+    "kind": "mcp_stdio",
+    "category": "data",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@anthropic/mcp-server-postgres"
+    ],
+    "env_keys": [
+        "CLOUD_SQL_CONNECTION_STRING"
+    ],
+    "requires_auth": true,
+    "icon": "cloud-sql",
+    "tags": [
+        "data",
+        "gcp",
+        "sql"
+    ]
+}

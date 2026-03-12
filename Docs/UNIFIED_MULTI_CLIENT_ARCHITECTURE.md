@@ -10,7 +10,7 @@
 ## 1. Design Principles
 
 1. **One backend, many clients** — The server never hardcodes client-specific logic. Any client type connects via the same WebSocket protocol and advertises what it can do.
-2. **Three tool tiers** — Backend-core (T1), backend-managed MCPs (T2), client-local (T3). The agent sees one flat list.
+2. **Three tool tiers** — Backend-core (T1), backend-managed plugins (T2), client-local (T3). Tools are distributed per-persona by capability-tag matching — each persona only sees tools relevant to its declared capabilities.
 3. **Capability-driven** — Tools are gated by what's actually available, not by client type labels. An ESP32 that advertises `audio_capture` gets the same treatment as a desktop that advertises it.
 4. **Soft-gate first, hard-gate later** — Phase 1: all tools registered, runtime error if client not connected. Phase 2: ToolRegistry filters per-session.
 5. **Zero backend changes for new clients** — Adding a smart TV or car client means deploying a new client app. The backend adapts automatically based on advertised capabilities.
@@ -29,32 +29,63 @@
 
 ### 2.2 How Each Tier Is Managed
 
-**T1** — Defined in `backend/app/tools/` as ADK `FunctionTool` instances. Always available. Assigned to personas via `agent_factory.py`.
+**T1** — Defined in `backend/app/tools/` as ADK `FunctionTool` instances. Always available. Assigned to personas via **capability-based matching** in `agent_factory.py` — a `T1_TOOL_REGISTRY` maps `ToolCapability` tags (search, code_execution, media) to tool factories, and each persona's `capabilities` list determines which T1 tools it receives.
 
-**T2** — Managed by the **PluginRegistry** (`app/services/plugin_registry.py`). User toggles plugins on/off via the dashboard. The registry supports four plugin kinds:
+**T2** — Managed by the **PluginRegistry** (`app/services/plugin_registry.py`). User toggles plugins on/off via the dashboard. The registry supports five plugin kinds:
 
 | Kind | Transport | Example |
 |---|---|---|
 | `mcp_stdio` | ADK `McpToolset` + `StdioConnectionParams` (subprocess) | GitHub, Brave Search, Filesystem |
 | `mcp_http` | ADK `McpToolset` + `StreamableHTTPConnectionParams` (remote) | Any remote MCP server |
+| `mcp_oauth` | ADK `McpToolset` + `StreamableHTTPConnectionParams` + OAuth 2.0 Bearer token | Notion (official), any OAuth-secured remote MCP |
 | `native` | Python module exporting `list[FunctionTool]` | Notification sender, custom integrations |
 | `e2b` | E2B `AsyncSandbox` via `e2b_service.py` | Sandboxed code execution |
 
 Plugins auto-discovered from `app/plugins/` at startup. MCP toolsets are lazily created per-user and evicted after 30 min idle.
 
+> **OAuth MCP flow**: The `OAuthService` (`app/services/oauth_service.py`) implements RFC 9470 (Protected Resource Metadata) → RFC 8414 (Authorization Server Metadata) → RFC 7591 (Dynamic Client Registration) → RFC 7636 (PKCE S256) → Authorization Code → Token Exchange → Refresh. Users click "Connect with OAuth" in the UI → popup redirects to the provider → callback exchanges code for tokens → Bearer header injected into `StreamableHTTPConnectionParams.headers`.
+>
+> **Alternative auth methods**: For MCP servers that use static API keys instead of OAuth (e.g., community `npx`-based servers), use `mcp_stdio` or `mcp_http` with `env_keys` and `requires_auth: true` — the user provides secrets via the dashboard, and the registry injects them as environment variables at spawn time.
+
 **T3** — Client advertises `local_tools` at auth handshake. Backend creates **ephemeral proxy tools** that route calls back to the client via WebSocket reverse-RPC. Tools vanish when client disconnects.
 
-### 2.3 Agent Sees One Flat List
+### 2.3 Per-Persona Tool Distribution (Capability-Based)
+
+Tools are **no longer a flat list**. `ToolRegistry.build_for_session(user_id, personas)` returns a `dict[str, list]` keyed by persona_id. Each persona only receives T2 tools whose plugin `tags` overlap with the persona's `capabilities`.
 
 ```
-ToolRegistry.build_for_session(user_id) →
-  T1: search, image_gen, code_exec, rag, cross_client_action
-  T2: github_create_issue, github_list_repos       ← user toggled ON
-  T3: write_file, brave_search_local               ← desktop connected
-      send_sms, take_photo, get_location           ← mobile connected
+ToolRegistry.build_for_session(user_id, personas) → {
+  "assistant": [rag_tools, notification_tools]         ← tags∩caps: knowledge, communication
+  "coder":     [e2b_tools, github_tools, filesystem]   ← tags∩caps: code_execution, sandbox
+  "researcher":[wikipedia_tools, brave_search_tools]    ← tags∩caps: search, knowledge
+  "analyst":   [e2b_tools]                              ← tags∩caps: code_execution, sandbox
+  "creative":  []                                       ← no matching T2 plugins
+  "__device__":[write_file, capture_screen]             ← T3 proxy tools for device_agent
+}
 ```
 
-The agent doesn't know tiers exist(but it should know actually, as user is gonna interact with agent with voice or text, and if asked what my desktop client do then agent should call a get capability or like this tool for that perticular device , wharever that device has advertised). The routing layer decides where each call goes.
+T3 tools go to a dedicated **device_agent** (cross-client orchestrator) rather than polluting every persona.
+
+#### ToolCapability Enum
+
+Both plugins and personas declare capabilities from the same vocabulary:
+
+```python
+class ToolCapability(StrEnum):
+    SEARCH = "search"           # Web search, knowledge retrieval
+    CODE_EXECUTION = "code_execution"  # Running code, sandboxes
+    KNOWLEDGE = "knowledge"     # RAG, documents, encyclopedias
+    CREATIVE = "creative"       # Writing, brainstorming
+    COMMUNICATION = "communication"  # Notifications, messaging
+    WEB = "web"                 # Browser automation, web access
+    SANDBOX = "sandbox"         # File system, isolated execution
+    DATA = "data"               # Analytics, datasets
+    MEDIA = "media"             # Image generation, multimedia
+    DEVICE = "device"           # Cross-client / OS-level tools
+    WILDCARD = "*"              # Matches ALL personas
+```
+
+Plugins declare `tags` in their manifest; personas declare `capabilities` in their config. Matching is `set(manifest.tags) & set(persona.capabilities)` — if the intersection is non-empty, the plugin's tools go to that persona.
 
 ---
 
@@ -189,25 +220,40 @@ def _create_proxy_tool(tool_def: dict, user_id: str, client_type: ClientType) ->
 
 ```python
 class ToolRegistry:
-    """Assembles the final tool list for an agent session."""
+    """Assembles per-persona tool dicts for an agent session."""
 
-    async def build_for_session(self, user_id: str) -> list[BaseTool]:
-        tools = []
-
-        # T1 — Core backend tools (always)
-        tools.extend(get_core_tools(persona_id))
-
-        # T2 — All user-enabled plugins (MCP + native + E2B)
+    async def build_for_session(
+        self, user_id: str, personas: list[PersonaResponse] | None = None,
+    ) -> dict[str, list]:
         plugin_registry = get_plugin_registry()
-        tools.extend(await plugin_registry.get_tools(user_id))
 
-        # T3 — Client-local tools (from ConnectionManager capabilities)
+        # Collect T2 tools per enabled plugin
+        plugin_tools: dict[str, list] = {}  # plugin_id → tools
+        for plugin_id in plugin_registry.get_enabled_ids(user_id):
+            manifest = plugin_registry.get_manifest(plugin_id)
+            plugin_tools[plugin_id] = await plugin_registry._get_plugin_tools(...)
+
+        # Distribute T2 tools to personas by tag matching
+        result: dict[str, list] = {}
+        for persona in personas:
+            matched = []
+            pcaps = set(persona.capabilities)
+            for plugin_id, tools in plugin_tools.items():
+                ptags = set(plugin_registry.get_manifest(plugin_id).tags)
+                if "*" in ptags or ptags & pcaps:  # wildcard or intersection
+                    matched.extend(tools)
+            result[persona.id] = matched
+
+        # T3 proxy tools → __device__ key (for cross-client orchestrator)
         cm = get_connection_manager()
-        for client_type, capabilities in cm.get_capabilities(user_id).items():
-            for tool_def in capabilities.get("local_tools", []):
-                tools.append(_create_proxy_tool(tool_def, user_id, client_type))
+        device_tools = []
+        for ct, cap_data in cm.get_capabilities(user_id).items():
+            for tool_def in cap_data.get("local_tools", []):
+                device_tools.append(_create_proxy_tool(tool_def, user_id, ct))
+        if device_tools:
+            result["__device__"] = device_tools
 
-        return tools
+        return result
 ```
 
 ---
@@ -226,7 +272,7 @@ class PluginManifest(BaseModel):
     name: str                            # Display name
     description: str                     # One-line description
     category: PluginCategory             # search, dev, productivity, etc.
-    kind: PluginKind                     # mcp_stdio | mcp_http | native | e2b
+    kind: PluginKind                     # mcp_stdio | mcp_http | mcp_oauth | native | e2b
 
     # MCP_STDIO fields
     command: str = ""                    # e.g. "python", "npx"
@@ -310,10 +356,18 @@ PluginManifest(kind=PluginKind.MCP_HTTP, url="https://mcp-server.example.com/mcp
 PluginManifest(kind=PluginKind.NATIVE, module="app.plugins.telegram_notify", factory="get_tools")
 ```
 
+**MCP OAuth** — Connects to a remote MCP server that requires OAuth 2.0 authorization. The backend handles the full OAuth flow (discovery, PKCE, dynamic client registration, token exchange, refresh) and injects a Bearer token into the HTTP connection.
+```python
+PluginManifest(kind=PluginKind.MCP_OAUTH, url="https://mcp.notion.com/mcp",
+               oauth=OAuthConfig(client_name="Omni Hub"))
+```
+
 **E2B** — Special built-in for sandboxed code execution via E2B cloud.
 ```python
 PluginManifest(kind=PluginKind.E2B)  # Always e2b-sandbox
 ```
+
+> **Choosing between `mcp_http` and `mcp_oauth`**: If the remote MCP server uses static API keys or no auth, use `mcp_http` with `env_keys`. If it implements the MCP OAuth spec (RFC 9470 + RFC 8414 + RFC 7591), use `mcp_oauth` for automatic token management. Both use `StreamableHTTPConnectionParams` under the hood.
 
 ### 6.4 Auto-Discovery
 
@@ -608,11 +662,11 @@ For a 5-minute hackathon demo, show **4 clients simultaneously**:
 - [x] `cross_client_action` tool
 - [x] `EventBus` for multi-client event distribution
 - [x] **PluginRegistry** — unified plugin lifecycle manager (MCP + native + E2B)
-- [x] **Plugin manifest system** — `PluginManifest` with 4 kinds, auto-discovery
+- [x] **Plugin manifest system** — `PluginManifest` with 5 kinds (mcp_stdio, mcp_http, mcp_oauth, native, e2b), auto-discovery
 - [x] **MCP via ADK** — `McpToolset` + `StdioConnectionParams` tested end-to-end
 - [x] **Native plugin example** — `app/plugins/notification_sender.py`
 - [x] **Lazy tool loading** — summaries first, schemas on demand
-- [x] **Plugin API** — `/api/v1/plugins/` catalog, toggle, secrets, schemas
+- [x] **Plugin API** — `/api/v1/plugins/` catalog, toggle, secrets, schemas, OAuth start/callback/disconnect
 - [x] **MCPManager compat layer** — backward-compatible wrapper
 - [x] **E2B sandbox** — tested with 5 real scenarios
 - [x] **16 pytest tests** — plugin registry, MCP, native, lazy loading
@@ -623,11 +677,17 @@ For a 5-minute hackathon demo, show **4 clients simultaneously**:
 - [x] Plugin developer template (`app/plugins/TEMPLATE.py`)
 - [x] **Hardening audit (13 fixes)** — memory leak, race conditions, enum safety, timeouts, JSON validation
 - [x] **54 pytest tests passing** — 29 tool registry + 16 plugin registry + 9 bug-fix verification
+- [x] **OAuth MCP support** — `MCP_OAUTH` kind with full RFC 9470/8414/7591/7636 flow, Notion MCP verified
+- [x] **3-layer agent architecture** — Root Router → Persona Pool + TaskArchitect + Device Agent
+- [x] **Capability-based tool matching** — `ToolCapability` enum, persona `capabilities`, plugin `tags`
+- [x] **Per-persona T2 distribution** — `build_for_session()` returns `dict[str, list]` not flat list
+- [x] **Cross-client orchestrator** — `device_agent` sub-agent with T3 proxy tools
+- [x] **TaskArchitect integration** — `plan_task` FunctionTool on root agent
 - [ ] Show 3+ clients in demo
 
 ### Phase 2: Production (Post-Hackathon)
 
-- [ ] Hard-gating in ToolRegistry (filter tools per-session based on capabilities)
+- [x] Hard-gating in ToolRegistry (per-persona T2 distribution via capability-tag matching)
 - [ ] `capability_update` WS message for dynamic permissions
 - [ ] Firestore persistence for plugin state & T3 tool definitions
 - [ ] Tool call analytics & routing metrics
@@ -663,14 +723,24 @@ For a 5-minute hackathon demo, show **4 clients simultaneously**:
 
 ## 14. Summary
 
-The unified architecture combines four design patterns into one coherent system:
+The unified architecture combines five design patterns into one coherent system:
 
 1. **Tool tiering** (T1/T2/T3) — Every tool has a home, clear lifecycle, and routing path
 2. **Plugin architecture** — Scalable, pluggable T2 system where any developer can create MCP servers, native modules, or E2B tools independently — just add a file to `app/plugins/`
 3. **Capability advertisement** — Clients declare what they can do; the backend adapts
 4. **Reverse-RPC** — Client-local tools are first-class agent tools, no client-specific backend code
+5. **Capability-based tool matching** — Plugins declare `tags`, personas declare `capabilities`. The ToolRegistry distributes T2 tools per-persona using set intersection (`tags ∩ caps`). T3 tools go to a dedicated `device_agent`. No more flat tool lists.
 
-The result: **one backend, unlimited client types, unlimited plugins, one conversation**. A new client (smart fridge, car, VR headset) just connects and advertises capabilities. A new plugin (Telegram, Spotify, custom MCP) just drops a manifest file. The agent immediately knows how to use everything.
+**3-Layer Agent Architecture:**
+
+| Layer | Agent(s) | Role |
+|---|---|---|
+| **Layer 0** | `omni_root` (Router) | Classifies intent, routes via `transfer_to_agent`, has `plan_task` tool |
+| **Layer 1** | Persona Pool (assistant, coder, researcher, analyst, creative) | Capability-matched T1+T2 tools per persona |
+| **Layer 2** | TaskArchitect (`plan_task` tool) | Decomposes complex tasks into multi-step plans |
+| **Layer 3** | `device_agent` (Cross-Client Orchestrator) | Cross-client actions + T3 proxy tools |
+
+The result: **one backend, unlimited client types, unlimited plugins, one conversation**. A new client just connects and advertises capabilities. A new plugin just drops a manifest file with `tags`. The agent immediately knows how to use everything — and each persona only gets tools relevant to its expertise.
 
 ---
 

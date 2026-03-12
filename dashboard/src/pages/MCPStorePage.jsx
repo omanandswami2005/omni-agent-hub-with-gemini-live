@@ -30,7 +30,7 @@ export default function MCPStorePage() {
   const handleToggle = async (mcpId, enabled) => {
     await toggleMCP(mcpId, enabled);
     // update selected detail if open
-    if (selected?.id === mcpId) setSelected((prev) => ({ ...prev, enabled }));
+    if (selected?.id === mcpId) setSelected((prev) => ({ ...prev, state: enabled ? 'enabled' : 'available' }));
   };
 
   if (selected) {

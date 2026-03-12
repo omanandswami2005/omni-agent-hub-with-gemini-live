@@ -1,0 +1,22 @@
+{
+    "id": "google-maps",
+    "name": "Google Maps",
+    "description": "Geocoding, directions, places, and distance matrix via the Google Maps API.",
+    "kind": "mcp_stdio",
+    "category": "search",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@modelcontextprotocol/server-google-maps"
+    ],
+    "env_keys": [
+        "GOOGLE_MAPS_API_KEY"
+    ],
+    "requires_auth": true,
+    "icon": "google-maps",
+    "tags": [
+        "search",
+        "maps",
+        "gcp"
+    ]
+}

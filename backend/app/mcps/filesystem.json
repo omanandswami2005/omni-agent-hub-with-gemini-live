@@ -1,0 +1,18 @@
+{
+    "id": "filesystem",
+    "name": "Filesystem",
+    "description": "Read/write files in a sandboxed directory.",
+    "kind": "mcp_stdio",
+    "category": "other",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "__SANDBOX_DIR__"
+    ],
+    "icon": "folder",
+    "tags": [
+        "code_execution",
+        "sandbox"
+    ]
+}

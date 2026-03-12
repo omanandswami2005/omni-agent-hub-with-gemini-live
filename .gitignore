@@ -37,6 +37,11 @@ dashboard/.vite/
 .env.*.local
 !.env.example
 
+# --- Local credential / scratch files ---
+dummy_auth_creds.txt
+*_creds.txt
+*_credentials.txt
+
 # --- Service Account Keys (NEVER commit) ---
 *-sa.json
 *-service-account.json

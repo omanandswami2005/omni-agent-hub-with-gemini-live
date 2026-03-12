@@ -39,7 +39,6 @@ from google.adk.tools.mcp_tool.mcp_toolset import (
 from mcp.client.stdio import StdioServerParameters
 
 from app.models.plugin import (
-    PluginCategory,
     PluginKind,
     PluginManifest,
     PluginState,
@@ -48,6 +47,8 @@ from app.models.plugin import (
     ToolSchema,
     ToolSummary,
 )
+from app.services import secret_service
+from app.services.oauth_service import get_oauth_service
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -68,103 +69,50 @@ def _sandbox_dir() -> str:
     return d
 
 
+def _load_mcp_configs() -> list[PluginManifest]:
+    """Auto-discover MCP server configs from ``app/mcps/*.json``.
+
+    Each JSON file in the ``mcps/`` directory is parsed into a
+    :class:`PluginManifest`.  The special placeholder ``__SANDBOX_DIR__``
+    in ``args`` is replaced with the actual sandbox path at load time.
+    """
+    import json as _json
+
+    mcps_dir = Path(__file__).parent.parent / "mcps"
+    if not mcps_dir.is_dir():
+        return []
+
+    manifests: list[PluginManifest] = []
+    sandbox = _sandbox_dir()
+
+    for path in sorted(mcps_dir.glob("*.json")):
+        if path.name.startswith("_") or path.name == "TEMPLATE.json":
+            continue
+        try:
+            raw = _json.loads(path.read_text(encoding="utf-8"))
+            # Replace sandbox placeholder in args
+            if "args" in raw:
+                raw["args"] = [
+                    sandbox if a == "__SANDBOX_DIR__" else a
+                    for a in raw["args"]
+                ]
+            manifest = PluginManifest(**raw)
+            manifests.append(manifest)
+            logger.info("mcp_config_loaded", path=path.name, plugin_id=manifest.id)
+        except Exception:
+            logger.warning("mcp_config_load_failed", path=str(path), exc_info=True)
+
+    return manifests
+
+
 def _builtin_plugins() -> list[PluginManifest]:
     """Return the built-in plugin catalog.
 
-    To add a new plugin, just append a PluginManifest here.
+    MCP server definitions are loaded from ``app/mcps/*.json`` config
+    files.  To add a new MCP server, just drop a JSON file there —
+    no Python code changes needed.
     """
-    return [
-        # ── E2B Sandbox (special built-in) ──
-        PluginManifest(
-            id="e2b-sandbox",
-            name="E2B Sandbox",
-            description="Sandboxed code execution — run Python, Node.js, shell commands with full file system.",
-            category=PluginCategory.SANDBOX,
-            kind=PluginKind.E2B,
-            icon="sandbox",
-            lazy=False,
-            tools_summary=[
-                ToolSummary(name="execute_code", description="Run code in a sandboxed environment"),
-                ToolSummary(name="install_package", description="Install a package in the sandbox"),
-            ],
-        ),
-        # Wikipedia is now a native plugin (app/plugins/wikipedia_search.py)
-        # Auto-discovered at startup — no manifest needed here.
-        # ── Filesystem (stdio MCP — sandboxed directory) ──
-        PluginManifest(
-            id="filesystem",
-            name="Filesystem",
-            description="Read/write files in a sandboxed directory.",
-            category=PluginCategory.OTHER,
-            kind=PluginKind.MCP_STDIO,
-            command="npx",
-            args=["-y", "@modelcontextprotocol/server-filesystem", _sandbox_dir()],
-            icon="folder",
-        ),
-        # ── Brave Search ──
-        PluginManifest(
-            id="brave-search",
-            name="Brave Search",
-            description="Web search via the Brave Search API.",
-            category=PluginCategory.SEARCH,
-            kind=PluginKind.MCP_STDIO,
-            command="npx",
-            args=["-y", "@anthropic/mcp-brave-search"],
-            env_keys=["BRAVE_API_KEY"],
-            requires_auth=True,
-            icon="brave",
-        ),
-        # ── GitHub ──
-        PluginManifest(
-            id="github",
-            name="GitHub",
-            description="Interact with GitHub repos, issues, PRs.",
-            category=PluginCategory.DEV,
-            kind=PluginKind.MCP_STDIO,
-            command="npx",
-            args=["-y", "@anthropic/mcp-github"],
-            env_keys=["GITHUB_TOKEN"],
-            requires_auth=True,
-            icon="github",
-        ),
-        # ── Playwright ──
-        PluginManifest(
-            id="playwright",
-            name="Playwright",
-            description="Browser automation — navigate, click, screenshot.",
-            category=PluginCategory.DEV,
-            kind=PluginKind.MCP_STDIO,
-            command="npx",
-            args=["-y", "@anthropic/mcp-playwright"],
-            icon="playwright",
-        ),
-        # ── Notion ──
-        PluginManifest(
-            id="notion",
-            name="Notion",
-            description="Read and write Notion pages and databases.",
-            category=PluginCategory.PRODUCTIVITY,
-            kind=PluginKind.MCP_STDIO,
-            command="npx",
-            args=["-y", "@anthropic/mcp-notion"],
-            env_keys=["NOTION_TOKEN"],
-            requires_auth=True,
-            icon="notion",
-        ),
-        # ── Slack ──
-        PluginManifest(
-            id="slack",
-            name="Slack",
-            description="Send messages, read channels in Slack.",
-            category=PluginCategory.COMMUNICATION,
-            kind=PluginKind.MCP_STDIO,
-            command="npx",
-            args=["-y", "@anthropic/mcp-slack"],
-            env_keys=["SLACK_TOKEN"],
-            requires_auth=True,
-            icon="slack",
-        ),
-    ]
+    return _load_mcp_configs()
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +196,7 @@ class PluginRegistry:
                     error = self._errors[key]
                 elif enabled.get(m.id, False):
                     # Check if toolset is connected
-                    if m.kind in (PluginKind.MCP_STDIO, PluginKind.MCP_HTTP):
+                    if m.kind in (PluginKind.MCP_STDIO, PluginKind.MCP_HTTP, PluginKind.MCP_OAUTH):
                         if (user_id, m.id) in self._mcp_toolsets:
                             state = PluginState.CONNECTED
                         else:
@@ -269,6 +217,7 @@ class PluginRegistry:
                 error=error,
                 tools_summary=summaries,
                 requires_auth=m.requires_auth,
+                env_keys=m.env_keys,
                 version=m.version,
                 author=m.author,
             ))
@@ -288,20 +237,34 @@ class PluginRegistry:
     # ------------------------------------------------------------------
 
     def set_user_secrets(self, user_id: str, plugin_id: str, secrets: dict[str, str]) -> None:
-        """Store user-provided secrets (API keys, tokens) for a plugin."""
+        """Store user-provided secrets in GCP Secret Manager + local cache."""
+        # Local cache for fast access during this process lifetime
         self._user_secrets.setdefault(user_id, {})[plugin_id] = secrets
-        logger.info("plugin_secrets_set", user_id=user_id, plugin_id=plugin_id)
+        # Persist to GCP Secret Manager (encrypted at rest)
+        try:
+            secret_service.store_secrets(user_id, plugin_id, secrets)
+            logger.info("plugin_secrets_stored_gcp", user_id=user_id, plugin_id=plugin_id)
+        except Exception:
+            logger.warning("plugin_secrets_gcp_fallback", user_id=user_id, plugin_id=plugin_id, exc_info=True)
 
     def _resolve_env(self, manifest: PluginManifest, user_id: str) -> dict[str, str] | None:
         """Build the environment dict for an MCP process.
 
-        Merges: manifest.env → os.environ → user secrets.
+        Merges: manifest.env → os.environ → user secrets (cache + GCP).
         Returns None if required keys are missing.
         """
         env: dict[str, str] = {}
         env.update(manifest.env)
 
+        # Try local cache first, then load from GCP Secret Manager
         user_secrets = self._user_secrets.get(user_id, {}).get(manifest.id, {})
+        if not user_secrets:
+            try:
+                user_secrets = secret_service.load_secrets(user_id, manifest.id)
+                if user_secrets:
+                    self._user_secrets.setdefault(user_id, {})[manifest.id] = user_secrets
+            except Exception:
+                pass  # Fall through — os.environ or manifest defaults may suffice
 
         for key in manifest.env_keys:
             # Priority: user secrets > os.environ > manifest defaults
@@ -318,7 +281,13 @@ class PluginRegistry:
 
     def _build_mcp_params(
         self, manifest: PluginManifest, env: dict[str, str] | None = None,
+        oauth_headers: dict[str, str] | None = None,
     ) -> StdioConnectionParams | SseConnectionParams | StreamableHTTPConnectionParams:
+        if manifest.kind == PluginKind.MCP_OAUTH:
+            return StreamableHTTPConnectionParams(
+                url=manifest.url,
+                headers=oauth_headers,
+            )
         if manifest.kind == PluginKind.MCP_HTTP:
             return SseConnectionParams(url=manifest.url)
         return StdioConnectionParams(
@@ -341,6 +310,8 @@ class PluginRegistry:
         try:
             if manifest.kind in (PluginKind.MCP_STDIO, PluginKind.MCP_HTTP):
                 return await self._connect_mcp(user_id, plugin_id, manifest)
+            elif manifest.kind == PluginKind.MCP_OAUTH:
+                return await self._connect_mcp_oauth(user_id, plugin_id, manifest)
             elif manifest.kind == PluginKind.NATIVE:
                 success = self._connect_native(plugin_id, manifest)
                 if success:
@@ -406,6 +377,59 @@ class PluginRegistry:
         logger.warning("mcp_connect_failed", plugin_id=plugin_id, error=str(last_exc))
         return False
 
+    async def _connect_mcp_oauth(
+        self, user_id: str, plugin_id: str, manifest: PluginManifest,
+    ) -> bool:
+        """Connect to an MCP_OAUTH server using stored OAuth tokens."""
+        key = (user_id, plugin_id)
+
+        # Return existing if connected
+        existing = self._mcp_toolsets.get(key)
+        if existing is not None:
+            self._mcp_toolsets[key] = (existing[0], time.monotonic())
+            return True
+
+        oauth = get_oauth_service()
+
+        # Refresh token if needed
+        access_token = await oauth.refresh_token_if_needed(user_id, plugin_id, manifest.url)
+        if not access_token:
+            access_token = oauth.get_access_token(user_id, plugin_id)
+        if not access_token:
+            self._errors[key] = "OAuth not connected. Use the Connect button to authorize."
+            return False
+
+        headers = {"Authorization": f"Bearer {access_token}"}
+        params = self._build_mcp_params(manifest, oauth_headers=headers)
+
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            toolset = McpToolset(connection_params=params)
+            try:
+                tools = await toolset.get_tools()
+                self._discovered_summaries[plugin_id] = [
+                    ToolSummary(
+                        name=getattr(t, "name", str(t)),
+                        description=getattr(t, "description", ""),
+                    )
+                    for t in tools
+                ]
+                self._mcp_toolsets[key] = (toolset, time.monotonic())
+                self._user_enabled.setdefault(user_id, {})[plugin_id] = True
+                logger.info("mcp_oauth_connected", user_id=user_id, plugin_id=plugin_id, tools=len(tools))
+                return True
+            except Exception as exc:
+                last_exc = exc
+                with contextlib.suppress(Exception):
+                    await toolset.close()
+                if attempt < 2:
+                    logger.info("Retrying OAuth MCP get_tools: %s", exc)
+                    await asyncio.sleep(1.5 * (attempt + 1))
+
+        self._errors[key] = f"OAuth MCP connection failed: {last_exc}"
+        logger.warning("mcp_oauth_connect_failed", plugin_id=plugin_id, error=str(last_exc))
+        return False
+
     def _connect_native(self, plugin_id: str, manifest: PluginManifest) -> bool:
         if plugin_id in self._native_tool_cache:
             return True
@@ -429,12 +453,15 @@ class PluginRegistry:
 
         self._errors.pop((user_id, plugin_id), None)
 
-        if manifest.kind in (PluginKind.MCP_STDIO, PluginKind.MCP_HTTP):
+        if manifest.kind in (PluginKind.MCP_STDIO, PluginKind.MCP_HTTP, PluginKind.MCP_OAUTH):
             key = (user_id, plugin_id)
             entry = self._mcp_toolsets.pop(key, None)
             if entry is not None:
                 with contextlib.suppress(Exception):
                     await entry[0].close()
+            # Revoke OAuth tokens on disconnect
+            if manifest.kind == PluginKind.MCP_OAUTH:
+                get_oauth_service().revoke_tokens(user_id, plugin_id)
 
         user_mcps = self._user_enabled.get(user_id, {})
         user_mcps.pop(plugin_id, None)
@@ -482,7 +509,7 @@ class PluginRegistry:
         if manifest.kind == PluginKind.NATIVE:
             return self._native_tool_cache.get(plugin_id, [])
 
-        if manifest.kind in (PluginKind.MCP_STDIO, PluginKind.MCP_HTTP):
+        if manifest.kind in (PluginKind.MCP_STDIO, PluginKind.MCP_HTTP, PluginKind.MCP_OAUTH):
             key = (user_id, plugin_id)
             entry = self._mcp_toolsets.get(key)
             if entry is None:
@@ -547,10 +574,8 @@ class PluginRegistry:
             # Extract parameter schema from ADK tool declaration
             decl = None
             if hasattr(t, "_get_declaration"):
-                try:
+                with contextlib.suppress(Exception):
                     decl = t._get_declaration()
-                except Exception:
-                    pass
             if decl is None:
                 decl = getattr(t, "_function_declaration", None)
             if decl is not None:

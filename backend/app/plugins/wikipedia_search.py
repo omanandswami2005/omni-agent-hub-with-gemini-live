@@ -25,6 +25,7 @@ MANIFEST = PluginManifest(
     category=PluginCategory.SEARCH,
     kind=PluginKind.NATIVE,
     icon="wikipedia",
+    tags=["search", "knowledge"],
     module="app.plugins.wikipedia_search",
     factory="get_tools",
     tools_summary=[

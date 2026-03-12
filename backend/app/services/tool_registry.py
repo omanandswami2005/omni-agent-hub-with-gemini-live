@@ -5,7 +5,10 @@ Combines:
 - T2: Backend-managed plugins (MCP + native + E2B, via PluginRegistry)
 - T3: Client-local tools (advertised at connect, proxied via reverse-RPC)
 
-The agent sees one flat list of tools. Routing is transparent.
+build_for_session returns a ``dict[str, list]`` keyed by persona_id.
+Each persona only receives T2 tools whose plugin tags overlap with its
+capabilities.  T3 proxy tools live under the ``__device__`` key so the
+cross-client orchestrator agent can consume them.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from uuid import uuid4
 from google.adk.tools import FunctionTool
 
 from app.models.client import ClientType
+from app.models.persona import PersonaResponse
 from app.services.connection_manager import get_connection_manager
 from app.services.plugin_registry import get_plugin_registry
 from app.utils.logging import get_logger
@@ -112,34 +116,85 @@ def _create_proxy_tool(
 
 
 class ToolRegistry:
-    """Assembles the final tool list for an agent session."""
+    """Assembles the final tool dict for an agent session.
 
-    async def build_for_session(self, user_id: str) -> list:
-        """Build the complete tool list for a user session (T1 + T2 + T3)."""
-        tools: list = []
+    Returns ``dict[str, list]`` keyed by **persona_id**.  T2 tools are
+    distributed based on ``plugin.tags ∩ persona.capabilities``.
+    T3 (client-local) proxy tools are placed under the key ``__device__``.
+    """
 
-        # T2 — All user-enabled plugins (MCP + native + E2B)
+    async def build_for_session(
+        self,
+        user_id: str,
+        personas: list[PersonaResponse] | None = None,
+    ) -> dict[str, list]:
+        """Build per-persona T2 tool lists plus a ``__device__`` T3 list.
+
+        Parameters
+        ----------
+        user_id:
+            Authenticated user id.
+        personas:
+            List of active personas.  When *None* a flat ``{"__all__": tools}``
+            dict is returned for backward compat (all T2 mixed together).
+        """
         plugin_registry = get_plugin_registry()
-        try:
-            t2_tools = await plugin_registry.get_tools(user_id)
-            tools.extend(t2_tools)
-            logger.debug("t2_tools_loaded", user_id=user_id, count=len(t2_tools))
-        except Exception:
-            logger.warning("t2_tools_load_failed", user_id=user_id, exc_info=True)
 
-        # T3 — Client-local tools (from ConnectionManager capabilities)
+        # ── T2: Collect tools per enabled plugin ──────────────────────
+        plugin_tools: dict[str, list] = {}  # plugin_id → tools
+        for plugin_id in plugin_registry.get_enabled_ids(user_id):
+            manifest = plugin_registry.get_manifest(plugin_id)
+            if manifest is None:
+                continue
+            try:
+                tools = await plugin_registry._get_plugin_tools(user_id, plugin_id, manifest)
+                if tools:
+                    plugin_tools[plugin_id] = tools
+            except Exception:
+                logger.warning("t2_tools_load_failed", user_id=user_id, plugin_id=plugin_id, exc_info=True)
+
+        # ── Distribute T2 tools to personas by tag matching ───────────
+        result: dict[str, list] = {}
+
+        if personas is None:
+            # Backward compat: flat list under __all__
+            all_tools: list = []
+            for tools in plugin_tools.values():
+                all_tools.extend(tools)
+            result["__all__"] = all_tools
+        else:
+            for persona in personas:
+                matched: list = []
+                pcaps = set(persona.capabilities)
+                for plugin_id, tools in plugin_tools.items():
+                    manifest = plugin_registry.get_manifest(plugin_id)
+                    if manifest is None:
+                        continue
+                    ptags = set(manifest.tags)
+                    # Wildcard "*" matches everything
+                    if "*" in ptags or ptags & pcaps:
+                        matched.extend(tools)
+                result[persona.id] = matched
+
+            logger.debug(
+                "t2_tools_distributed",
+                user_id=user_id,
+                distribution={pid: len(t) for pid, t in result.items()},
+            )
+
+        # ── T3: Client-local proxy tools → __device__ ────────────────
         cm = get_connection_manager()
         capabilities = cm.get_capabilities(user_id)
-        t3_count = 0
+        device_tools: list = []
         for ct, cap_data in capabilities.items():
             for tool_def in cap_data.get("local_tools", []):
                 if tool_def.get("name"):
-                    tools.append(_create_proxy_tool(tool_def, user_id, ct))
-                    t3_count += 1
-        if t3_count:
-            logger.debug("t3_tools_loaded", user_id=user_id, count=t3_count)
+                    device_tools.append(_create_proxy_tool(tool_def, user_id, ct))
+        if device_tools:
+            result["__device__"] = device_tools
+            logger.debug("t3_tools_loaded", user_id=user_id, count=len(device_tools))
 
-        return tools
+        return result
 
     def get_t3_tool_names(self, user_id: str) -> list[str]:
         """Return names of all T3 proxy tools for a user (lightweight, no async)."""
