@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.env
+.env.*
+*.egg-info/
+.git/
+.ruff_cache/
+.pytest_cache/
+tests/
+scripts/
+test_output/
+*.md
+firebase-sa.json

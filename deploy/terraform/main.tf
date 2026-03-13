@@ -77,6 +77,31 @@ resource "google_cloud_run_v2_service" "backend" {
       }
 
       env {
+        name  = "ENVIRONMENT"
+        value = var.environment
+      }
+
+      env {
+        name  = "GOOGLE_GENAI_USE_VERTEXAI"
+        value = "true"
+      }
+
+      env {
+        name  = "GOOGLE_CLOUD_LOCATION"
+        value = var.region
+      }
+
+      env {
+        name  = "GCS_BUCKET_NAME"
+        value = "${var.project_id}-omni-assets"
+      }
+
+      env {
+        name  = "CORS_ORIGINS"
+        value = "https://${var.project_id}-dashboard.web.app,https://${var.project_id}-dashboard.firebaseapp.com,http://localhost:5173,http://localhost:3000"
+      }
+
+      env {
         name = "E2B_API_KEY"
         value_source {
           secret_key_ref {

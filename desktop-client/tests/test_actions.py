@@ -266,9 +266,9 @@ class TestWSClient:
         client.register_handler("click", handler)
 
         msg = {
-            "type": "cross_client_action",
+            "type": "cross_client",
             "action": "click",
-            "payload": {"x": 100, "y": 200},
+            "data": {"x": 100, "y": 200},
         }
         await client._dispatch(msg)
         handler.assert_called_once_with(x=100, y=200)
@@ -282,9 +282,9 @@ class TestWSClient:
         client.connected = True
 
         msg = {
-            "type": "cross_client_action",
+            "type": "cross_client",
             "action": "nonexistent",
-            "payload": {},
+            "data": {},
         }
         await client._dispatch(msg)
         # Should have sent error response
@@ -331,7 +331,7 @@ class TestConfig:
         from src.config import DesktopConfig
 
         cfg = DesktopConfig()
-        assert cfg.server_url == "ws://localhost:8080/ws/live"
+        assert cfg.server_url == "ws://localhost:8000/ws/live"
         assert cfg.capture_quality == 75
         assert cfg.log_level == "INFO"
 
