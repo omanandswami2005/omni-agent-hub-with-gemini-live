@@ -14,19 +14,18 @@
 
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
-import { useChatWebSocket } from '@/hooks/useChatWebSocket';
 import { useAudioCapture } from '@/hooks/useAudioCapture';
 import { useAudioPlayback } from '@/hooks/useAudioPlayback';
 import { useVideoCapture } from '@/hooks/useVideoCapture';
 import { useKeyboard } from '@/hooks/useKeyboard';
+import { useChatStore } from '@/stores/chatStore';
 
 const VoiceContext = createContext(null);
 
 export function VoiceProvider({ children }) {
-    const { sendAudio, sendImage, sendControl, isConnected, disconnect } = useWebSocket();
-    // Text chat goes through the dedicated /ws/chat endpoint (ADK runner.run_async)
-    // for reliable responses independent of the live audio session.
-    const { sendText, isConnected: isChatConnected, serverSessionId, reconnect: reconnectChat } = useChatWebSocket();
+    // Single unified WebSocket for both audio and text
+    const { sendText, sendAudio, sendImage, sendControl, isConnected, disconnect, reconnect, serverSessionId } = useWebSocket();
+
     const { startRecording, stopRecording, isRecording, volume: captureVolume, permissionError: micError, clearError: clearMicError, setMuted } = useAudioCapture({
         onAudioData: sendAudio,
     });
@@ -44,6 +43,9 @@ export function VoiceProvider({ children }) {
     } = useVideoCapture({ onFrameData: sendImage });
 
     const [isMuted, setIsMuted] = useState(false);
+    // Voice output toggle — when false, audio blobs are discarded and
+    // only text transcriptions are shown.
+    const [voiceEnabled, setVoiceEnabled] = useState(true);
 
     // Derived booleans
     const isScreenSharing = isVideoActive && videoSource === 'screen';
@@ -76,6 +78,22 @@ export function VoiceProvider({ children }) {
         setIsMuted(next);
         setMuted(next);
     }, [isMuted, setMuted]);
+
+    const toggleVoice = useCallback(() => {
+        const next = !voiceEnabled;
+        setVoiceEnabled(next);
+        // Update chatStore so audio enqueue is skipped when voice is off
+        useChatStore.getState().setVoiceOutputEnabled(next);
+        // Notify the server (informational — modality switch is frontend-side)
+        sendControl('voice_toggle', { voice_enabled: next });
+        if (!next) {
+            // Disable voice output: stop playback and clear queued audio
+            stopPlayback();
+            useChatStore.getState().clearAudioQueue?.();
+            // Also stop recording if active
+            if (isRecording) stopRecording();
+        }
+    }, [voiceEnabled, sendControl, stopPlayback, isRecording, stopRecording]);
 
     const toggleScreen = useCallback(async () => {
         if (!isConnected && !isScreenSharing) return; // Can't start if live WS disconnected
@@ -139,13 +157,13 @@ export function VoiceProvider({ children }) {
             sendImage,
             sendControl,
             isConnected,
-            isChatConnected,
             disconnect,
-            reconnectChat,
+            reconnect,
             serverSessionId,
             // Audio state
             isRecording,
             isMuted,
+            voiceEnabled,
             captureVolume,
             playbackVolume,
             // Video state
@@ -160,6 +178,7 @@ export function VoiceProvider({ children }) {
             // Actions
             toggleRecording,
             toggleMute,
+            toggleVoice,
             toggleScreen,
             toggleCamera,
             stopPlayback,
@@ -167,12 +186,12 @@ export function VoiceProvider({ children }) {
             stopAll,
         }),
         [
-            sendText, sendAudio, sendImage, sendControl, isConnected, isChatConnected, disconnect,
-            reconnectChat, serverSessionId,
-            isRecording, isMuted, captureVolume, playbackVolume,
+            sendText, sendAudio, sendImage, sendControl, isConnected, disconnect,
+            reconnect, serverSessionId,
+            isRecording, isMuted, voiceEnabled, captureVolume, playbackVolume,
             isScreenSharing, isCameraOn, isVideoActive, videoSource, getPreviewStream,
             permissionError, clearPermissionError,
-            toggleRecording, toggleMute, toggleScreen, toggleCamera,
+            toggleRecording, toggleMute, toggleVoice, toggleScreen, toggleCamera,
             stopPlayback, stopCapture, stopAll,
         ],
     );

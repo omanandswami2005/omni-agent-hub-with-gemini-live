@@ -4,12 +4,14 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { toast } from 'sonner';
 import { createLiveConnection, sendBinaryAudio, sendJsonMessage, parseServerMessage, reconnectDelay } from '@/lib/ws';
 import { auth } from '@/lib/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useClientStore } from '@/stores/clientStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import { useSessionSuggestionStore } from '@/stores/sessionSuggestionStore';
 
 export function useWebSocket() {
   const wsRef = useRef(null);
@@ -18,6 +20,8 @@ export function useWebSocket() {
   const intentionalClose = useRef(false);
   const connectGenRef = useRef(0);
   const [isConnected, setIsConnected] = useState(false);
+  // Firestore session ID returned by the server after auth
+  const [serverSessionId, setServerSessionId] = useState(null);
 
   const connect = useCallback(async () => {
     // Bump generation so any older in-flight connect() bails after its await
@@ -147,6 +151,7 @@ export function useWebSocket() {
           if (msg.status === 'ok') {
             setIsConnected(true);
             if (msg.firestore_session_id) {
+              setServerSessionId(msg.firestore_session_id);
               const ss = useSessionStore.getState();
               ss.setActiveSession(msg.firestore_session_id);
               ss.ensureSession(msg.firestore_session_id);
@@ -156,6 +161,32 @@ export function useWebSocket() {
         case 'client_status_update':
           useClientStore.getState().setClients(msg.clients);
           break;
+        case 'session_suggestion': {
+          const sss = useSessionSuggestionStore.getState();
+          if (sss.autoJoin) {
+            // Already opted in — just show a brief toast
+            toast.info(`Joined your active session from ${msg.available_clients?.join(', ') || 'another device'}`, { duration: 3000 });
+          } else {
+            // First time — show the banner so user can decide
+            sss.setSuggestion({
+              availableClients: msg.available_clients || [],
+              message: msg.message || 'You have an active session on another device.',
+            });
+          }
+          break;
+        }
+        case 'error': {
+          const description = msg.description || 'An unexpected error occurred.';
+          toast.error(description, { duration: 6000 });
+          useChatStore.getState().addMessage({
+            role: 'system',
+            type: 'error',
+            content: description,
+            error_code: msg.code,
+          });
+          useChatStore.getState().setAgentState('idle');
+          break;
+        }
         default:
           break;
       }
@@ -188,6 +219,15 @@ export function useWebSocket() {
     setIsConnected(false);
   }, []);
 
+  // Reconnect (close + re-open) — used when switching sessions
+  const reconnect = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    connect();
+  }, [connect]);
+
   // Auto-connect when token is available
   useEffect(() => {
     const unsub = useAuthStore.subscribe((state) => {
@@ -206,13 +246,24 @@ export function useWebSocket() {
   }, [connect, disconnect]);
 
   const sendText = useCallback((text) => {
-    sendJsonMessage(wsRef.current, { type: 'text', content: text });
+    // Add user message to chat immediately (optimistic)
     useChatStore.getState().addMessage({
       id: Date.now().toString(),
       role: 'user',
       content: text,
       timestamp: new Date().toISOString(),
     });
+
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      sendJsonMessage(wsRef.current, { type: 'text', content: text });
+    } else {
+      useChatStore.getState().addMessage({
+        id: `err-${Date.now()}`,
+        role: 'system',
+        content: 'Message could not be sent — reconnecting…',
+        timestamp: new Date().toISOString(),
+      });
+    }
   }, []);
 
   const sendAudio = useCallback((pcm16Buffer) => {
@@ -227,5 +278,5 @@ export function useWebSocket() {
     sendJsonMessage(wsRef.current, { type: 'control', action, ...payload });
   }, []);
 
-  return { sendText, sendAudio, sendImage, sendControl, isConnected, disconnect };
+  return { sendText, sendAudio, sendImage, sendControl, isConnected, disconnect, reconnect, serverSessionId };
 }

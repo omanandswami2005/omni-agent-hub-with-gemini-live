@@ -4,34 +4,25 @@ Provides a ``typer`` CLI that:
 - ``connect`` — starts the WebSocket client with a system-tray icon
 - ``status``  — prints current connection status
 - ``config``  — shows the active configuration
+
+All tool handlers are loaded from the plugin system (see ``plugins/``). The
+only built-in logic here is the tray icon and the CLI commands.
 """
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 import threading
+from pathlib import Path
 
 import typer
 from PIL import Image, ImageDraw
 from rich.console import Console
 
-from src.actions import (
-    click,
-    double_click,
-    get_active_window_title,
-    get_mouse_position,
-    get_screen_size,
-    hotkey,
-    move_mouse,
-    open_application,
-    scroll,
-    type_text,
-)
 from src.config import DesktopConfig
-from src.files import file_info, list_directory, read_file, set_allowed_directories, write_file
-from src.screen import capture_active_window, capture_screen, get_screen_info
+from src.files import set_allowed_directories
+from src.plugin_registry import PluginRegistry
 from src.ws_client import DesktopWSClient
 
 logger = logging.getLogger(__name__)
@@ -42,114 +33,15 @@ app = typer.Typer(name="omni-desktop", help="Omni desktop agent client")
 # Module-level state so ``status`` can inspect it
 _client: DesktopWSClient | None = None
 
-
-# ── Action handler wrappers (sync → dict) ─────────────────────────────
-# The WS client calls these as ``await handler(**payload)``, so they are
-# async wrappers around the mostly-sync action/screen/file functions.
+# Plugins directory (sibling to this file)
+_PLUGINS_DIR = str(Path(__file__).resolve().parent / "plugins")
 
 
-async def _handle_capture_screen(**kwargs) -> dict:  # type: ignore[no-untyped-def]
-    quality = kwargs.get("quality", 75)
-    region = kwargs.get("region")
-    data = capture_screen(region=region, quality=quality)
-    return {"image_b64": base64.b64encode(data).decode(), "size": len(data)}
-
-
-async def _handle_capture_active_window(**_kwargs) -> dict:  # type: ignore[no-untyped-def]
-    data = capture_active_window()
-    if data is None:
-        return {"error": "Capture failed"}
-    return {"image_b64": base64.b64encode(data).decode(), "size": len(data)}
-
-
-async def _handle_screen_info(**_kwargs) -> dict:  # type: ignore[no-untyped-def]
-    return get_screen_info()
-
-
-async def _handle_click(**kwargs) -> dict:  # type: ignore[no-untyped-def]
-    return click(kwargs["x"], kwargs["y"], kwargs.get("button", "left"))
-
-
-async def _handle_double_click(**kwargs) -> dict:  # type: ignore[no-untyped-def]
-    return double_click(kwargs["x"], kwargs["y"])
-
-
-async def _handle_type_text(**kwargs) -> dict:  # type: ignore[no-untyped-def]
-    return type_text(kwargs["text"], kwargs.get("interval", 0.02))
-
-
-async def _handle_hotkey(**kwargs) -> dict:  # type: ignore[no-untyped-def]
-    keys = kwargs.get("keys", [])
-    return hotkey(*keys)
-
-
-async def _handle_move_mouse(**kwargs) -> dict:  # type: ignore[no-untyped-def]
-    return move_mouse(kwargs["x"], kwargs["y"])
-
-
-async def _handle_scroll(**kwargs) -> dict:  # type: ignore[no-untyped-def]
-    return scroll(kwargs["amount"], kwargs.get("x"), kwargs.get("y"))
-
-
-async def _handle_open_app(**kwargs) -> dict:  # type: ignore[no-untyped-def]
-    return open_application(kwargs["name"])
-
-
-async def _handle_get_window_title(**_kwargs) -> dict:  # type: ignore[no-untyped-def]
-    return {"title": get_active_window_title()}
-
-
-async def _handle_mouse_position(**_kwargs) -> dict:  # type: ignore[no-untyped-def]
-    return get_mouse_position()
-
-
-async def _handle_screen_size(**_kwargs) -> dict:  # type: ignore[no-untyped-def]
-    return get_screen_size()
-
-
-async def _handle_read_file(**kwargs) -> dict:  # type: ignore[no-untyped-def]
-    result = read_file(kwargs["path"], kwargs.get("max_size", 1_000_000))
-    if isinstance(result, dict):
-        return result
-    return {"content": result}
-
-
-async def _handle_write_file(**kwargs) -> dict:  # type: ignore[no-untyped-def]
-    return write_file(kwargs["path"], kwargs["content"])
-
-
-async def _handle_list_directory(**kwargs) -> dict:  # type: ignore[no-untyped-def]
-    result = list_directory(kwargs.get("path", "."))
-    if isinstance(result, dict):
-        return result
-    return {"entries": result}
-
-
-async def _handle_file_info(**kwargs) -> dict:  # type: ignore[no-untyped-def]
-    return file_info(kwargs["path"])
-
-
-# ── Handler registration ──────────────────────────────────────────────
-
-_ACTION_HANDLERS: dict = {
-    "capture_screen": _handle_capture_screen,
-    "capture_active_window": _handle_capture_active_window,
-    "screen_info": _handle_screen_info,
-    "click": _handle_click,
-    "double_click": _handle_double_click,
-    "type_text": _handle_type_text,
-    "hotkey": _handle_hotkey,
-    "move_mouse": _handle_move_mouse,
-    "scroll": _handle_scroll,
-    "open_app": _handle_open_app,
-    "get_window_title": _handle_get_window_title,
-    "mouse_position": _handle_mouse_position,
-    "screen_size": _handle_screen_size,
-    "read_file": _handle_read_file,
-    "write_file": _handle_write_file,
-    "list_directory": _handle_list_directory,
-    "file_info": _handle_file_info,
-}
+def _build_registry() -> PluginRegistry:
+    """Discover and register all desktop-client plugins."""
+    registry = PluginRegistry()
+    registry.discover(_PLUGINS_DIR)
+    return registry
 
 
 # ── System tray ───────────────────────────────────────────────────────
@@ -212,14 +104,25 @@ def connect(
     # Configure logging
     logging.basicConfig(level=getattr(logging, cfg.log_level.upper(), logging.INFO))
 
+    # Discover plugins and build the handler registry
+    registry = _build_registry()
+    registry.load_all(cfg)
+    console.print(
+        f"[green]Loaded {len(registry)} plugin(s):[/green] "
+        f"{', '.join(registry.plugin_names)}"
+    )
+
     console.print(f"[green]Connecting to[/green] {url}")
 
     global _client  # noqa: PLW0603
     _client = DesktopWSClient(url, auth)
 
-    # Register all action handlers
-    for action_name, handler_fn in _ACTION_HANDLERS.items():
+    # Register all plugin handlers
+    for action_name, handler_fn in registry.handlers.items():
         _client.register_handler(action_name, handler_fn)
+
+    # Advertise T3 capabilities and local tools from plugins
+    _client.set_t3_tools(registry.capabilities, registry.tool_defs)
 
     # Start system tray in a background thread
     stop_event = threading.Event()

@@ -11,15 +11,24 @@ the heavy ADK/genai stack.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from google.adk.agents import Agent
 from google.genai import types
 
 from app.config import settings
+from app.middleware.agent_callbacks import (
+    after_agent_callback,
+    before_agent_callback,
+    context_injection_callback,
+    cost_estimation_callback,
+    permission_check_callback,
+)
 from app.models.persona import PersonaResponse
 from app.models.plugin import ToolCapability as TC
 from app.tools.code_exec import get_code_exec_tools
+from app.tools.cross_client import get_cross_client_tools
+from app.tools.email import get_email_tools
 from app.tools.image_gen import get_image_gen_tools
 from app.tools.search import get_search_tool
 from app.utils.logging import get_logger
@@ -37,7 +46,22 @@ T1_TOOL_REGISTRY: dict[str, Callable[[], list]] = {
     TC.SEARCH: lambda: [get_search_tool()],
     TC.CODE_EXECUTION: get_code_exec_tools,
     TC.MEDIA: get_image_gen_tools,
-    # TC.DEVICE tools go to the cross-client orchestrator, not persona agents
+    TC.COMMUNICATION: get_email_tools,
+    TC.DEVICE: lambda: get_cross_client_tools()
+}
+
+# ── Built-in persona ID → capability mapping ─────────────────────────
+# When _default_tools_for_persona receives a string persona ID (e.g. in
+# tests), we resolve capabilities from this mapping.
+
+_CODE_EXEC_PERSONA_IDS: frozenset[str] = frozenset({"coder", "analyst"})
+
+_PERSONA_CAPABILITIES: dict[str, list[str]] = {
+    "assistant": [TC.SEARCH, TC.DEVICE],
+    "coder": [TC.CODE_EXECUTION, TC.DEVICE],
+    "researcher": [TC.SEARCH, TC.DEVICE],
+    "analyst": [TC.SEARCH, TC.CODE_EXECUTION, TC.DEVICE],
+    "creative": [TC.MEDIA, TC.DEVICE],
 }
 
 
@@ -66,9 +90,17 @@ def _build_speech_config(voice_name: str) -> types.SpeechConfig:
     )
 
 
-def _default_tools_for_persona(persona: PersonaResponse) -> list:
-    """Return T1 tools matched by the persona's capability tags."""
-    return get_tools_for_capabilities(persona.capabilities)
+def _default_tools_for_persona(persona: PersonaResponse | str) -> list:
+    """Return T1 tools matched by the persona's capability tags.
+
+    Accepts a :class:`PersonaResponse` or a string persona ID (resolved
+    via ``_PERSONA_CAPABILITIES``).
+    """
+    if isinstance(persona, str):
+        caps = _PERSONA_CAPABILITIES.get(persona, [])
+    else:
+        caps = persona.capabilities or _PERSONA_CAPABILITIES.get(persona.id, [])
+    return get_tools_for_capabilities(caps)
 
 
 def create_agent(
@@ -103,6 +135,11 @@ def create_agent(
         model=model or LIVE_MODEL,
         instruction=persona.system_instruction or f"You are {persona.name}.",
         tools=tools,
+        before_model_callback=context_injection_callback,
+        after_model_callback=cost_estimation_callback,
+        before_tool_callback=permission_check_callback,
+        before_agent_callback=before_agent_callback,
+        after_agent_callback=after_agent_callback,
     )
     logger.info(
         "agent_created",

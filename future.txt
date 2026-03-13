@@ -1,3 +1,10 @@
 ok but it should be plugin and not tool, then if user enables it, its whole lifecycle shoud be managed na ? like which document to be uploaded ? and deletion, listing and all other things like a end to end life cycle, also there is no any image/file/doc uploading ui and its function in client side, so fix that also and create proper seperate ui to list and all, limit the max file size to 150mb also storage can use to 1gb per user, then verctorized docs would be different list, and its life cycle 
 
 
+
+e2b-desktop streaming and its all features - manas like use
+
+MCP skills with adk (now in experimental so skipping)
+
+pip installable plugins
+documentation like adk docs

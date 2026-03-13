@@ -11,8 +11,10 @@ import MobileNav from '@/components/layout/MobileNav';
 import FloatingVoiceBubble from '@/components/chat/FloatingVoiceBubble';
 import MediaPreviewOverlay from '@/components/chat/MediaPreviewOverlay';
 import PermissionErrorBanner from '@/components/chat/PermissionErrorBanner';
+import SessionSuggestionBanner from '@/components/clients/SessionSuggestionBanner';
 import { VoiceProvider, useVoice } from '@/hooks/useVoiceProvider';
 import { useBootstrap } from '@/hooks/useBootstrap';
+import { useEventSocket } from '@/hooks/useEventSocket';
 import { useIsMobile } from '@/hooks/useMediaQuery';
 
 export function AppShell() {
@@ -28,6 +30,7 @@ function ShellLayout() {
   const navigate = useNavigate();
   const voice = useVoice();
   useBootstrap();
+  useEventSocket();
 
   return (
     <div className="flex h-screen bg-background text-foreground">
@@ -39,6 +42,9 @@ function ShellLayout() {
         </main>
       </div>
       {isMobile && <MobileNav />}
+
+      {/* Session continuity suggestion banner */}
+      <SessionSuggestionBanner />
 
       {/* Permission denied / device busy / not-found toast */}
       <PermissionErrorBanner

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Test image generation & interleaved output — direct tool invocation.
 
-Imports and calls the *production* ``generate_image`` (Imagen 4) and
-``generate_rich_image`` (Gemini interleaved) functions directly, bypassing
-the agent routing layer.  A lightweight mock ``ToolContext`` provides the
-user_id so images are queued through the real ``_pending_images`` pipeline
-and can be drained + saved.
+Imports and calls the *production* ``generate_image`` and
+``generate_rich_image`` (Gemini interleaved / nano banana) functions
+directly, bypassing the agent routing layer.  A lightweight mock
+``ToolContext`` provides the user_id so images are queued through the
+real ``_pending_images`` pipeline and can be drained + saved.
 
 Usage
 -----
@@ -13,12 +13,12 @@ Usage
 
     # Custom prompts:
     python scripts/test_image_gen.py \\
-        --imagen-prompt "A futuristic city at sunset" \\
+        --prompt "A futuristic city at sunset" \\
         --interleaved-prompt "Show me step-by-step how to draw a cat"
 
     # Skip one test:
     python scripts/test_image_gen.py --skip-interleaved
-    python scripts/test_image_gen.py --skip-imagen
+    python scripts/test_image_gen.py --skip-single
 
 Requires: google-genai, google-cloud-storage, python-dotenv
 """
@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
-import os
 import sys
 import time
 from pathlib import Path
@@ -75,12 +74,12 @@ def _print_payload(payload: dict, label: str) -> None:
     tool = payload.get("tool_name", "?")
     print(f"\n  🖼️  [{label}] tool={tool}")
 
-    # Single image (generate_image / Imagen)
+    # Single image (generate_image)
     if payload.get("image_base64"):
         path = _save_image(
             payload["image_base64"],
             payload.get("mime_type", "image/png"),
-            f"imagen_{tool}",
+            f"single_{tool}",
         )
         print(f"       Saved: {path}  ({path.stat().st_size / 1024:.0f} KB)")
         if payload.get("description"):
@@ -125,32 +124,30 @@ async def run_test(args):
     """Import production tools and run them directly."""
     # Late imports so .env is loaded first
     from app.tools.image_gen import (
+        GEMINI_IMAGE_MODEL,
+        drain_pending_images,
         generate_image,
         generate_rich_image,
-        drain_pending_images,
-        IMAGEN_MODEL,
-        GEMINI_IMAGE_MODEL_V2,
     )
 
     print(f"\n{'='*60}")
-    print(f"  Image Generation Test — Direct Tool Invocation")
+    print("  Image Generation Test — Direct Tool Invocation")
     print(f"{'='*60}")
-    print(f"  Imagen model:       {IMAGEN_MODEL}")
-    print(f"  Interleaved model:  {GEMINI_IMAGE_MODEL_V2}")
-    print(f"  Output dir:         {OUTPUT_DIR}")
+    print(f"  Model (all):  {GEMINI_IMAGE_MODEL}")
+    print(f"  Output dir:   {OUTPUT_DIR}")
     print()
 
     ctx = _MockToolContext()
     results: dict[str, dict] = {}
 
-    # ── Test 1: Imagen 4 (generate_image) ──
-    if not args.skip_imagen:
-        print(f"[1/3] Testing Imagen 4 (generate_image)...")
-        print(f"       Prompt: {args.imagen_prompt[:100]}")
+    # ── Test 1: Single image (generate_image) ──
+    if not args.skip_single:
+        print("[1/3] Testing single image (generate_image)...")
+        print(f"       Prompt: {args.prompt[:100]}")
         t0 = time.monotonic()
         try:
             summary = await generate_image(
-                prompt=args.imagen_prompt,
+                prompt=args.prompt,
                 aspect_ratio="1:1",
                 tool_context=ctx,
             )
@@ -160,9 +157,9 @@ async def run_test(args):
             queued = drain_pending_images(TEST_USER_ID)
             print(f"  📦 Queued payloads: {len(queued)}")
             for payload in queued:
-                _print_payload(payload, "IMAGEN")
+                _print_payload(payload, "SINGLE")
 
-            results["imagen"] = {
+            results["single"] = {
                 "status": "PASS" if queued else "WARN (no images queued)",
                 "elapsed": elapsed,
                 "images": len(queued),
@@ -171,17 +168,16 @@ async def run_test(args):
         except Exception as e:
             elapsed = time.monotonic() - t0
             print(f"\n  ❌ ERROR: {type(e).__name__}: {e}")
-            results["imagen"] = {"status": f"FAIL: {e}", "elapsed": elapsed, "images": 0}
-            # Drain any partial state
+            results["single"] = {"status": f"FAIL: {e}", "elapsed": elapsed, "images": 0}
             drain_pending_images(TEST_USER_ID)
 
         print(f"  ⏱️  {elapsed:.1f}s\n")
     else:
-        print("[1/3] Skipping Imagen test (--skip-imagen)\n")
+        print("[1/3] Skipping single-image test (--skip-single)\n")
 
     # ── Test 2: Gemini Interleaved (generate_rich_image) ──
     if not args.skip_interleaved:
-        print(f"[2/3] Testing Gemini Interleaved (generate_rich_image)...")
+        print("[2/3] Testing Gemini Interleaved (generate_rich_image)...")
         print(f"       Prompt: {args.interleaved_prompt[:100]}")
         t0 = time.monotonic()
         try:
@@ -217,7 +213,7 @@ async def run_test(args):
         print("[2/3] Skipping interleaved test (--skip-interleaved)\n")
 
     # ── Summary ──
-    print(f"[3/3] Summary")
+    print("[3/3] Summary")
     print(f"{'='*60}")
     for name, res in results.items():
         status = res.get("status", "?")
@@ -243,16 +239,16 @@ def main():
         description="Test image generation & interleaved output — direct tool invocation",
     )
     parser.add_argument(
-        "--imagen-prompt",
+        "--prompt",
         default="A majestic mountain landscape at golden hour with dramatic clouds and a reflective lake",
-        help="Prompt for Imagen 4 test",
+        help="Prompt for single image test",
     )
     parser.add_argument(
         "--interleaved-prompt",
         default="Create an illustrated step-by-step guide showing how to make an origami crane, with images for each step",
         help="Prompt for Gemini interleaved output test",
     )
-    parser.add_argument("--skip-imagen", action="store_true", help="Skip Imagen 4 test")
+    parser.add_argument("--skip-single", action="store_true", help="Skip single image test")
     parser.add_argument("--skip-interleaved", action="store_true", help="Skip interleaved test")
     args = parser.parse_args()
 

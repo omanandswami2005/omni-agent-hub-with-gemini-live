@@ -46,6 +46,7 @@ from app.models.ws_messages import (
     AuthResponse,
     ConnectedMessage,
     ContentType,
+    ErrorMessage,
     ImageResponseMessage,
     StatusMessage,
     ToolCallMessage,
@@ -223,6 +224,7 @@ def invalidate_runner(user_id: str) -> None:
 
 # { user_id: session_id }  — populated lazily on first connect
 _adk_session_id_cache: dict[str, str] = {}
+_adk_session_lock = asyncio.Lock()
 
 
 async def _get_or_create_adk_session(user_id: str, session_service=None) -> str:
@@ -236,29 +238,30 @@ async def _get_or_create_adk_session(user_id: str, session_service=None) -> str:
       1. List existing sessions for the user — reuse the most-recent one.
       2. If none exist, create a fresh session and cache the new ID.
     """
-    if user_id in _adk_session_id_cache:
-        return _adk_session_id_cache[user_id]
+    async with _adk_session_lock:
+        if user_id in _adk_session_id_cache:
+            return _adk_session_id_cache[user_id]
 
-    ss = session_service or _get_session_service()
+        ss = session_service or _get_session_service()
 
-    # Try to find an existing session first
-    try:
-        response = await ss.list_sessions(app_name=APP_NAME, user_id=user_id)
-        sessions = getattr(response, "sessions", [])
-        if sessions:
-            # Pick the most recently updated session
-            best = max(sessions, key=lambda s: getattr(s, "last_update_time", 0))
-            _adk_session_id_cache[user_id] = best.id
-            logger.info("adk_session_reused", user_id=user_id, session_id=best.id)
-            return best.id
-    except Exception:
-        logger.warning("adk_session_list_failed", user_id=user_id, exc_info=True)
+        # Try to find an existing session first
+        try:
+            response = await ss.list_sessions(app_name=APP_NAME, user_id=user_id)
+            sessions = getattr(response, "sessions", [])
+            if sessions:
+                # Pick the most recently updated session
+                best = max(sessions, key=lambda s: getattr(s, "last_update_time", 0))
+                _adk_session_id_cache[user_id] = best.id
+                logger.info("adk_session_reused", user_id=user_id, session_id=best.id)
+                return best.id
+        except Exception:
+            logger.warning("adk_session_list_failed", user_id=user_id, exc_info=True)
 
-    # No existing session — create one (Vertex assigns the ID)
-    session = await ss.create_session(app_name=APP_NAME, user_id=user_id)
-    _adk_session_id_cache[user_id] = session.id
-    logger.info("adk_session_created", user_id=user_id, session_id=session.id)
-    return session.id
+        # No existing session — create one (Vertex assigns the ID)
+        session = await ss.create_session(app_name=APP_NAME, user_id=user_id)
+        _adk_session_id_cache[user_id] = session.id
+        logger.info("adk_session_created", user_id=user_id, session_id=session.id)
+        return session.id
 
 
 # ── Chat Runner pool — uses TEXT_MODEL for generateContent ────────────
@@ -310,21 +313,23 @@ async def _get_chat_runner(user_id: str, session_service=None):
         return runner
 
 
-def _build_run_config(voice: str = "Aoede"):
+def _build_run_config(voice: str = "Aoede", voice_enabled: bool = True):
     """Build an ADK ``RunConfig`` for bidi live streaming."""
     from google.adk.agents.run_config import RunConfig, StreamingMode
     from google.genai import types
 
+    modalities = ["AUDIO"] if voice_enabled else ["TEXT"]
+
     return RunConfig(
         streaming_mode=StreamingMode.BIDI,
-        response_modalities=["AUDIO"],
+        response_modalities=modalities,
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(
                     voice_name=voice,
                 ),
             ),
-        ),
+        ) if voice_enabled else None,
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
         session_resumption=types.SessionResumptionConfig(
@@ -419,11 +424,21 @@ async def _send_auth_error(websocket: WebSocket, error: str) -> None:
 # ── Upstream (client → ADK) ──────────────────────────────────────────
 
 
+async def _increment_msg_count(firestore_session_id: str) -> None:
+    """Best-effort increment of message_count on a Firestore session."""
+    try:
+        from app.services.session_service import get_session_service as _get_fs_svc
+        await _get_fs_svc().increment_message_count(firestore_session_id)
+    except Exception:
+        pass  # Non-critical — silently ignore
+
+
 async def _upstream(
     websocket: WebSocket,
     queue: LiveRequestQueue,
     user_id: str,
     client_type: ClientType | None = None,
+    firestore_session_id: str | None = None,
 ) -> None:
     """Receive frames from the client and push into the ADK queue.
 
@@ -454,6 +469,9 @@ async def _upstream(
                         role="user",
                     )
                     queue.send_content(content)
+                    # Increment message count (best-effort, non-blocking)
+                    if firestore_session_id:
+                        asyncio.create_task(_increment_msg_count(firestore_session_id))
                 elif msg_type == "image":
                     import base64
 
@@ -502,6 +520,11 @@ async def _upstream(
                     )
                     invalidate_runner(user_id)
                     logger.info("capability_update_during_session", user_id=user_id)
+                elif msg_type == "control":
+                    action = data.get("action", "")
+                    if action == "voice_toggle":
+                        # Acknowledged — actual modality switch is frontend-side
+                        logger.info("voice_toggle", user_id=user_id, enabled=data.get("voice_enabled", True))
                 # Other control messages (persona_switch)
                 # are handled at the API layer, not pushed to ADK
     except (WebSocketDisconnect, RuntimeError):
@@ -553,16 +576,33 @@ async def _downstream(
     except Exception as exc:
         # Classify expected WebSocket closure conditions as info, not errors.
         exc_str = str(exc)
+        exc_str_lower = exc_str.lower()
         normal_closure = (
             # Graceful cancel from Gemini side
-            ("1000" in exc_str and "cancelled" in exc_str.lower())
+            ("1000" in exc_str and "cancelled" in exc_str_lower)
             # Keepalive ping timeout — network drop between backend and Gemini
-            or "keepalive ping timeout" in exc_str.lower()
+            or "keepalive ping timeout" in exc_str_lower
             # Any other normal close (1001 going away, 1006 abnormal)
-            or "connection closed" in exc_str.lower()
+            or "connection closed" in exc_str_lower
         )
         if normal_closure:
             logger.info("ws_downstream_session_ended", user_id=user_id, reason=exc_str)
+        elif isinstance(exc, TimeoutError) or "timed out" in exc_str_lower or "opening handshake" in exc_str_lower:
+            logger.warning("ws_downstream_live_timeout", user_id=user_id, error=exc_str)
+            with contextlib.suppress(Exception):
+                err = ErrorMessage(
+                    code="live_connection_timeout",
+                    description="Could not connect to the live voice service — the connection timed out. Please try again.",
+                )
+                await websocket.send_text(err.model_dump_json())
+        elif "429" in exc_str or "resource_exhausted" in exc_str_lower:
+            logger.warning("ws_downstream_rate_limited", user_id=user_id)
+            with contextlib.suppress(Exception):
+                err = ErrorMessage(
+                    code="rate_limited",
+                    description="The AI service is temporarily overloaded (rate limit). Please wait a moment and try again.",
+                )
+                await websocket.send_text(err.model_dump_json())
         else:
             logger.exception("ws_downstream_error", user_id=user_id)
 
@@ -686,10 +726,10 @@ async def _process_event(
 
     # ── Tool responses + image delivery ─────────────────────────────
     #
-    # Image tools (generate_image / generate_rich_image) return TEXT ONLY
-    # to Gemini (saves context tokens).  Actual image data is queued in
-    # ``image_gen._pending_images`` during tool execution and drained here
-    # when we see the corresponding function_response event.
+    # Image tools return TEXT ONLY to Gemini (saves context tokens).
+    # Actual image data is queued in ``image_gen._pending_images`` during
+    # tool execution and drained here when we see the corresponding
+    # function_response event.
     #
     from app.tools.image_gen import IMAGE_TOOL_NAMES, drain_pending_images
 
@@ -837,9 +877,14 @@ async def ws_live(websocket: WebSocket) -> None:
             if not fs_session.adk_session_id:
                 await _fs_svc.link_adk_session(firestore_session_id, session_id)
         else:
-            fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
-            firestore_session_id = fs_session.id
-            await _fs_svc.link_adk_session(firestore_session_id, session_id)
+            # Reuse latest session if it's already linked to this ADK session
+            latest = await _fs_svc.get_latest_session_for_user(user.uid)
+            if latest and latest.adk_session_id == session_id:
+                firestore_session_id = latest.id
+            else:
+                fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
+                firestore_session_id = fs_session.id
+                await _fs_svc.link_adk_session(firestore_session_id, session_id)
     except Exception:
         # Requested session not found or creation failed — create a new one
         try:
@@ -904,7 +949,7 @@ async def ws_live(websocket: WebSocket) -> None:
     down_task: asyncio.Task | None = None
     try:
         up_task = asyncio.create_task(
-            _upstream(websocket, queue, user.uid, client_type), name="upstream",
+            _upstream(websocket, queue, user.uid, client_type, firestore_session_id), name="upstream",
         )
         down_task = asyncio.create_task(
             _downstream(websocket, runner, user.uid, session_id, queue, run_config),
@@ -978,12 +1023,18 @@ async def ws_chat(websocket: WebSocket) -> None:
         return
     user, client_type, os_name, requested_session_id, capabilities, local_tools = auth_result
 
+    mgr = get_connection_manager()
+
+    # Register as auxiliary socket so this WS receives client_status_update broadcasts
+    aux_key = f"chat_{id(websocket)}"
+    mgr.add_aux_socket(user.uid, aux_key, websocket)
+
     active_session_service = _get_session_service()
     session_id = await _get_or_create_adk_session(user.uid, active_session_service)
 
     # Store capabilities if provided
     if capabilities or local_tools:
-        get_connection_manager().store_capabilities(user.uid, client_type, capabilities, local_tools)
+        mgr.store_capabilities(user.uid, client_type, capabilities, local_tools)
 
     # Link Firestore session to ADK session
     from app.services.session_service import get_session_service as _get_fs_svc
@@ -1018,6 +1069,28 @@ async def ws_chat(websocket: WebSocket) -> None:
         firestore_session_id=firestore_session_id or "",
     )
     await websocket.send_text(auth_ok.model_dump_json())
+
+    # Send current client status so the dashboard is up-to-date immediately
+    clients = mgr.get_connected_clients(user.uid)
+    if clients:
+        import json as _json
+        status_payload = _json.dumps({
+            "type": "client_status_update",
+            "event": "snapshot",
+            "client_type": "web",
+            "clients": [
+                {
+                    "client_type": str(c.client_type),
+                    "client_id": c.client_id,
+                    "connected_at": c.connected_at.isoformat() if c.connected_at else None,
+                    "os_name": c.os_name,
+                    "connected": True,
+                }
+                for c in clients
+            ],
+        })
+        with contextlib.suppress(Exception):
+            await websocket.send_text(status_payload)
 
     bus = get_event_bus()
     runner = await _get_chat_runner(user.uid, session_service=active_session_service)
@@ -1054,16 +1127,41 @@ async def ws_chat(websocket: WebSocket) -> None:
                 # run_async events don't carry turn_complete, so send IDLE explicitly
                 idle_msg = StatusMessage(state=AgentState.IDLE)
                 await websocket.send_text(idle_msg.model_dump_json())
-            except Exception:
-                logger.exception("ws_chat_turn_error", user_id=user.uid)
-                err_msg = StatusMessage(state=AgentState.IDLE)
-                await websocket.send_text(err_msg.model_dump_json())
+            except Exception as turn_exc:
+                turn_exc_str = str(turn_exc)
+                turn_exc_lower = turn_exc_str.lower()
+                if "429" in turn_exc_str or "resource_exhausted" in turn_exc_lower:
+                    logger.warning("ws_chat_turn_rate_limited", user_id=user.uid)
+                    err_msg = ErrorMessage(
+                        code="rate_limited",
+                        description="The AI service is temporarily overloaded (rate limit). Please wait a moment and try again.",
+                    )
+                    await websocket.send_text(err_msg.model_dump_json())
+                elif "timed out" in turn_exc_lower or isinstance(turn_exc, TimeoutError):
+                    logger.warning("ws_chat_turn_timeout", user_id=user.uid)
+                    err_msg = ErrorMessage(
+                        code="request_timeout",
+                        description="The request to the AI service timed out. Please try again.",
+                    )
+                    await websocket.send_text(err_msg.model_dump_json())
+                else:
+                    logger.exception("ws_chat_turn_error", user_id=user.uid)
+                    err_msg = ErrorMessage(
+                        code="agent_error",
+                        description="Something went wrong processing your message. Please try again.",
+                    )
+                    await websocket.send_text(err_msg.model_dump_json())
+                # Always return to IDLE so the client re-enables input
+                await websocket.send_text(StatusMessage(state=AgentState.IDLE).model_dump_json())
 
     except (WebSocketDisconnect, RuntimeError):
         logger.info("ws_chat_disconnected", user_id=user.uid)
     except Exception:
         logger.exception("ws_chat_error", user_id=user.uid)
     finally:
+        # Remove auxiliary socket registration
+        mgr.remove_aux_socket(user.uid, aux_key)
+
         # Persist chat session to Vertex + generate memories (same as ws_live)
         vertex_session_id: str | None = None
         if settings.USE_AGENT_ENGINE_SESSIONS:

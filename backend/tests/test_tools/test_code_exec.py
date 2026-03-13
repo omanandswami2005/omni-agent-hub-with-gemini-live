@@ -328,5 +328,5 @@ class TestAgentFactoryIntegration:
         tools = _default_tools_for_persona("analyst")
         names = {t.name for t in tools}
         # analyst gets search + code exec
-        assert "google_search" in names
+        assert "google_search_agent" in names
         assert "execute_code" in names

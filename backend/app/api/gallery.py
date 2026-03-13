@@ -25,7 +25,7 @@ async def list_images(
     them newest-first.
     """
     svc = get_storage_service()
-    all_files = svc.list_files(prefix="images/")
+    all_files = svc.list_files(prefix=f"images/{user.uid}/")
 
     # Filter to actual image files only
     image_exts = (".png", ".jpg", ".jpeg", ".webp", ".gif")

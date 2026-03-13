@@ -1,33 +1,41 @@
 /**
- * GenUI: GenUIRenderer — Dynamic renderer for server-pushed UI components.
+ * GenUI: GenUIRenderer — Dynamic renderer using the pluggable GenUI registry.
+ *
+ * Renders any component registered via registerGenUI(). Developers add new
+ * GenUI components by registering them in genui-builtins.js (or any other
+ * file that calls registerGenUI). This renderer lazy-loads the component
+ * on first use.
+ *
+ * Forward-compatible with OpenUI: when OpenUI is integrated, the <Renderer>
+ * can replace this component, consuming the same registry entries.
  */
 
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
+import { getGenUI } from '@/lib/genui-registry';
 
-const components = {
-  chart: lazy(() => import('@/components/genui/DynamicChart')),
-  table: lazy(() => import('@/components/genui/DataTable')),
-  card: lazy(() => import('@/components/genui/InfoCard')),
-  code: lazy(() => import('@/components/genui/CodeBlock')),
-  image: lazy(() => import('@/components/genui/ImageGallery')),
-  timeline: lazy(() => import('@/components/genui/TimelineView')),
-  markdown: lazy(() => import('@/components/genui/MarkdownRenderer')),
-  diff: lazy(() => import('@/components/genui/DiffViewer')),
-  weather: lazy(() => import('@/components/genui/WeatherWidget')),
-  map: lazy(() => import('@/components/genui/MapView')),
-};
+// Cache lazy-wrapped components so React.lazy is only called once per type
+const _lazyCache = new Map();
+
+function getLazyComponent(type) {
+  if (_lazyCache.has(type)) return _lazyCache.get(type);
+  const entry = getGenUI(type);
+  if (!entry) return null;
+  const LazyComp = lazy(entry.component);
+  _lazyCache.set(type, LazyComp);
+  return LazyComp;
+}
 
 export default function GenUIRenderer({ type, data }) {
-  const Component = components[type];
+  const Component = useMemo(() => getLazyComponent(type), [type]);
+  const MdFallback = useMemo(() => getLazyComponent('markdown'), []);
 
   if (!Component) {
-    // Fallback: treat as markdown if there's a content string, otherwise show raw JSON
-    const Md = components.markdown;
-    if (data?.content) {
+    // Unknown type — try markdown fallback for text content
+    if (MdFallback && data?.content) {
       return (
         <Suspense fallback={<LoadingSpinner />}>
-          <Md content={data.content} />
+          <MdFallback content={data.content} />
         </Suspense>
       );
     }

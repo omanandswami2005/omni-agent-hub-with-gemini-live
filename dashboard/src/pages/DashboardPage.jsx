@@ -9,6 +9,7 @@ import ChatPanel from '@/components/chat/ChatPanel';
 import GenUIRenderer from '@/components/genui/GenUIRenderer';
 import PersonaCard from '@/components/persona/PersonaCard';
 import ClientStatusBar from '@/components/clients/ClientStatusBar';
+import PipelineMonitor from '@/components/chat/PipelineMonitor';
 import { useVoice } from '@/hooks/useVoiceProvider';
 import { useChatStore } from '@/stores/chatStore';
 import { useSessionStore } from '@/stores/sessionStore';
@@ -65,7 +66,7 @@ export default function DashboardPage() {
                     isRecording={voice.isRecording}
                     captureVolume={voice.captureVolume}
                     playbackVolume={voice.playbackVolume}
-                    isChatConnected={voice.isChatConnected}
+                    isChatConnected={voice.isConnected}
                 />
             </div>
 
@@ -77,11 +78,11 @@ export default function DashboardPage() {
                     <div className="space-y-1.5">
                         <div className="flex items-center gap-2">
                             <span className={`h-2 w-2 rounded-full ${voice.isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-                            <span className="text-sm">Voice {voice.isConnected ? 'Connected' : 'Disconnected'}</span>
+                            <span className="text-sm">{voice.isConnected ? 'Connected' : 'Disconnected'}</span>
                         </div>
                         <div className="flex items-center gap-2">
-                            <span className={`h-2 w-2 rounded-full ${voice.isChatConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-                            <span className="text-sm">Chat {voice.isChatConnected ? 'Connected' : 'Disconnected'}</span>
+                            <span className={`h-2 w-2 rounded-full ${voice.voiceEnabled ? 'bg-blue-500' : 'bg-muted-foreground'}`} />
+                            <span className="text-sm">Voice {voice.voiceEnabled ? 'On' : 'Off'}</span>
                         </div>
                     </div>
                 </div>
@@ -125,6 +126,9 @@ export default function DashboardPage() {
                         </div>
                     </div>
                 )}
+
+                {/* Pipeline monitor */}
+                <PipelineMonitor />
 
                 {/* GenUI preview */}
                 {lastGenUI && (

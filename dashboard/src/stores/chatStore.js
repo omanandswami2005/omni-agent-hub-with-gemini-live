@@ -83,8 +83,12 @@ export const useChatStore = create((set, get) => ({
 
   // Audio queue for playback
   audioQueue: [],
-  enqueueAudio: (blob) =>
-    set((s) => ({ audioQueue: [...s.audioQueue, blob] })),
+  voiceOutputEnabled: true,
+  setVoiceOutputEnabled: (enabled) => set({ voiceOutputEnabled: enabled }),
+  enqueueAudio: (blob) => {
+    if (!get().voiceOutputEnabled) return; // Skip audio when voice output is off
+    set((s) => ({ audioQueue: [...s.audioQueue, blob] }));
+  },
   dequeueAudio: () =>
     set((s) => ({ audioQueue: s.audioQueue.slice(1) })),
   clearAudioQueue: () => set({ audioQueue: [] }),

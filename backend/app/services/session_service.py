@@ -72,13 +72,12 @@ class SessionService:
         query = (
             self.db.collection(COLLECTION)
             .where(filter=firestore.FieldFilter("user_id", "==", user_id))
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
         )
-        items = [
+        return [
             SessionListItem(id=snap.id, **snap.to_dict())
             for snap in query.stream()
         ]
-        items.sort(key=lambda s: s.created_at, reverse=True)
-        return items
 
     # ── Update ────────────────────────────────────────────────────────
 
@@ -111,6 +110,13 @@ class SessionService:
         """Store the ADK session ID on a Firestore session doc."""
         self.db.collection(COLLECTION).document(session_id).update({
             "adk_session_id": adk_session_id,
+            "updated_at": datetime.now(UTC),
+        })
+
+    async def increment_message_count(self, session_id: str, count: int = 1) -> None:
+        """Atomically increment message_count on a session doc."""
+        self.db.collection(COLLECTION).document(session_id).update({
+            "message_count": firestore.Increment(count),
             "updated_at": datetime.now(UTC),
         })
 

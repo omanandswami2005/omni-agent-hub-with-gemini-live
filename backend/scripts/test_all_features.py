@@ -19,7 +19,7 @@ What It Tests
 -------------
   connected   — WS auth handshake + session bootstrap
   search      — Google Search grounding (T1)
-  image       — Imagen 4 image generation (T1)
+  image       — Gemini image generation (T1)
   codegen     — E2B code execution in sandbox (T1)
   mcp_wiki    — Wikipedia MCP server (T2, auto-enabled if needed)
   mcp_fs      — Filesystem MCP server (T2)
@@ -108,8 +108,8 @@ TESTS: list[dict[str, Any]] = [
     },
     {
         "id": "image",
-        "name": "Image Generation (Imagen 4)",
-        "desc": "T1 tool: generate_image via Vertex AI Imagen",
+        "name": "Image Generation (Gemini)",
+        "desc": "T1 tool: generate_image via Gemini interleaved output",
         "prompt": "Generate a simple image of a red apple on a plain white background.",
         "persona": "creative",
         "expect_type": "image_response",
@@ -285,7 +285,7 @@ async def collect_responses(ws, timeout: float = 45.0) -> list[dict]:
                 silence = 8.0
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=min(remaining, silence))
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Silence exceeded — stop if we have a real text response
                 if has_response_text:
                     break
@@ -445,7 +445,7 @@ def grade_result(test: dict, messages: list[dict]) -> tuple[bool, str]:
             return True, f"tool '{expect_tool}' was called"
         # Accept transfer_to_agent + response as a pass (sub-agent handled it)
         if has_response and any(m.get("tool_name") == "transfer_to_agent" for m in messages):
-            return True, f"agent transferred & responded"
+            return True, "agent transferred & responded"
 
     if has_response:
         return True, "agent responded"
@@ -596,7 +596,7 @@ async def run_tests(only: list[str] | None, force_persona: str | None) -> None:
                 try:
                     while True:
                         await asyncio.wait_for(ws.recv(), timeout=0.5)
-                except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                except (TimeoutError, asyncio.CancelledError, Exception):
                     pass
 
     except ConnectionRefusedError:

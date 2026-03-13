@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.tools.search import (
+    GoogleSearchAgentTool,
     GoogleSearchTool,
     get_search_tool,
     get_search_tools,
@@ -26,20 +27,16 @@ class TestGetSearchTool:
 
     def test_returns_google_search_tool_instance(self):
         tool = get_search_tool()
-        assert isinstance(tool, GoogleSearchTool)
+        assert isinstance(tool, GoogleSearchAgentTool)
 
     def test_singleton_returns_same_instance(self):
         tool1 = get_search_tool()
         tool2 = get_search_tool()
         assert tool1 is tool2
 
-    def test_tool_name_is_google_search(self):
+    def test_tool_name_is_google_search_agent(self):
         tool = get_search_tool()
-        assert tool.name == "google_search"
-
-    def test_bypass_multi_tools_limit_enabled(self):
-        tool = get_search_tool()
-        assert tool.bypass_multi_tools_limit is True
+        assert tool.name == "google_search_agent"
 
 
 # ── get_search_tools list ────────────────────────────────────────────
@@ -60,7 +57,7 @@ class TestGetSearchTools:
     def test_contains_google_search_tool(self):
         tools = get_search_tools()
         assert len(tools) >= 1
-        assert isinstance(tools[0], GoogleSearchTool)
+        assert isinstance(tools[0], GoogleSearchAgentTool)
 
     def test_list_tool_is_same_singleton(self):
         tools = get_search_tools()
@@ -136,31 +133,31 @@ class TestAgentFactorySearchIntegration:
         from app.agents.agent_factory import _default_tools_for_persona
 
         tools = _default_tools_for_persona("researcher")
-        assert any(isinstance(t, GoogleSearchTool) for t in tools)
+        assert any(isinstance(t, GoogleSearchAgentTool) for t in tools)
 
     def test_assistant_gets_search_tool(self):
         from app.agents.agent_factory import _default_tools_for_persona
 
         tools = _default_tools_for_persona("assistant")
-        assert any(isinstance(t, GoogleSearchTool) for t in tools)
+        assert any(isinstance(t, GoogleSearchAgentTool) for t in tools)
 
     def test_analyst_gets_search_tool(self):
         from app.agents.agent_factory import _default_tools_for_persona
 
         tools = _default_tools_for_persona("analyst")
-        assert any(isinstance(t, GoogleSearchTool) for t in tools)
+        assert any(isinstance(t, GoogleSearchAgentTool) for t in tools)
 
     def test_creative_does_not_get_search_tool(self):
         from app.agents.agent_factory import _default_tools_for_persona
 
         tools = _default_tools_for_persona("creative")
-        assert not any(isinstance(t, GoogleSearchTool) for t in tools)
+        assert not any(isinstance(t, GoogleSearchAgentTool) for t in tools)
 
     def test_coder_does_not_get_search_tool(self):
         from app.agents.agent_factory import _default_tools_for_persona
 
         tools = _default_tools_for_persona("coder")
-        assert not any(isinstance(t, GoogleSearchTool) for t in tools)
+        assert not any(isinstance(t, GoogleSearchAgentTool) for t in tools)
 
 
 # ── create_agent passes tools through ────────────────────────────────
@@ -184,7 +181,7 @@ class TestCreateAgentWithSearchTools:
             is_default=True,
         )
         agent = create_agent(persona)
-        assert any(isinstance(t, GoogleSearchTool) for t in agent.tools)
+        assert any(isinstance(t, GoogleSearchAgentTool) for t in agent.tools)
 
     def test_creative_agent_has_no_tools(self):
         from app.agents.agent_factory import create_agent
@@ -201,7 +198,7 @@ class TestCreateAgentWithSearchTools:
             is_default=True,
         )
         agent = create_agent(persona)
-        assert not any(isinstance(t, GoogleSearchTool) for t in agent.tools)
+        assert not any(isinstance(t, GoogleSearchAgentTool) for t in agent.tools)
 
 
 # ── Module exports ───────────────────────────────────────────────────

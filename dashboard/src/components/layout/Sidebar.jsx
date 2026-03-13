@@ -53,8 +53,8 @@ function SidebarSessionList() {
     switchSession(session.id);
     clearMessages();
     navigate(`/session/${session.id}`);
-    // Reconnect chat WS so server binds to this session
-    voice.reconnectChat?.();
+    // Reconnect WS so server binds to this session
+    voice.reconnect?.();
   };
 
   if (recent.length === 0) {
@@ -101,8 +101,8 @@ export default function Sidebar() {
     clearMessages();
     useSessionStore.getState().setActiveSession(null);
     navigate('/');
-    // Reconnect chat WS so server creates a fresh session
-    voice.reconnectChat?.();
+    // Reconnect WS so server creates a fresh session
+    voice.reconnect?.();
   };
 
   return (

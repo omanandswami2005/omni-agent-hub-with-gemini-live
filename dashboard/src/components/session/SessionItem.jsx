@@ -2,13 +2,27 @@
  * Session: SessionItem — Single session row in the list.
  */
 
+import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 export default function SessionItem({ session, isActive, onSelect, onDelete }) {
+  const [confirming, setConfirming] = useState(false);
   const timeAgo = session?.created_at
     ? formatDistanceToNow(new Date(session.created_at), { addSuffix: true })
     : session?.date || '';
+
+  const handleDelete = (e) => {
+    e.stopPropagation();
+    if (confirming) {
+      onDelete(session);
+      setConfirming(false);
+    } else {
+      setConfirming(true);
+      // Auto-cancel after 3 seconds
+      setTimeout(() => setConfirming(false), 3000);
+    }
+  };
 
   return (
     <div
@@ -25,11 +39,14 @@ export default function SessionItem({ session, isActive, onSelect, onDelete }) {
         <span className="text-xs text-muted-foreground">{timeAgo}</span>
         {onDelete && (
           <button
-            onClick={(e) => { e.stopPropagation(); onDelete(session); }}
-            className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
-            aria-label="Delete session"
+            onClick={handleDelete}
+            className={`rounded px-1.5 py-1 text-xs transition-all ${confirming
+              ? 'bg-destructive/10 text-destructive opacity-100'
+              : 'text-muted-foreground opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100'
+              }`}
+            aria-label={confirming ? 'Confirm delete' : 'Delete session'}
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            {confirming ? 'Delete?' : <Trash2 className="h-3.5 w-3.5" />}
           </button>
         )}
       </div>

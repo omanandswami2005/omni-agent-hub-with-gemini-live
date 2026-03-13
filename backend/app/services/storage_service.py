@@ -46,18 +46,21 @@ class StorageService:
         self,
         image_bytes: bytes,
         *,
+        user_id: str,
         folder: str = "images",
         filename: str | None = None,
         content_type: str = "image/png",
     ) -> str:
         """Upload an image and return its ``gs://`` URI.
 
-        If *filename* is not provided a UUID is generated.
+        Images are stored under ``<folder>/<user_id>/<filename>`` so each
+        user's media is isolated.  If *filename* is not provided a UUID is
+        generated.
         """
         if filename is None:
             ext = content_type.split("/")[-1]
             filename = f"{uuid.uuid4().hex}.{ext}"
-        destination = f"{folder}/{filename}"
+        destination = f"{folder}/{user_id}/{filename}"
         return self.upload_bytes(image_bytes, destination, content_type)
 
     def upload_artifact(

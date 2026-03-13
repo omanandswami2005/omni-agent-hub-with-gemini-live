@@ -463,7 +463,7 @@ class TaskArchitect:
             "coder": ["code_execution", "sandbox", "search", "web"],
             "researcher": ["search", "web", "knowledge"],
             "analyst": ["code_execution", "sandbox", "search", "data", "web"],
-            "creative": ["creative", "media"],
+            "creative": ["creative", "media", "communication"],
         }
         caps = _PERSONA_CAPS.get(task.persona_id, ["search"])
         # T1 tools from capability mapping

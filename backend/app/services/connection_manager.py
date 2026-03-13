@@ -14,10 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-
-import json
 
 from app.models.client import ClientInfo, ClientType
 from app.utils.logging import get_logger
@@ -35,11 +34,22 @@ _PING_TIMEOUT = 10
 
 
 class ConnectionManager:
-    """In-memory registry of active WebSocket connections with heartbeat."""
+    """In-memory registry of active WebSocket connections with heartbeat.
+
+    Primary connections (from ``/ws/live``) are keyed by
+    ``(user_id, client_type)`` — one per device.  They appear in client
+    lists and receive status broadcasts.
+
+    Auxiliary sockets (e.g. ``/ws/chat``) are stored separately.  They
+    receive broadcasts but do NOT show as distinct clients.
+    """
 
     def __init__(self) -> None:
         # { user_id: { client_type: (WebSocket, connected_at, os_name) } }
         self._connections: dict[str, dict[ClientType, tuple[WebSocket, datetime, str]]] = {}
+        # Auxiliary sockets that also receive broadcasts (e.g. /ws/chat)
+        # { user_id: { aux_key: WebSocket } }
+        self._aux_sockets: dict[str, dict[str, WebSocket]] = {}
         # { user_id: { client_type: { "capabilities": [...], "local_tools": [...] } } }
         self._capabilities: dict[str, dict[ClientType, dict]] = {}
         self._reaper_task: asyncio.Task | None = None
@@ -94,6 +104,21 @@ class ConnectionManager:
         logger.info("client_disconnected", user_id=user_id, client_type=client_type)
         await self._broadcast_client_status(user_id, event="disconnected", changed_client_type=client_type)
 
+    # ── Auxiliary sockets (receive broadcasts but aren't listed as clients) ──
+
+    def add_aux_socket(self, user_id: str, key: str, websocket: WebSocket) -> None:
+        """Register an auxiliary socket that receives broadcasts."""
+        self._aux_sockets.setdefault(user_id, {})[key] = websocket
+        logger.debug("aux_socket_added", user_id=user_id, key=key)
+
+    def remove_aux_socket(self, user_id: str, key: str) -> None:
+        """Remove an auxiliary socket."""
+        user_aux = self._aux_sockets.get(user_id)
+        if user_aux is not None:
+            user_aux.pop(key, None)
+            if not user_aux:
+                self._aux_sockets.pop(user_id, None)
+
     # ── Status Broadcasting ────────────────────────────────────────────
 
     async def _broadcast_client_status(
@@ -124,16 +149,33 @@ class ConnectionManager:
     # ── Messaging ─────────────────────────────────────────────────────
 
     async def send_to_user(self, user_id: str, message: str) -> None:
-        """Broadcast a JSON text frame to **all** connected clients of a user."""
+        """Broadcast a JSON text frame to **all** connected clients of a user.
+
+        Sends to both primary connections and auxiliary sockets.
+        """
+        # Snapshot items to avoid RuntimeError if the dict is mutated during iteration
         user_conns = self._connections.get(user_id, {})
+        snapshot = list(user_conns.items())
         dead: list[ClientType] = []
-        for ct, (ws, _, _os) in user_conns.items():
+        for ct, (ws, _, _os) in snapshot:
             try:
                 await ws.send_text(message)
             except Exception:
                 dead.append(ct)
         for ct in dead:
             await self.disconnect(user_id, ct)
+
+        # Also send to auxiliary sockets
+        user_aux = self._aux_sockets.get(user_id, {})
+        aux_snapshot = list(user_aux.items())
+        dead_aux: list[str] = []
+        for key, ws in aux_snapshot:
+            try:
+                await ws.send_text(message)
+            except Exception:
+                dead_aux.append(key)
+        for key in dead_aux:
+            self.remove_aux_socket(user_id, key)
 
     async def send_to_client(
         self,
@@ -253,7 +295,7 @@ class ConnectionManager:
         """Return list of OTHER client types that are online (excluding current)."""
         user_conns = self._connections.get(user_id, {})
         return [
-            ct for ct in user_conns.keys()
+            ct for ct in user_conns
             if ct != current_client_type
         ]
 
@@ -299,8 +341,21 @@ class ConnectionManager:
         for user_id, ct in dead:
             logger.warning("heartbeat_stale_reaped", user_id=user_id, client_type=ct)
             await self.disconnect(user_id, ct)
-        if dead:
-            logger.info("heartbeat_reap_complete", reaped=len(dead), remaining=self.total_connections)
+
+        # Ping auxiliary sockets too
+        dead_aux: list[tuple[str, str]] = []
+        for user_id, aux in list(self._aux_sockets.items()):
+            for key, ws in list(dict(aux).items()):
+                try:
+                    await asyncio.wait_for(ws.send_text('{"type":"ping"}'), timeout=_PING_TIMEOUT)
+                except Exception:
+                    dead_aux.append((user_id, key))
+        for user_id, key in dead_aux:
+            self.remove_aux_socket(user_id, key)
+
+        total_reaped = len(dead) + len(dead_aux)
+        if total_reaped:
+            logger.info("heartbeat_reap_complete", reaped=total_reaped, remaining=self.total_connections)
 
 
 # ── Module singleton ──────────────────────────────────────────────────

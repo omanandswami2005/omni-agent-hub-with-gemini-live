@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { toast } from 'sonner';
 import { auth } from '@/lib/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { useChatStore } from '@/stores/chatStore';
@@ -137,6 +138,18 @@ export function useChatWebSocket() {
                 case 'client_status_update':
                     useClientStore.getState().setClients(msg.clients);
                     break;
+                case 'error': {
+                    const description = msg.description || 'An unexpected error occurred.';
+                    toast.error(description, { duration: 6000 });
+                    store.addMessage({
+                        role: 'system',
+                        type: 'error',
+                        content: description,
+                        error_code: msg.code,
+                    });
+                    store.setAgentState('idle');
+                    break;
+                }
                 default:
                     break;
             }

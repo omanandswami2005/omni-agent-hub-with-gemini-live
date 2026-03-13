@@ -334,3 +334,142 @@ class TestConfig:
         assert cfg.server_url == "ws://localhost:8080/ws/live"
         assert cfg.capture_quality == 75
         assert cfg.log_level == "INFO"
+
+
+# ---------------------------------------------------------------------------
+# ws_client interruption / cancellation tests
+# ---------------------------------------------------------------------------
+
+
+class TestWSClientInterruptions:
+    @pytest.mark.asyncio
+    async def test_cancel_call_cancels_task(self):
+        from src.ws_client import DesktopWSClient
+
+        client = DesktopWSClient("ws://localhost:8080/ws/live", "test-token")
+        client.ws = AsyncMock()
+        client.connected = True
+
+        import asyncio
+
+        async def slow():
+            await asyncio.sleep(100)
+
+        task = asyncio.create_task(slow())
+        client._active_tasks["abc-123"] = task
+
+        await client.cancel_call("abc-123")
+        # Yield to let cancellation propagate
+        await asyncio.sleep(0)
+        assert task.cancelled()
+        assert "abc-123" not in client._active_tasks
+
+    @pytest.mark.asyncio
+    async def test_cancel_all_clears_all_tasks(self):
+        from src.ws_client import DesktopWSClient
+
+        client = DesktopWSClient("ws://localhost:8080/ws/live", "test-token")
+        client.ws = AsyncMock()
+        client.connected = True
+
+        import asyncio
+
+        async def slow():
+            await asyncio.sleep(100)
+
+        t1 = asyncio.create_task(slow())
+        t2 = asyncio.create_task(slow())
+        client._active_tasks["c1"] = t1
+        client._active_tasks["c2"] = t2
+
+        await client.cancel_all()
+        await asyncio.sleep(0)
+        assert len(client._active_tasks) == 0
+        assert t1.cancelled()
+        assert t2.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_cancel_message(self):
+        from src.ws_client import DesktopWSClient
+
+        client = DesktopWSClient("ws://localhost:8080/ws/live", "test-token")
+        client.ws = AsyncMock()
+        client.connected = True
+
+        import asyncio
+
+        async def slow():
+            await asyncio.sleep(100)
+
+        task = asyncio.create_task(slow())
+        client._active_tasks["cancel-me"] = task
+
+        await client._dispatch({"type": "cancel", "call_id": "cancel-me"})
+        await asyncio.sleep(0)
+        assert task.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_cancel_all_message(self):
+        from src.ws_client import DesktopWSClient
+
+        client = DesktopWSClient("ws://localhost:8080/ws/live", "test-token")
+        client.ws = AsyncMock()
+        client.connected = True
+
+        import asyncio
+
+        async def slow():
+            await asyncio.sleep(100)
+
+        task = asyncio.create_task(slow())
+        client._active_tasks["t1"] = task
+
+        await client._dispatch({"type": "cancel_all"})
+        await asyncio.sleep(0)
+        assert task.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_status_interrupted(self):
+        from src.ws_client import DesktopWSClient
+
+        client = DesktopWSClient("ws://localhost:8080/ws/live", "test-token")
+        client.ws = AsyncMock()
+        client.connected = True
+
+        import asyncio
+
+        async def slow():
+            await asyncio.sleep(100)
+
+        task = asyncio.create_task(slow())
+        client._active_tasks["t1"] = task
+
+        await client._dispatch({
+            "type": "status",
+            "state": "listening",
+            "detail": "Interrupted by user",
+        })
+        await asyncio.sleep(0)
+        assert task.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_tool_invocation_creates_tracked_task(self):
+        from src.ws_client import DesktopWSClient
+
+        client = DesktopWSClient("ws://localhost:8080/ws/live", "test-token")
+        client.ws = AsyncMock()
+        client.connected = True
+
+        handler = AsyncMock(return_value={"ok": True})
+        client.register_handler("test_tool", handler)
+
+        await client._dispatch({
+            "type": "tool_invocation",
+            "call_id": "call-1",
+            "tool": "test_tool",
+            "args": {"x": 1},
+        })
+
+        import asyncio
+        await asyncio.sleep(0.05)
+        handler.assert_called_once_with(x=1)

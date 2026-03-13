@@ -19,10 +19,17 @@ from __future__ import annotations
 
 from google.adk.agents import Agent
 
-from app.agents.agent_factory import LIVE_MODEL, TEXT_MODEL, create_agent
+from app.agents.agent_factory import LIVE_MODEL, create_agent
 from app.agents.cross_client_agent import build_cross_client_agent
-from app.agents.task_planner_tool import get_task_planner_tool
 from app.agents.personas import get_default_personas
+from app.agents.task_planner_tool import get_task_planner_tool
+from app.middleware.agent_callbacks import (
+    after_agent_callback,
+    before_agent_callback,
+    context_injection_callback,
+    cost_estimation_callback,
+    permission_check_callback,
+)
 from app.models.persona import PersonaResponse
 from app.utils.logging import get_logger
 
@@ -130,6 +137,11 @@ def build_root_agent(
         instruction=instruction,
         sub_agents=sub_agents,
         tools=root_tools,
+        before_model_callback=context_injection_callback,
+        after_model_callback=cost_estimation_callback,
+        before_tool_callback=permission_check_callback,
+        before_agent_callback=before_agent_callback,
+        after_agent_callback=after_agent_callback,
     )
 
     agent_names = [a.name for a in sub_agents]

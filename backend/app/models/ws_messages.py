@@ -165,7 +165,7 @@ class ToolResponseMessage(BaseModel):
 class ImageResponseMessage(BaseModel):
     """Server → client: an image produced by an image generation tool.
 
-    For ``generate_image`` (Imagen 4): single image via ``image_base64``.
+    For ``generate_image``: single image via ``image_base64``.
     For ``generate_rich_image`` (Gemini interleaved): ordered ``parts``
     list preserving the text↔image interleaving so the dashboard can
     render an illustrated guide exactly as Gemini produced it.
@@ -173,7 +173,7 @@ class ImageResponseMessage(BaseModel):
 
     type: Literal["image_response"] = "image_response"
     tool_name: str = "generate_image"
-    # Single image (generate_image / Imagen 4)
+    # Single image (generate_image)
     image_base64: str = ""
     mime_type: str = "image/png"
     image_url: str = ""
