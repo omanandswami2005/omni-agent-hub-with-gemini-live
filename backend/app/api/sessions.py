@@ -15,7 +15,7 @@ from app.services.session_service import SessionService, get_session_service
 router = APIRouter()
 
 
-@router.post("/", status_code=201)
+@router.post("", status_code=201)
 async def create_session(
     body: SessionCreate,
     user: CurrentUser,
@@ -25,7 +25,7 @@ async def create_session(
     return await svc.create_session(user.uid, body)
 
 
-@router.get("/")
+@router.get("")
 async def list_sessions(
     user: CurrentUser,
     svc: SessionService = Depends(get_session_service),  # noqa: B008
@@ -97,9 +97,12 @@ def _events_to_messages(events: list) -> list[ChatMessage]:
     - Finished output transcriptions → assistant voice messages
     - Text content with role=user → user text messages
     - Text content with role=model → assistant text messages
-    - Function calls → system tool_call messages
-    - Function responses → system tool_response messages
+    - Function calls → system action messages (with full metadata)
+    - Function responses → system action messages (with result + status)
     """
+    from app.api.ws_live import _classify_tool
+    from app.tools.image_gen import IMAGE_TOOL_NAMES as _IMAGE_TOOL_NAMES
+
     messages: list[ChatMessage] = []
 
     for event in events:
@@ -148,21 +151,61 @@ def _events_to_messages(events: list) -> list[ChatMessage]:
 
         # Tool calls
         for fc in event.get_function_calls():
+            if fc.name == "transfer_to_agent":
+                messages.append(ChatMessage(
+                    role="system",
+                    content=f"Transferring to {(fc.args or {}).get('agent_name', '')}",
+                    type="action",
+                    tool_name="transfer_to_agent",
+                    action_kind="agent_transfer",
+                    responded=True,
+                    success=True,
+                ))
+                continue
+
+            kind, label = _classify_tool(fc.name)
             messages.append(ChatMessage(
                 role="system",
                 content=f"Using tool: {fc.name}",
-                type="tool_call",
+                type="action",
                 tool_name=fc.name,
                 arguments=dict(fc.args) if fc.args else {},
+                action_kind=kind,
+                source_label=label,
             ))
 
         # Tool responses
         for fr in event.get_function_responses():
+            if fr.name == "transfer_to_agent":
+                continue
+
+            kind, label = _classify_tool(fr.name)
+            # Check if this is an image tool
+            is_image_tool = fr.name in _IMAGE_TOOL_NAMES
+            result_str = str(fr.response) if fr.response else f"Tool {fr.name} completed"
+
+            # For image tools, emit an image message so the UI can show the image placeholder
+            if is_image_tool:
+                messages.append(ChatMessage(
+                    role="assistant",
+                    content=result_str,
+                    type="image",
+                    tool_name=fr.name,
+                    description=result_str,
+                    action_kind=kind,
+                    source_label=label,
+                ))
+
             messages.append(ChatMessage(
                 role="system",
-                content=str(fr.response) if fr.response else f"Tool {fr.name} completed",
-                type="tool_response",
+                content=result_str,
+                type="action",
                 tool_name=fr.name,
+                result=result_str,
+                success=True,
+                responded=True,
+                action_kind=kind,
+                source_label=label,
             ))
 
     return messages

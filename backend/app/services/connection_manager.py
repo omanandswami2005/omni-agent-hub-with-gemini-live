@@ -1,10 +1,9 @@
-"""In-memory ConnectionManager — tracks connected WebSocket clients per user.
+"""ConnectionManager — tracks connected WebSocket clients per user.
 
-Replaces Socket.IO rooms with a simple dict-of-dicts keyed by
-``(user_id, client_type)``.  Each value is the ``WebSocket`` instance.
-
-Includes a periodic heartbeat reaper that pings connected sockets and
-evicts dead connections that failed to respond.
+Local in-memory dict holds live WebSocket references for messaging.
+A Firestore ``client_presence`` collection provides cross-instance
+visibility so that ``GET /clients`` returns devices connected to
+**any** Cloud Run instance.
 
 Thread-safety note: FastAPI runs on a single asyncio event loop,
 so plain dicts are safe — no locks needed.
@@ -15,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -31,17 +31,21 @@ __all__ = ["ConnectionManager", "get_connection_manager"]
 # Heartbeat interval + timeout (seconds)
 _HEARTBEAT_INTERVAL = 30
 _PING_TIMEOUT = 10
+# Firestore presence docs older than this are considered stale
+_PRESENCE_STALE_SECONDS = 90
+
+# Unique per-container instance ID (Cloud Run assigns K_REVISION + random suffix)
+_INSTANCE_ID = os.environ.get("K_REVISION", "") + "-" + os.urandom(4).hex()
+
+_PRESENCE_COLLECTION = "client_presence"
 
 
 class ConnectionManager:
-    """In-memory registry of active WebSocket connections with heartbeat.
+    """Hybrid connection registry: local WebSocket refs + Firestore presence.
 
-    Primary connections (from ``/ws/live``) are keyed by
-    ``(user_id, client_type)`` — one per device.  They appear in client
-    lists and receive status broadcasts.
-
-    Auxiliary sockets (e.g. ``/ws/chat``) are stored separately.  They
-    receive broadcasts but do NOT show as distinct clients.
+    Local in-memory dict stores live ``WebSocket`` objects for messaging.
+    Firestore ``client_presence`` collection stores cross-instance client
+    metadata so all Cloud Run instances see every connected device.
     """
 
     def __init__(self) -> None:
@@ -53,6 +57,19 @@ class ConnectionManager:
         # { user_id: { client_type: { "capabilities": [...], "local_tools": [...] } } }
         self._capabilities: dict[str, dict[ClientType, dict]] = {}
         self._reaper_task: asyncio.Task | None = None
+        self._db = None  # lazy Firestore client
+
+    def _get_db(self):
+        """Lazy Firestore client — only created when first needed."""
+        if self._db is None:
+            from google.cloud import firestore
+            from app.config import settings
+            self._db = firestore.Client(project=settings.GOOGLE_CLOUD_PROJECT or None)
+        return self._db
+
+    @staticmethod
+    def _presence_doc_id(user_id: str, client_type: ClientType) -> str:
+        return f"{user_id}_{client_type.value}"
 
     # ── Connect / Disconnect ──────────────────────────────────────────
 
@@ -67,6 +84,7 @@ class ConnectionManager:
 
         If the same ``(user_id, client_type)`` already has an active
         connection the old socket is closed first (one device per type).
+        Also writes a Firestore presence doc for cross-instance visibility.
         """
         user_conns = self._connections.setdefault(user_id, {})
         old = user_conns.get(client_type)
@@ -79,8 +97,13 @@ class ConnectionManager:
                 user_id=user_id,
                 client_type=client_type,
             )
-        user_conns[client_type] = (websocket, datetime.now(UTC), os_name)
+        now = datetime.now(UTC)
+        user_conns[client_type] = (websocket, now, os_name)
         logger.info("client_connected", user_id=user_id, client_type=client_type)
+
+        # Write Firestore presence (best-effort, non-blocking)
+        asyncio.create_task(self._set_presence(user_id, client_type, os_name, now))
+
         await self._broadcast_client_status(user_id, event="connected", changed_client_type=client_type)
 
     async def disconnect(
@@ -102,6 +125,10 @@ class ConnectionManager:
             if not user_caps:
                 self._capabilities.pop(user_id, None)
         logger.info("client_disconnected", user_id=user_id, client_type=client_type)
+
+        # Remove Firestore presence (best-effort, non-blocking)
+        asyncio.create_task(self._clear_presence(user_id, client_type))
+
         await self._broadcast_client_status(user_id, event="disconnected", changed_client_type=client_type)
 
     # ── Auxiliary sockets (receive broadcasts but aren't listed as clients) ──
@@ -265,7 +292,51 @@ class ConnectionManager:
     # ── Queries ───────────────────────────────────────────────────────
 
     def get_connected_clients(self, user_id: str) -> list[ClientInfo]:
-        """Return ``ClientInfo`` for every active connection of *user_id*."""
+        """Return ``ClientInfo`` for every active connection of *user_id*.
+
+        Queries Firestore ``client_presence`` collection so clients on
+        **all** Cloud Run instances are visible.  Falls back to local
+        in-memory data if Firestore is unavailable.
+        """
+        try:
+            db = self._get_db()
+            docs = (
+                db.collection(_PRESENCE_COLLECTION)
+                .where("user_id", "==", user_id)
+                .stream()
+            )
+            cutoff = datetime.now(UTC).timestamp() - _PRESENCE_STALE_SECONDS
+            clients: list[ClientInfo] = []
+            for doc in docs:
+                d = doc.to_dict()
+                # Skip stale entries that the reaper hasn't cleaned yet
+                hb = d.get("last_heartbeat")
+                if hb is not None and hb.timestamp() < cutoff:
+                    continue
+                ct_val = d.get("client_type", "web")
+                try:
+                    ct = ClientType(ct_val)
+                except ValueError:
+                    ct = ClientType.WEB
+                connected_at = d.get("connected_at")
+                if connected_at and hasattr(connected_at, "replace"):
+                    connected_at = connected_at.replace(tzinfo=UTC) if connected_at.tzinfo is None else connected_at
+                clients.append(ClientInfo(
+                    user_id=user_id,
+                    client_type=ct,
+                    client_id=str(ct),
+                    connected_at=connected_at or datetime.now(UTC),
+                    last_ping=datetime.now(UTC),
+                    os_name=d.get("os_name", "Unknown"),
+                ))
+            return clients
+        except Exception:
+            logger.warning("firestore_presence_read_failed", user_id=user_id, exc_info=True)
+            # Fallback to local-only
+            return self._get_local_clients(user_id)
+
+    def _get_local_clients(self, user_id: str) -> list[ClientInfo]:
+        """Fallback: return clients from local in-memory state only."""
         user_conns = self._connections.get(user_id, {})
         now = datetime.now(UTC)
         return [
@@ -292,11 +363,14 @@ class ConnectionManager:
     def get_other_clients_online(
         self, user_id: str, current_client_type: ClientType
     ) -> list[ClientType]:
-        """Return list of OTHER client types that are online (excluding current)."""
-        user_conns = self._connections.get(user_id, {})
+        """Return list of OTHER client types that are online (excluding current).
+
+        Uses Firestore for cross-instance visibility.
+        """
+        all_clients = self.get_connected_clients(user_id)
         return [
-            ct for ct in user_conns
-            if ct != current_client_type
+            c.client_type for c in all_clients
+            if c.client_type != current_client_type
         ]
 
     @property
@@ -322,6 +396,8 @@ class ConnectionManager:
         while True:
             await asyncio.sleep(_HEARTBEAT_INTERVAL)
             await self._ping_all()
+            # Reap stale Firestore presence docs from this instance
+            await self._reap_stale_presence()
             # Also evict idle MCP toolsets while we're here
             try:
                 from app.services.mcp_manager import get_mcp_manager
@@ -356,6 +432,84 @@ class ConnectionManager:
         total_reaped = len(dead) + len(dead_aux)
         if total_reaped:
             logger.info("heartbeat_reap_complete", reaped=total_reaped, remaining=self.total_connections)
+
+        # Refresh Firestore heartbeat for all live connections on this instance
+        await self._refresh_presence_heartbeats()
+
+    # ── Firestore Presence Helpers ────────────────────────────────────
+
+    async def _set_presence(
+        self, user_id: str, client_type: ClientType, os_name: str, connected_at: datetime
+    ) -> None:
+        """Write a presence doc to Firestore (best-effort)."""
+        try:
+            db = self._get_db()
+            doc_id = self._presence_doc_id(user_id, client_type)
+            db.collection(_PRESENCE_COLLECTION).document(doc_id).set({
+                "user_id": user_id,
+                "client_type": client_type.value,
+                "os_name": os_name,
+                "connected_at": connected_at,
+                "last_heartbeat": datetime.now(UTC),
+                "instance_id": _INSTANCE_ID,
+            })
+            logger.debug("presence_set", user_id=user_id, client_type=client_type.value)
+        except Exception:
+            logger.warning("presence_set_failed", user_id=user_id, exc_info=True)
+
+    async def _clear_presence(self, user_id: str, client_type: ClientType) -> None:
+        """Delete a presence doc from Firestore (best-effort)."""
+        try:
+            db = self._get_db()
+            doc_id = self._presence_doc_id(user_id, client_type)
+            db.collection(_PRESENCE_COLLECTION).document(doc_id).delete()
+            logger.debug("presence_cleared", user_id=user_id, client_type=client_type.value)
+        except Exception:
+            logger.warning("presence_clear_failed", user_id=user_id, exc_info=True)
+
+    async def _refresh_presence_heartbeats(self) -> None:
+        """Update last_heartbeat for all local connections in Firestore."""
+        try:
+            db = self._get_db()
+            now = datetime.now(UTC)
+            batch = db.batch()
+            count = 0
+            for user_id, user_conns in self._connections.items():
+                for ct in user_conns:
+                    doc_id = self._presence_doc_id(user_id, ct)
+                    ref = db.collection(_PRESENCE_COLLECTION).document(doc_id)
+                    batch.update(ref, {"last_heartbeat": now})
+                    count += 1
+            if count:
+                batch.commit()
+        except Exception:
+            logger.debug("presence_heartbeat_refresh_failed", exc_info=True)
+
+    async def _reap_stale_presence(self) -> None:
+        """Delete Firestore presence docs that haven't been refreshed recently."""
+        try:
+            db = self._get_db()
+            cutoff = datetime.now(UTC).timestamp() - _PRESENCE_STALE_SECONDS
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            # Query for stale docs belonging to THIS instance only
+            docs = (
+                db.collection(_PRESENCE_COLLECTION)
+                .where(filter=FieldFilter("instance_id", "==", _INSTANCE_ID))
+                .stream()
+            )
+            batch = db.batch()
+            count = 0
+            for doc in docs:
+                d = doc.to_dict()
+                hb = d.get("last_heartbeat")
+                if hb is not None and hb.timestamp() < cutoff:
+                    batch.delete(doc.reference)
+                    count += 1
+            if count:
+                batch.commit()
+                logger.info("stale_presence_reaped", count=count, instance=_INSTANCE_ID)
+        except Exception:
+            logger.debug("stale_presence_reap_failed", exc_info=True)
 
 
 # ── Module singleton ──────────────────────────────────────────────────

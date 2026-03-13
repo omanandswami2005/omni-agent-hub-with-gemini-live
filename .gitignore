@@ -34,6 +34,7 @@ dashboard/.vite/
 # --- Environment ---
 .env
 .env.local
+.env.production
 .env.*.local
 !.env.example
 
@@ -46,6 +47,7 @@ dummy_auth_creds.txt
 *-sa.json
 *-service-account.json
 *-credentials.json
+.firebase/
 
 # --- IDE ---
 .vscode/settings.json

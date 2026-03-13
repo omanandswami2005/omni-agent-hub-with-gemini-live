@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from app.models.mcp import MCPCatalogItem, MCPConfig, MCPToggle, TransportType, MCPCategory
 from app.models.plugin import PluginToggle
-from app.services.plugin_registry import get_plugin_registry
+from app.services.plugin_registry import _load_mcp_configs, get_plugin_registry
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -21,6 +21,37 @@ def _safe_category(value: str) -> MCPCategory:
         return MCPCategory(value)
     except (ValueError, KeyError):
         return MCPCategory.OTHER
+
+
+def _build_catalog() -> list[MCPConfig]:
+    """Build a static MCPConfig list from the JSON MCP config files.
+
+    Used to expose the legacy ``MCP_CATALOG`` constant for backward
+    compatibility with older code and tests.  Only includes MCP server
+    entries (not native plugins or E2B).
+    """
+    result: list[MCPConfig] = []
+    for m in _load_mcp_configs():
+        transport = TransportType.STDIO
+        if m.kind in ("mcp_http", "mcp_oauth"):
+            transport = TransportType.STREAMABLE_HTTP
+        result.append(MCPConfig(
+            id=m.id,
+            name=m.name,
+            description=m.description,
+            category=_safe_category(m.category),
+            transport=transport,
+            command=m.command,
+            args=m.args,
+            url=m.url,
+            env=m.env,
+            icon=m.icon,
+        ))
+    return result
+
+
+# Static catalog of MCP servers loaded from app/mcps/*.json
+MCP_CATALOG: list[MCPConfig] = _build_catalog()
 
 
 # ---------------------------------------------------------------------------

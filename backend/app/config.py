@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     # --- GCS (Cloud Storage) ---
     GCS_BUCKET_NAME: str = "omni-artifacts"
 
+    # --- URLs (OAuth callbacks, CORS postMessage) ---
+    BACKEND_URL: str = "http://localhost:8000"
+    FRONTEND_URL: str = "http://localhost:5173"
+
+    # --- Google OAuth (for Google Calendar / Drive plugins) ---
+    GOOGLE_OAUTH_CLIENT_ID: str = ""
+    GOOGLE_OAUTH_CLIENT_SECRET: str = ""
+
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "production"
@@ -88,6 +96,16 @@ if settings.GOOGLE_APPLICATION_CREDENTIALS:
         _cred_path = os.path.join(os.path.dirname(__file__), os.pardir, _cred_path)
     _cred_path = os.path.abspath(_cred_path)
     _ENV_EXPORTS["GOOGLE_APPLICATION_CREDENTIALS"] = _cred_path
+
+# Export URLs and Google OAuth creds so services using os.environ.get() pick them up
+if settings.BACKEND_URL:
+    _ENV_EXPORTS["BACKEND_URL"] = settings.BACKEND_URL
+if settings.FRONTEND_URL:
+    _ENV_EXPORTS["FRONTEND_URL"] = settings.FRONTEND_URL
+if settings.GOOGLE_OAUTH_CLIENT_ID:
+    _ENV_EXPORTS["GOOGLE_OAUTH_CLIENT_ID"] = settings.GOOGLE_OAUTH_CLIENT_ID
+if settings.GOOGLE_OAUTH_CLIENT_SECRET:
+    _ENV_EXPORTS["GOOGLE_OAUTH_CLIENT_SECRET"] = settings.GOOGLE_OAUTH_CLIENT_SECRET
 
 for _k, _v in _ENV_EXPORTS.items():
     if _v and not os.environ.get(_k):

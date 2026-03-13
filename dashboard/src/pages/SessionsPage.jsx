@@ -13,7 +13,7 @@ import { useVoice } from '@/hooks/useVoiceProvider';
 export default function SessionsPage() {
   useDocumentTitle('Sessions');
   const navigate = useNavigate();
-  const { sessions, activeSessionId, loading, loadSessions, switchSession, deleteSession } = useSessionStore();
+  const { sessions, activeSessionId, loading, loadSessions, switchSession, deleteSession, createSession } = useSessionStore();
   const clearMessages = useChatStore((s) => s.clearMessages);
   const voice = useVoice();
 
@@ -38,9 +38,28 @@ export default function SessionsPage() {
     }
   };
 
+  const handleNewSession = async () => {
+    try {
+      const session = await createSession();
+      clearMessages();
+      navigate(`/session/${session.id}`);
+      voice.reconnect?.();
+    } catch {
+      // silently ignore
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Sessions</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Sessions</h1>
+        <button
+          onClick={handleNewSession}
+          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+        >
+          New Session
+        </button>
+      </div>
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (

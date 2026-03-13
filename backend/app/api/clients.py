@@ -9,7 +9,7 @@ from app.services.connection_manager import ConnectionManager, get_connection_ma
 router = APIRouter()
 
 
-@router.get("/")
+@router.get("")
 async def list_clients(
     user: CurrentUser,
     mgr: ConnectionManager = Depends(get_connection_manager),  # noqa: B008

@@ -4,13 +4,13 @@ checking, and after-agent lifecycle hooks.
 These callbacks are wired into every ADK ``Agent`` at creation time via
 ``agent_factory.create_agent()`` and ``root_agent.build_root_agent()``.
 
-ADK callback signatures (from google.adk 0.5+):
-  before_model_callback(ctx, llm_request)    → LlmResponse | None
-  after_model_callback(ctx, llm_response)    → LlmResponse | None
-  before_tool_callback(tool, args, ctx)      → dict | None
-  after_tool_callback(tool, args, ctx, result) → dict | None
-  before_agent_callback(ctx)                 → Content | None
-  after_agent_callback(ctx)                  → Content | None
+ADK callback signatures (google.adk 0.5+ — all keyword arguments):
+  before_model_callback(callback_context=, llm_request=) → LlmResponse | None
+  after_model_callback(callback_context=, llm_response=) → LlmResponse | None
+  before_tool_callback(tool=, args=, tool_context=)     → dict | None
+  after_tool_callback(tool=, args=, tool_context=, tool_response=) → dict | None
+  before_agent_callback(callback_context=, **kwargs)    → Content | None
+  after_agent_callback(callback_context=, **kwargs)     → Content | None
 """
 
 from __future__ import annotations
@@ -56,8 +56,9 @@ def _get_state(ctx: Context) -> dict[str, Any]:
 
 
 def context_injection_callback(
-    ctx: Context,
-    llm_request: LlmRequest,
+    callback_context=None,
+    llm_request=None,
+    **kwargs,
 ) -> LlmResponse | None:
     """Prepend user preferences, session memory, and persona-specific
     system context before every model call.
@@ -65,6 +66,7 @@ def context_injection_callback(
     Reads from ``ctx.state`` which is populated by the WebSocket handler
     or REST endpoint before the runner starts.
     """
+    ctx = callback_context
     state = _get_state(ctx)
 
     # Collect context fragments
@@ -115,14 +117,16 @@ def _estimate_tokens(text: str) -> int:
 
 
 def cost_estimation_callback(
-    ctx: Context,
-    llm_response: LlmResponse,
+    callback_context=None,
+    llm_response=None,
+    **kwargs,
 ) -> LlmResponse | None:
     """Log estimated token counts and cost after every model response.
 
     Stores running totals in ``ctx.state["_cost"]`` so callers can read
     cumulative usage at session end.
     """
+    ctx = callback_context
     text = ""
     if hasattr(llm_response, "content") and llm_response.content:
         content = llm_response.content
@@ -176,14 +180,16 @@ def cost_estimation_callback(
 
 
 def permission_check_callback(
-    tool: BaseTool,
-    args: dict[str, Any],
-    ctx: Context,
+    tool=None,
+    args=None,
+    tool_context=None,
+    **kwargs,
 ) -> dict | None:
     """Block destructive tools unless the user has explicitly granted
     permission (``ctx.state["permissions_granted"]`` is a set/list of
     tool names or ``"*"``).
     """
+    ctx = tool_context
     tool_name = getattr(tool, "name", "")
     if tool_name not in _DESTRUCTIVE_TOOLS:
         return None  # non-destructive → allow
@@ -213,13 +219,14 @@ def permission_check_callback(
 # ---------------------------------------------------------------------------
 
 
-def after_agent_callback(ctx: Context) -> Content | None:
+def after_agent_callback(callback_context=None, **kwargs) -> Content | None:
     """Fires when a sub-agent completes.
 
     - Logs a completion event with elapsed time.
     - Stores a short summary in ``ctx.state["_last_agent_summary"]``.
     - Publishes a completion event to the EventBus (if available).
     """
+    ctx = callback_context
     agent_name = getattr(ctx, "agent_name", "unknown")
     start_ts = _get_state(ctx).get("_agent_start_ts")
     elapsed = round(time.monotonic() - start_ts, 3) if start_ts else None
@@ -255,9 +262,10 @@ def after_agent_callback(ctx: Context) -> Content | None:
     return None  # don't inject extra content
 
 
-def before_agent_callback(ctx: Context) -> Content | None:
+def before_agent_callback(callback_context=None, **kwargs) -> Content | None:
     """Record the start timestamp so ``after_agent_callback`` can compute
     elapsed time."""
+    ctx = callback_context
     state = _get_state(ctx)
     state["_agent_start_ts"] = time.monotonic()
     return None

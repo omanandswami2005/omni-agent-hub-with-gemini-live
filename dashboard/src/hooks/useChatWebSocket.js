@@ -68,6 +68,11 @@ export function useChatWebSocket() {
             const msg = parseServerMessage(event);
             const store = useChatStore.getState();
 
+            // cross_client:true means this event originated from another device
+            // (e.g. a mobile /ws/live session). Tag the message so the UI can
+            // display a visual indicator.
+            const fromOtherDevice = msg.cross_client === true;
+
             switch (msg.type) {
                 case 'response':
                     store.addMessage({
@@ -77,13 +82,26 @@ export function useChatWebSocket() {
                         genui_type: msg.genui?.type || msg.genui_type,
                         genui_data: msg.genui?.data || msg.genui_data,
                         persona: msg.persona,
+                        ...(fromOtherDevice && { cross_client: true }),
                     });
                     break;
                 case 'transcription':
-                    store.updateTranscript?.(msg);
+                    // Forward voice transcriptions from other devices into chat
+                    if (fromOtherDevice && msg.text) {
+                        store.addMessage({
+                            role: msg.direction === 'input' ? 'user' : 'assistant',
+                            content: msg.text,
+                            content_type: 'text',
+                            cross_client: true,
+                            is_transcription: true,
+                        });
+                    } else {
+                        store.updateTranscript?.(msg);
+                    }
                     break;
                 case 'status':
-                    store.setAgentState(msg.state);
+                    // Only propagate status from this device's own session
+                    if (!fromOtherDevice) store.setAgentState(msg.state);
                     break;
                 case 'tool_call':
                     if (msg.tool_name === 'transfer_to_agent') break;
@@ -95,6 +113,7 @@ export function useChatWebSocket() {
                         tool_name: msg.tool_name,
                         arguments: msg.arguments,
                         status: msg.status,
+                        ...(fromOtherDevice && { cross_client: true }),
                     });
                     break;
                 case 'tool_response':

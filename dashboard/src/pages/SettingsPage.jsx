@@ -12,8 +12,21 @@ import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/lib/api';
 import { auth } from '@/lib/firebase';
 import { useVoice } from '@/hooks/useVoiceProvider';
+import { usePersonaStore } from '@/stores/personaStore';
 
 const TABS = ['General', 'Audio', 'Privacy', 'Shortcuts'];
+
+// Gemini prebuilt voices (subset)
+const AVAILABLE_VOICES = [
+  { id: 'Aoede', label: 'Aoede', description: 'Warm and friendly' },
+  { id: 'Charon', label: 'Charon', description: 'Deep and authoritative' },
+  { id: 'Kore', label: 'Kore', description: 'Clear and analytical' },
+  { id: 'Puck', label: 'Puck', description: 'Energetic and dynamic' },
+  { id: 'Leda', label: 'Leda', description: 'Creative and expressive' },
+  { id: 'Fenrir', label: 'Fenrir', description: 'Calm and composed' },
+  { id: 'Orus', label: 'Orus', description: 'Steady and reliable' },
+  { id: 'Zephyr', label: 'Zephyr', description: 'Light and airy' },
+];
 
 const SHORTCUTS = [
   { keys: 'Ctrl + K', action: 'Command palette' },
@@ -33,6 +46,21 @@ export default function SettingsPage() {
   const { signOut } = useAuth();
   const navigate = useNavigate();
   const voice = useVoice();
+  const activePersona = usePersonaStore((s) => s.activePersona);
+  const personas = usePersonaStore((s) => s.personas);
+  const setActivePersona = usePersonaStore((s) => s.setActivePersona);
+
+  // Determine the current voice from the active persona
+  const currentVoice = activePersona?.voice || 'Aoede';
+
+  const handleVoiceChange = (voiceId) => {
+    if (!activePersona) return;
+    // Update the active persona's voice locally
+    const updated = { ...activePersona, voice: voiceId };
+    setActivePersona(updated);
+    // Reconnect to apply the voice change
+    voice.reconnect?.();
+  };
 
   const handleSignOut = async () => {
     setSigningOut(true);
@@ -142,6 +170,28 @@ export default function SettingsPage() {
               >
                 <span className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${voice.voiceEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
               </button>
+            </div>
+            <div className="rounded-lg border border-border p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <p className="text-sm font-medium">Voice</p>
+                  <p className="text-xs text-muted-foreground">
+                    Select the AI voice for audio responses. Changes take effect on next connection.
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {AVAILABLE_VOICES.map((v) => (
+                  <button
+                    key={v.id}
+                    onClick={() => handleVoiceChange(v.id)}
+                    className={`rounded-lg border p-3 text-left transition-colors ${currentVoice === v.id ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border hover:bg-muted/50'}`}
+                  >
+                    <p className="text-sm font-medium">{v.label}</p>
+                    <p className="text-xs text-muted-foreground">{v.description}</p>
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="flex items-center justify-between rounded-lg border border-border p-4">
               <span className="text-sm">Input sample rate</span>

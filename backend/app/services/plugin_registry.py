@@ -520,7 +520,12 @@ class PluginRegistry:
             return get_e2b_tools()
 
         if manifest.kind == PluginKind.NATIVE:
-            return self._native_tool_cache.get(plugin_id, [])
+            cached = self._native_tool_cache.get(plugin_id)
+            if cached is None:
+                # Lazy-load: tools not in cache (e.g. after process restart)
+                self._connect_native(plugin_id, manifest)
+                cached = self._native_tool_cache.get(plugin_id, [])
+            return cached
 
         if manifest.kind in (PluginKind.MCP_STDIO, PluginKind.MCP_HTTP, PluginKind.MCP_OAUTH):
             key = (user_id, plugin_id)

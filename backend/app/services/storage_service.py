@@ -8,6 +8,8 @@ from __future__ import annotations
 import datetime
 import uuid
 
+import google.auth
+from google.auth.transport import requests as google_auth_requests
 from google.cloud import storage
 
 from app.config import get_settings
@@ -93,14 +95,39 @@ class StorageService:
         *,
         expiry_minutes: int = 60,
     ) -> str:
-        """Generate a temporary signed URL for *path*."""
+        """Generate a temporary signed URL for *path*.
+
+        On Cloud Run (Workload Identity / ADC), private-key signing is not
+        available so we pass the refreshed access token + service account email
+        to the v4 signing call, which uses the IAM ``signBlob`` API instead.
+        """
         blob = self._bucket.blob(path)
-        url = blob.generate_signed_url(
-            version="v4",
-            expiration=datetime.timedelta(minutes=expiry_minutes),
-            method="GET",
-        )
-        return url
+        expiration = datetime.timedelta(minutes=expiry_minutes)
+
+        # First try: plain v4 (works when running with an explicit SA key file)
+        try:
+            return blob.generate_signed_url(
+                version="v4",
+                expiration=expiration,
+                method="GET",
+            )
+        except Exception:
+            pass
+
+        # Second try: IAM-based signing (works on Cloud Run / GCE / GKE)
+        try:
+            credentials, _ = google.auth.default()
+            request = google_auth_requests.Request()
+            credentials.refresh(request)
+            return blob.generate_signed_url(
+                version="v4",
+                expiration=expiration,
+                method="GET",
+                service_account_email=credentials.service_account_email,
+                access_token=credentials.token,
+            )
+        except Exception:
+            raise  # let gallery.py handle the fallback
 
     # ------------------------------------------------------------------
     # Listing

@@ -1,7 +1,7 @@
+.venv/
 __pycache__/
 *.pyc
 *.pyo
-.venv/
 .env
 .env.*
 *.egg-info/
@@ -12,3 +12,7 @@ tests/
 scripts/
 test_output/
 firebase-sa.json
+cloud-run-env.yaml
+dev.py
+run_tests.py
+ruff.toml

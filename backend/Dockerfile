@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 RUN groupadd -r omni && useradd -r -g omni -d /app -s /sbin/nologin omni
 
 # Copy dependency files first (cache layer)
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 
 # Install dependencies
 RUN uv sync --frozen --no-dev

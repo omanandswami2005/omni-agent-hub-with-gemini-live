@@ -5,7 +5,7 @@
 
 import { lazy, Suspense } from 'react';
 import { cn } from '@/lib/cn';
-import { Mic, Bot, Image, AlertCircle } from 'lucide-react';
+import { Mic, Bot, Image, AlertCircle, Smartphone } from 'lucide-react';
 import ActionCard from '@/components/chat/ActionCard';
 
 const GenUIRenderer = lazy(() => import('@/components/genui/GenUIRenderer'));
@@ -38,6 +38,7 @@ export default function MessageBubble({ message }) {
 
   const isUser = role === 'user';
   const isVoice = source === 'voice';
+  const isCrossClient = message.cross_client === true;
 
   return (
     <div className={cn('flex mb-3 group', isUser ? 'justify-end' : 'justify-start')}>
@@ -50,12 +51,15 @@ export default function MessageBubble({ message }) {
 
       <div className={cn('max-w-[80%] space-y-2')}>
         {/* Source badge */}
-        {isVoice && (
+        {(isVoice || isCrossClient) && (
           <span className={cn(
             'inline-flex items-center gap-1 text-[10px] text-muted-foreground',
             isUser ? 'float-right' : '',
           )}>
-            <Mic size={10} /> voice
+            {isCrossClient
+              ? <><Smartphone size={10} /> other device</>
+              : <><Mic size={10} /> voice</>
+            }
           </span>
         )}
 
@@ -66,7 +70,9 @@ export default function MessageBubble({ message }) {
               'rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
               isUser
                 ? 'bg-primary text-primary-foreground'
-                : 'bg-muted/60 backdrop-blur-sm border border-border/40',
+                : isCrossClient
+                  ? 'bg-violet-500/10 border border-violet-500/30 text-foreground'
+                  : 'bg-muted/60 backdrop-blur-sm border border-border/40',
             )}
           >
             {content}

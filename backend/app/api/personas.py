@@ -9,7 +9,7 @@ from app.services.persona_service import PersonaService, get_persona_service
 router = APIRouter()
 
 
-@router.get("/")
+@router.get("")
 async def list_personas(
     user: CurrentUser,
     svc: PersonaService = Depends(get_persona_service),  # noqa: B008
@@ -28,7 +28,7 @@ async def get_persona(
     return await svc.get_persona(user.uid, persona_id)
 
 
-@router.post("/", status_code=201)
+@router.post("", status_code=201)
 async def create_persona(
     body: PersonaCreate,
     user: CurrentUser,

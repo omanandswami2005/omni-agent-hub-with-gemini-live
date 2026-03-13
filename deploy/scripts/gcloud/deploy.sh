@@ -67,7 +67,8 @@ if [[ -n "${SKIP_TF:-}" ]]; then
     --max-instances=10 \
     --memory=2Gi \
     --cpu=2 \
-    --port=8080
+    --port=8080 \
+    --set-env-vars="BACKEND_URL=https://omni-backend-fcapusldtq-uc.a.run.app,FRONTEND_URL=https://gemini-live-hackathon-2026.web.app"
 fi
 
 # --- 4. Print service URL ---

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import json
 import time
 import warnings
@@ -57,6 +58,11 @@ from app.models.ws_messages import (
 )
 from app.services.connection_manager import get_connection_manager
 from app.services.event_bus import EventBus, get_event_bus
+
+# Per-task context variable: set to `str(id(websocket))` inside every
+# _process_event() call so _publish() can stamp the origin connection.
+# Subscribers (e.g. the ws_chat relay task) use this to drop their own echoes.
+_conn_tag_var: contextvars.ContextVar[str] = contextvars.ContextVar("conn_tag", default="")
 from app.services.memory_service import get_memory_service
 from app.services.mcp_manager import get_mcp_manager
 from app.utils.logging import get_logger
@@ -227,37 +233,57 @@ _adk_session_id_cache: dict[str, str] = {}
 _adk_session_lock = asyncio.Lock()
 
 
-async def _get_or_create_adk_session(user_id: str, session_service=None) -> str:
+async def _adk_session_exists(session_id: str, user_id: str, session_service=None) -> bool:
+    """Check whether *session_id* exists in the ADK session store."""
+    ss = session_service or _get_session_service()
+    try:
+        s = await ss.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
+        return s is not None
+    except Exception:
+        return False
+
+
+async def _get_or_create_adk_session(user_id: str, session_service=None, *, force_new: bool = False) -> str:
     """Return the ADK session ID for *user_id*, creating one if needed.
 
     VertexAiSessionService does NOT accept user-provided session IDs —
     it assigns them on create.  We cache the assigned ID in memory so
     that reconnects reuse the same session (conversation continuity).
 
+    When *force_new* is True, always create a fresh session (used when the
+    user explicitly starts a new conversation).
+
     On first call per user (or after a server restart):
       1. List existing sessions for the user — reuse the most-recent one.
       2. If none exist, create a fresh session and cache the new ID.
     """
     async with _adk_session_lock:
-        if user_id in _adk_session_id_cache:
-            return _adk_session_id_cache[user_id]
+        if not force_new and user_id in _adk_session_id_cache:
+            sid = _adk_session_id_cache[user_id]
+            # Verify the session actually exists in the service (it may
+            # have been lost if Cloud Run cold-started a new instance).
+            if await _adk_session_exists(sid, user_id, session_service):
+                return sid
+            # Stale — drop and fall through to create a new one
+            _adk_session_id_cache.pop(user_id, None)
 
         ss = session_service or _get_session_service()
 
-        # Try to find an existing session first
-        try:
-            response = await ss.list_sessions(app_name=APP_NAME, user_id=user_id)
-            sessions = getattr(response, "sessions", [])
-            if sessions:
-                # Pick the most recently updated session
-                best = max(sessions, key=lambda s: getattr(s, "last_update_time", 0))
-                _adk_session_id_cache[user_id] = best.id
-                logger.info("adk_session_reused", user_id=user_id, session_id=best.id)
-                return best.id
-        except Exception:
-            logger.warning("adk_session_list_failed", user_id=user_id, exc_info=True)
+        if not force_new:
+            # Try to find an existing session first
+            try:
+                response = await ss.list_sessions(app_name=APP_NAME, user_id=user_id)
+                sessions = getattr(response, "sessions", [])
+                if sessions:
+                    # Pick the most recently updated session
+                    best = max(sessions, key=lambda s: getattr(s, "last_update_time", 0))
+                    _adk_session_id_cache[user_id] = best.id
+                    logger.info("adk_session_reused", user_id=user_id, session_id=best.id)
+                    return best.id
+            except Exception:
+                logger.warning("adk_session_list_failed", user_id=user_id, exc_info=True)
 
-        # No existing session — create one (Vertex assigns the ID)
+        # No existing session or force_new — create one
         session = await ss.create_session(app_name=APP_NAME, user_id=user_id)
         _adk_session_id_cache[user_id] = session.id
         logger.info("adk_session_created", user_id=user_id, session_id=session.id)
@@ -336,8 +362,9 @@ def _build_run_config(voice: str = "Aoede", voice_enabled: bool = True):
             handle="",  # ADK fills this on first connect; empty string = new session
         ),
         context_window_compression=types.ContextWindowCompressionConfig(
+            trigger_tokens=100_000,
             sliding_window=types.SlidingWindow(
-                target_tokens=16_000,  # Must be ≤ trigger tokens (32k for native audio model)
+                target_tokens=80_000,
             ),
         ),
         proactivity=types.ProactivityConfig(proactive_audio=True),
@@ -348,10 +375,10 @@ def _build_run_config(voice: str = "Aoede", voice_enabled: bool = True):
 # ── Authentication helper ─────────────────────────────────────────────
 
 
-async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, ClientType, str, str, list[str], list[dict]] | None:
+async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, ClientType, str, str, list[str], list[dict], str, str] | None:
     """Wait for the first JSON frame and validate it as an auth message.
 
-    Returns ``(AuthenticatedUser, client_type, os_name, requested_session_id, capabilities, local_tools)``
+    Returns ``(AuthenticatedUser, client_type, os_name, requested_session_id, capabilities, local_tools, persona_id, voice_name)``
     on success, or ``None`` after sending an error and closing the socket.
     The ``requested_session_id`` is the **Firestore** session the client wants
     to resume (empty string if new).
@@ -410,7 +437,13 @@ async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, Cli
     # Optional: client can request to resume a specific Firestore session
     requested_session_id = data.get("session_id", "")
 
-    return AuthenticatedUser(decoded), client_type, os_name, requested_session_id, capabilities, local_tools
+    # Optional: client can request a specific persona (for voice selection)
+    persona_id = data.get("persona_id", "")
+
+    # Optional: client can override the voice directly
+    voice_name = data.get("voice", "")
+
+    return AuthenticatedUser(decoded), client_type, os_name, requested_session_id, capabilities, local_tools, persona_id, voice_name
 
 
 async def _send_auth_error(websocket: WebSocket, error: str) -> None:
@@ -570,13 +603,27 @@ async def _downstream(
             if first_event:
                 logger.info("live_connection_established", user_id=user_id, session_id=session_id)
                 first_event = False
-            await _process_event(websocket, event, bus, user_id)
+            await _process_event(websocket, event, bus, user_id, conn_tag=str(id(websocket)))
     except (WebSocketDisconnect, RuntimeError):
         logger.info("ws_downstream_disconnected", user_id=user_id)
     except Exception as exc:
         # Classify expected WebSocket closure conditions as info, not errors.
         exc_str = str(exc)
         exc_str_lower = exc_str.lower()
+
+        # ADK session lost (Cloud Run cold start / new instance)
+        if "sessionnotfounderror" in type(exc).__name__.lower() or "session not found" in exc_str_lower:
+            logger.warning("ws_downstream_session_lost", user_id=user_id, session_id=session_id)
+            # Invalidate the cache so the next reconnect creates a fresh session
+            _adk_session_id_cache.pop(user_id, None)
+            with contextlib.suppress(Exception):
+                err = ErrorMessage(
+                    code="session_expired",
+                    description="Your session expired. Reconnecting…",
+                )
+                await websocket.send_text(err.model_dump_json())
+            return  # Let the client reconnect cleanly
+
         normal_closure = (
             # Graceful cancel from Gemini side
             ("1000" in exc_str and "cancelled" in exc_str_lower)
@@ -656,12 +703,15 @@ async def _process_event(
     event: Event,
     bus: EventBus | None = None,
     user_id: str = "",
+    conn_tag: str = "",
 ) -> None:
     """Translate a single ADK Event into WebSocket frames.
 
     Non-audio JSON messages are also published to *bus* so that
     connected dashboard clients receive real-time updates.
     """
+    # Stamp the current task's context so _publish() can embed the origin tag.
+    _conn_tag_var.set(conn_tag)
     # ── Audio output ──────────────────────────────────────────────
     if event.content and event.content.parts:
         for part in event.content.parts:
@@ -699,7 +749,15 @@ async def _process_event(
         await _publish(bus, user_id, json_str)
 
     # ── Tool calls ────────────────────────────────────────────────
-    for fc in event.get_function_calls():
+    func_calls = event.get_function_calls()
+    if func_calls:
+        # Send PROCESSING status before tool execution to avoid awkward silence
+        processing_msg = StatusMessage(state=AgentState.PROCESSING, detail="Using tools...")
+        processing_json = processing_msg.model_dump_json()
+        await websocket.send_text(processing_json)
+        await _publish(bus, user_id, processing_json)
+
+    for fc in func_calls:
         # Agent transfer → emit dedicated message instead of generic tool_call
         if fc.name == "transfer_to_agent":
             target = (fc.args or {}).get("agent_name", "")
@@ -773,9 +831,43 @@ async def _process_event(
 
 
 async def _publish(bus: EventBus | None, user_id: str, json_str: str) -> None:
-    """Publish to the event bus if available."""
+    """Publish to the event bus if available.
+
+    Embeds ``_origin_conn`` into the JSON when the current task's context
+    has a connection tag set (see ``_conn_tag_var``).  Relay subscribers
+    use this field to skip echoes of their own events.
+    """
     if bus and user_id:
+        conn_tag = _conn_tag_var.get()
+        if conn_tag:
+            d = json.loads(json_str)
+            d["_origin_conn"] = conn_tag
+            json_str = json.dumps(d)
         await bus.publish(user_id, json_str)
+
+
+async def _relay_cross_events(
+    websocket: WebSocket,
+    queue: asyncio.Queue[str],
+    own_conn_tag: str,
+) -> None:
+    """Forward EventBus events that did NOT originate from this connection.
+
+    Used by ``ws_chat`` so that voice-session events from ``ws_live`` (e.g.
+    a mobile caller) appear in the desktop chat panel in real-time.
+    """
+    try:
+        while True:
+            json_str = await queue.get()
+            d = json.loads(json_str)
+            if d.pop("_origin_conn", None) == own_conn_tag:
+                # Own echo — already sent directly via websocket.send_text()
+                continue
+            d["cross_client"] = True
+            with contextlib.suppress(Exception):
+                await websocket.send_text(json.dumps(d))
+    except asyncio.CancelledError:
+        pass
 
 
 # ── Background Vertex AI session persistence ─────────────────────────
@@ -848,7 +940,7 @@ async def ws_live(websocket: WebSocket) -> None:
     auth_result = await _authenticate_ws(websocket)
     if auth_result is None:
         return
-    user, client_type, os_name, requested_session_id, capabilities, local_tools = auth_result
+    user, client_type, os_name, requested_session_id, capabilities, local_tools, persona_id, voice_name = auth_result
 
     mgr = get_connection_manager()
     
@@ -862,22 +954,31 @@ async def ws_live(websocket: WebSocket) -> None:
     
     # Get or create the ADK session (InMemory; we cache the ID)
     active_session_service = _get_session_service()
-    session_id = await _get_or_create_adk_session(user.uid, active_session_service)
 
-    # Create/link Firestore session to ADK session (non-blocking best-effort)
+    # Create/link Firestore session to ADK session
     from app.services.session_service import get_session_service as _get_fs_svc
     from app.models.session import SessionCreate
     _fs_svc = _get_fs_svc()
     firestore_session_id = None
+    session_id = None
     try:
         if requested_session_id:
             # Client wants to resume a specific Firestore session
             fs_session = await _fs_svc.get_session(user.uid, requested_session_id)
             firestore_session_id = fs_session.id
-            if not fs_session.adk_session_id:
+            if fs_session.adk_session_id and await _adk_session_exists(
+                fs_session.adk_session_id, user.uid, active_session_service
+            ):
+                # Resume existing ADK session (verified to exist on this instance)
+                session_id = fs_session.adk_session_id
+                _adk_session_id_cache[user.uid] = session_id
+            else:
+                # ADK session gone (cold start) or never linked — create new
+                session_id = await _get_or_create_adk_session(user.uid, active_session_service, force_new=True)
                 await _fs_svc.link_adk_session(firestore_session_id, session_id)
         else:
-            # Reuse latest session if it's already linked to this ADK session
+            # No specific session requested — reuse latest or create new
+            session_id = await _get_or_create_adk_session(user.uid, active_session_service)
             latest = await _fs_svc.get_latest_session_for_user(user.uid)
             if latest and latest.adk_session_id == session_id:
                 firestore_session_id = latest.id
@@ -887,6 +988,8 @@ async def ws_live(websocket: WebSocket) -> None:
                 await _fs_svc.link_adk_session(firestore_session_id, session_id)
     except Exception:
         # Requested session not found or creation failed — create a new one
+        if not session_id:
+            session_id = await _get_or_create_adk_session(user.uid, active_session_service)
         try:
             fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
             firestore_session_id = fs_session.id
@@ -894,10 +997,20 @@ async def ws_live(websocket: WebSocket) -> None:
         except Exception:
             logger.debug("firestore_session_link_failed", user_id=user.uid)
 
-    # Determine voice from active persona (default: first default persona)
+    # Determine voice from requested voice, persona, or default
     from app.agents.personas import get_default_personas
-    default_persona = get_default_personas()[0]
-    run_config = _build_run_config(voice=default_persona.voice)
+    personas = get_default_personas()
+    selected_voice = "Aoede"  # fallback
+    if voice_name:
+        # Client explicitly requested a voice
+        selected_voice = voice_name
+    elif persona_id:
+        match = next((p for p in personas if p.id == persona_id), None)
+        if match:
+            selected_voice = match.voice
+    else:
+        selected_voice = personas[0].voice
+    run_config = _build_run_config(voice=selected_voice)
 
     # Build available tool names for auth response
     from app.services.tool_registry import get_tool_registry
@@ -921,8 +1034,13 @@ async def ws_live(websocket: WebSocket) -> None:
         other_clients_online=[str(ct) for ct in other_clients],
     )
     connected = ConnectedMessage(session_id=session_id)
-    await websocket.send_text(auth_ok.model_dump_json())
-    await websocket.send_text(connected.model_dump_json())
+    try:
+        await websocket.send_text(auth_ok.model_dump_json())
+        await websocket.send_text(connected.model_dump_json())
+    except RuntimeError:
+        logger.info("ws_send_after_close", user_id=user.uid)
+        await mgr.disconnect(user.uid, client_type)
+        return
 
     # If other clients are online, suggest session continuation
     if other_clients:
@@ -1021,7 +1139,7 @@ async def ws_chat(websocket: WebSocket) -> None:
     auth_result = await _authenticate_ws(websocket)
     if auth_result is None:
         return
-    user, client_type, os_name, requested_session_id, capabilities, local_tools = auth_result
+    user, client_type, os_name, requested_session_id, capabilities, local_tools, _persona_id, _voice = auth_result
 
     mgr = get_connection_manager()
 
@@ -1095,6 +1213,16 @@ async def ws_chat(websocket: WebSocket) -> None:
     bus = get_event_bus()
     runner = await _get_chat_runner(user.uid, session_service=active_session_service)
 
+    # Subscribe to EventBus so events from other sessions (e.g. /ws/live on
+    # mobile) are forwarded to this dashboard connection in real-time.
+    own_conn_tag = str(id(websocket))
+    cross_queue = bus.create_queue()
+    bus.subscribe(user.uid, cross_queue)
+    relay_task = asyncio.create_task(
+        _relay_cross_events(websocket, cross_queue, own_conn_tag),
+        name=f"chat_relay_{own_conn_tag}",
+    )
+
     logger.info("ws_chat_connected", user_id=user.uid, session_id=session_id)
 
     try:
@@ -1123,7 +1251,7 @@ async def ws_chat(websocket: WebSocket) -> None:
                     session_id=session_id,
                     new_message=content,
                 ):
-                    await _process_event(websocket, event, bus, user.uid)
+                    await _process_event(websocket, event, bus, user.uid, conn_tag=own_conn_tag)
                 # run_async events don't carry turn_complete, so send IDLE explicitly
                 idle_msg = StatusMessage(state=AgentState.IDLE)
                 await websocket.send_text(idle_msg.model_dump_json())
@@ -1159,6 +1287,10 @@ async def ws_chat(websocket: WebSocket) -> None:
     except Exception:
         logger.exception("ws_chat_error", user_id=user.uid)
     finally:
+        # Cancel cross-client relay and unsubscribe from EventBus
+        relay_task.cancel()
+        bus.unsubscribe(user.uid, cross_queue)
+
         # Remove auxiliary socket registration
         mgr.remove_aux_socket(user.uid, aux_key)
 

@@ -71,11 +71,19 @@ class GoogleOAuthService:
         scopes: list[str],
     ) -> str:
         """Return the Google consent URL for the user to visit."""
+        cid = self._client_id()
+        if not cid:
+            raise ValueError(
+                "GOOGLE_OAUTH_CLIENT_ID is not configured. "
+                "Create OAuth credentials in GCP Console > APIs & Services > Credentials "
+                "and set the GOOGLE_OAUTH_CLIENT_ID environment variable."
+            )
+
         state = secrets.token_urlsafe(32)
         self._pending[state] = (user_id, plugin_id, scopes)
 
         params = {
-            "client_id": self._client_id(),
+            "client_id": cid,
             "redirect_uri": self._redirect_uri(),
             "response_type": "code",
             "scope": " ".join(scopes),

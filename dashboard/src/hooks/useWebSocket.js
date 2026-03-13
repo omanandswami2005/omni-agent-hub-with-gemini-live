@@ -12,6 +12,7 @@ import { useChatStore } from '@/stores/chatStore';
 import { useClientStore } from '@/stores/clientStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSessionSuggestionStore } from '@/stores/sessionSuggestionStore';
+import { usePersonaStore } from '@/stores/personaStore';
 
 export function useWebSocket() {
   const wsRef = useRef(null);
@@ -56,11 +57,14 @@ export function useWebSocket() {
       // Send auth handshake as first frame (token NOT in URL for security)
       // Include platform/OS info so the server can display it in the clients panel
       const activeId = useSessionStore.getState().activeSessionId;
+      const activePersona = usePersonaStore.getState().activePersona;
       sendJsonMessage(ws, {
         type: 'auth',
         token: freshToken,
         user_agent: navigator.userAgent,
         ...(activeId ? { session_id: activeId } : {}),
+        ...(activePersona?.id ? { persona_id: activePersona.id } : {}),
+        ...(activePersona?.voice ? { voice: activePersona.voice } : {}),
       });
     };
 

@@ -9,6 +9,7 @@ from typing import Callable
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.api.health import router as health_router
 from app.api.router import api_router
@@ -125,6 +126,9 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if not settings.is_production else None,
         lifespan=lifespan,
     )
+
+    # Trust proxy headers (X-Forwarded-Proto etc.) so redirects use https://
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
 
     # Add logging middleware first
     app.add_middleware(LoggingMiddleware)

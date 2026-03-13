@@ -59,7 +59,14 @@ class ChatMessage(BaseModel):
 
     role: str  # 'user' | 'assistant' | 'system'
     content: str = ""
-    type: str = "text"  # 'text' | 'tool_call' | 'tool_response'
+    type: str = "text"  # 'text' | 'tool_call' | 'tool_response' | 'image' | 'action'
     source: str = "text"  # 'text' | 'voice'
     tool_name: str | None = None
     arguments: dict[str, Any] | None = None
+    action_kind: str = ""
+    source_label: str = ""
+    success: bool | None = None
+    result: str = ""
+    responded: bool = False
+    image_url: str = ""
+    description: str = ""

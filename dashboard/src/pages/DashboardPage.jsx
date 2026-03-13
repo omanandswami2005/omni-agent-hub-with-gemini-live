@@ -43,7 +43,22 @@ export default function DashboardPage() {
         switchSession(sessionId);
         clearMessages();
         loadMessages(sessionId).then((msgs) => {
-            msgs.forEach((m) => addMessage({ role: m.role, content: m.content, source: m.source || 'history' }));
+            msgs.forEach((m) => addMessage({
+                role: m.role,
+                content: m.content,
+                type: m.type || 'text',
+                source: m.source || 'history',
+                tool_name: m.tool_name,
+                arguments: m.arguments,
+                action_kind: m.action_kind || '',
+                source_label: m.source_label || '',
+                success: m.success,
+                result: m.result || '',
+                responded: m.responded || false,
+                image_url: m.image_url || '',
+                description: m.description || '',
+                text: m.type === 'image' ? (m.description || m.content || '') : undefined,
+            }));
         });
     }, [sessionId, loadMessages, switchSession, clearMessages, addMessage]);
 
@@ -53,6 +68,15 @@ export default function DashboardPage() {
     const personas = usePersonaStore((s) => s.personas);
     const clients = useClientStore((s) => s.clients);
     const activeTools = useChatStore((s) => s.activeTools);
+
+    // When persona changes, reconnect WS so the backend uses the new persona's voice
+    const prevPersonaRef = useRef(activePersona?.id);
+    useEffect(() => {
+        if (activePersona?.id && prevPersonaRef.current && activePersona.id !== prevPersonaRef.current) {
+            voice.reconnect?.();
+        }
+        prevPersonaRef.current = activePersona?.id;
+    }, [activePersona?.id, voice]);
 
     // Find the last genui message for the side panel
     const lastGenUI = [...messages].reverse().find((m) => m.genui_type);
