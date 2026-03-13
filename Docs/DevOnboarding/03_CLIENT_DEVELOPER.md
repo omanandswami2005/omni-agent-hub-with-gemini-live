@@ -366,6 +366,68 @@ async def main(server, token, capabilities, local_tools):
 
 ---
 
+## Reference Implementation — Smart Glasses (Audio + Video)
+
+See `smart-glasses/glasses_client.py` for a complete `/ws/live` client with camera + microphone. Key patterns:
+
+```python
+import asyncio, json, base64, websockets, aiohttp, pyaudio
+
+async def main(server, token, esp32_ip):
+    async with aiohttp.ClientSession() as http:
+        async with websockets.connect(f"{server}/ws/live") as ws:
+            # 1. Auth handshake (register as "glasses" with T3 tools)
+            await ws.send(json.dumps({
+                "type": "auth",
+                "token": token,
+                "client_type": "glasses",
+                "capabilities": ["camera_capture", "microphone", "speaker"],
+                "local_tools": [{"name": "capture_photo", ...}],
+            }))
+            resp = json.loads(await ws.recv())
+            assert resp["status"] == "ok"
+
+            # 2. Camera task — send images periodically
+            async def send_frames():
+                while True:
+                    async with http.get(f"http://{esp32_ip}/snapshot") as r:
+                        raw = await r.read()
+                    await ws.send(json.dumps({
+                        "type": "image",
+                        "data_base64": base64.b64encode(raw).decode(),
+                        "mime_type": "image/jpeg",
+                    }))
+                    await asyncio.sleep(5)
+
+            # 3. Mic task — send PCM audio as binary frames
+            async def send_audio():
+                stream = pyaudio.PyAudio().open(rate=16000, channels=1, ...)
+                while True:
+                    data = stream.read(1024)
+                    await ws.send(data)  # Binary frame → backend
+
+            # 4. Receiver — handle text JSON + binary audio
+            async def receiver():
+                async for msg in ws:
+                    if isinstance(msg, bytes):
+                        speaker.write(msg)  # 24kHz PCM audio from agent
+                    else:
+                        data = json.loads(msg)
+                        if data["type"] == "tool_invocation":
+                            # T3: agent requesting a photo/action
+                            await ws.send(json.dumps({
+                                "type": "tool_result",
+                                "call_id": data["call_id"],
+                                "result": execute_tool(data["tool"], data["args"]),
+                            }))
+
+            await asyncio.gather(send_frames(), send_audio(), receiver())
+```
+
+Hardware: ESP32-CAM + INMP441 I2S mic. See `smart-glasses/README.md` for wiring diagrams and firmware.
+
+---
+
 ## Client Types
 
 Register your client as one of these types:
