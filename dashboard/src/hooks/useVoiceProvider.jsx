@@ -54,12 +54,18 @@ export function VoiceProvider({ children }) {
     // Track previous isConnected to detect disconnects
     const prevConnectedRef = useRef(isConnected);
     useEffect(() => {
-        // If connection drops, tear down video capture to free hardware
+        // If connection drops, tear down media to free hardware
         if (prevConnectedRef.current && !isConnected) {
             stopCapture();
+            // Stop any ongoing recording when connection drops
+            if (isRecording) {
+                stopRecording();
+            }
+            // Stop playback when disconnected
+            stopPlayback();
         }
         prevConnectedRef.current = isConnected;
-    }, [isConnected, stopCapture]);
+    }, [isConnected, stopCapture, stopRecording, stopPlayback, isRecording]);
 
     // ── Toggles ──────────────────────────────────────────────────────
 

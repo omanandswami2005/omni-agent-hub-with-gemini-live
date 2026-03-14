@@ -70,13 +70,14 @@ export default function DashboardPage() {
     const activeTools = useChatStore((s) => s.activeTools);
 
     // When persona changes, reconnect WS so the backend uses the new persona's voice
-    const prevPersonaRef = useRef(activePersona?.id);
+    const reconnect = useVoice((v) => v.reconnect);
+    const prevPersonaRef = useRef(null);
     useEffect(() => {
         if (activePersona?.id && prevPersonaRef.current && activePersona.id !== prevPersonaRef.current) {
-            voice.reconnect?.();
+            reconnect?.();
         }
         prevPersonaRef.current = activePersona?.id;
-    }, [activePersona?.id, voice]);
+    }, [activePersona?.id, reconnect]);
 
     // Find the last genui message for the side panel
     const lastGenUI = [...messages].reverse().find((m) => m.genui_type);
@@ -111,23 +112,14 @@ export default function DashboardPage() {
                     </div>
                 </div>
 
-                {/* Active persona */}
+                {/* Active persona - view only in main UI, change in Settings */}
                 {activePersona && (
                     <div>
                         <p className="mb-2 text-xs font-medium text-muted-foreground">Active Persona</p>
                         <PersonaCard persona={activePersona} isActive />
-                    </div>
-                )}
-
-                {/* Quick persona switch */}
-                {personas.length > 1 && (
-                    <div>
-                        <p className="mb-2 text-xs font-medium text-muted-foreground">Switch Persona</p>
-                        <div className="space-y-1">
-                            {personas.filter((p) => p !== activePersona).slice(0, 3).map((p) => (
-                                <PersonaCard key={p.id || p.name} persona={p} onSelect={setActivePersona} />
-                            ))}
-                        </div>
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                            Change persona in Settings
+                        </p>
                     </div>
                 )}
 
