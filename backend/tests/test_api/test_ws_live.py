@@ -177,7 +177,7 @@ class TestAuthenticateWs:
             result = await _authenticate_ws(ws)
 
         assert result is not None
-        user, client_type = result
+        user, client_type, *_ = result
         assert user.uid == "u1"
 
     async def test_invalid_json_returns_none(self):

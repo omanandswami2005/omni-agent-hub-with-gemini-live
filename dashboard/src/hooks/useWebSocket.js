@@ -82,8 +82,19 @@ export function useWebSocket() {
 
     ws.onmessage = (event) => {
       const msg = parseServerMessage(event);
+      const fromOtherDevice = msg.cross_client === true;
 
       switch (msg.type) {
+        case 'user_message':
+          if (fromOtherDevice) {
+            useChatStore.getState().addMessage({
+              role: 'user',
+              content: msg.content,
+              cross_client: true,
+              timestamp: new Date().toISOString(),
+            });
+          }
+          break;
         case 'audio':
           useChatStore.getState().enqueueAudio(msg.data);
           break;
@@ -94,7 +105,18 @@ export function useWebSocket() {
           });
           break;
         case 'transcription':
-          useChatStore.getState().updateTranscript(msg);
+          if (fromOtherDevice && msg.text) {
+            useChatStore.getState().addMessage({
+              role: msg.direction === 'input' ? 'user' : 'assistant',
+              content: msg.text,
+              content_type: 'text',
+              cross_client: true,
+              is_transcription: true,
+              timestamp: new Date().toISOString(),
+            });
+          } else {
+            useChatStore.getState().updateTranscript(msg);
+          }
           break;
         case 'response':
           useChatStore.getState().addMessage({
@@ -104,14 +126,17 @@ export function useWebSocket() {
             genui_type: msg.genui?.type || msg.genui_type,
             genui_data: msg.genui?.data || msg.genui_data,
             persona: msg.persona,
+            ...(fromOtherDevice && { cross_client: true }),
           });
           break;
         case 'status':
-          useChatStore.getState().setAgentState(msg.state);
-          // On interruption, clear audio queue and cancel any active tools
-          if (msg.detail && msg.detail.toLowerCase().includes('interrupt')) {
-            useChatStore.getState().clearAudioQueue?.();
-            useChatStore.getState().cancelAllActions?.();
+          if (!fromOtherDevice) {
+            useChatStore.getState().setAgentState(msg.state);
+            // On interruption, clear audio queue and cancel any active tools
+            if (msg.detail && msg.detail.toLowerCase().includes('interrupt')) {
+              useChatStore.getState().clearAudioQueue?.();
+              useChatStore.getState().cancelAllActions?.();
+            }
           }
           break;
         case 'tool_call':
@@ -124,6 +149,7 @@ export function useWebSocket() {
             status: msg.status,
             action_kind: msg.action_kind || 'tool',
             source_label: msg.source_label || '',
+            ...(fromOtherDevice && { cross_client: true }),
           });
           break;
         case 'tool_response':
@@ -162,6 +188,7 @@ export function useWebSocket() {
             text: msg.text,
             parts: msg.parts,
             timestamp: new Date().toISOString(),
+            ...(fromOtherDevice && { cross_client: true }),
           });
           break;
         case 'auth_response':
@@ -183,8 +210,19 @@ export function useWebSocket() {
           // If the server included a session_id, switch to it for continuity
           if (msg.session_id) {
             const ss = useSessionStore.getState();
-            ss.setActiveSession(msg.session_id);
-            ss.ensureSession(msg.session_id);
+            if (ss.activeSessionId !== msg.session_id) {
+              ss.setActiveSession(msg.session_id);
+              ss.ensureSession(msg.session_id);
+              setServerSessionId(msg.session_id);
+              // Delay reconnect slightly so store has time to update
+              setTimeout(() => {
+                if (wsRef.current) {
+                  wsRef.current.close();
+                  wsRef.current = null;
+                }
+                connect();
+              }, 100);
+            }
           }
           if (sss.autoJoin) {
             toast.info(`Joined your active session from ${msg.available_clients?.join(', ') || 'another device'}`, { duration: 3000 });

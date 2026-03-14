@@ -7,7 +7,7 @@ is delegated to :class:`~app.services.plugin_registry.PluginRegistry`.
 
 from __future__ import annotations
 
-from app.models.mcp import MCPCatalogItem, MCPConfig, MCPToggle, TransportType, MCPCategory
+from app.models.mcp import MCPCatalogItem, MCPCategory, MCPConfig, MCPToggle, TransportType
 from app.models.plugin import PluginToggle
 from app.services.plugin_registry import _load_mcp_configs, get_plugin_registry
 from app.utils.logging import get_logger

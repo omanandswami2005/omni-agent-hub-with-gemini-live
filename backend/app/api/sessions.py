@@ -62,7 +62,7 @@ async def list_messages(
     if not adk_sid:
         return []
 
-    from app.api.ws_live import _get_session_service, _get_vertex_session_service, APP_NAME
+    from app.api.ws_live import APP_NAME, _get_session_service, _get_vertex_session_service
 
     # Try InMemory first (zero-latency, available while server is running)
     inmem = _get_session_service()
@@ -89,14 +89,14 @@ async def list_messages(
         return []
 
     messages = _events_to_messages(session.events)
-    
+
     # Update message_count in Firestore to stay in sync with actual message count
     if messages:
         try:
             await svc.update_message_count(session_id, len(messages))
         except Exception:
             pass  # Non-critical - silently ignore
-    
+
     return messages
 
 
@@ -193,14 +193,12 @@ def _events_to_messages(events: list) -> list[ChatMessage]:
             kind, label = _classify_tool(fr.name)
             # Check if this is an image tool
             is_image_tool = fr.name in _IMAGE_TOOL_NAMES
-            
+
             # Extract response as dict if possible
             response_dict = None
-            if fr.response and hasattr(fr.response, 'get'):
+            if (fr.response and hasattr(fr.response, 'get')) or (fr.response and isinstance(fr.response, dict)):
                 response_dict = fr.response
-            elif fr.response and isinstance(fr.response, dict):
-                response_dict = fr.response
-            
+
             result_str = str(fr.response) if fr.response else f"Tool {fr.name} completed"
 
             # For image tools, emit an image message with URL so the UI can show the image

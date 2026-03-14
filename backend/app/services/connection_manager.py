@@ -63,6 +63,7 @@ class ConnectionManager:
         """Lazy Firestore client — only created when first needed."""
         if self._db is None:
             from google.cloud import firestore
+
             from app.config import settings
             self._db = firestore.Client(project=settings.GOOGLE_CLOUD_PROJECT or None)
         return self._db

@@ -1,7 +1,6 @@
 """Persona Pydantic schemas."""
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel
 
@@ -39,5 +38,5 @@ class PersonaResponse(BaseModel):
     mcp_ids: list[str] = []
     avatar_url: str = ""
     is_default: bool = False
-    created_at: Optional[datetime] = None
+    created_at: datetime | None = None
     capabilities: list[str] = []
