@@ -63,8 +63,8 @@ from app.services.event_bus import EventBus, get_event_bus
 # _process_event() call so _publish() can stamp the origin connection.
 # Subscribers (e.g. the ws_chat relay task) use this to drop their own echoes.
 _conn_tag_var: contextvars.ContextVar[str] = contextvars.ContextVar("conn_tag", default="")
-from app.services.memory_service import get_memory_service
 from app.services.mcp_manager import get_mcp_manager
+from app.services.memory_service import get_memory_service
 from app.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -72,7 +72,6 @@ if TYPE_CHECKING:
     from google.adk.agents.run_config import RunConfig
     from google.adk.events import Event
     from google.adk.runners import Runner
-    from google.genai import types
 
 logger = get_logger(__name__)
 
@@ -123,6 +122,7 @@ def _get_vertex_session_service():
 
     try:
         from google.adk.sessions import VertexAiSessionService
+
         from app.services.agent_engine_service import get_agent_engine_service
 
         ae = get_agent_engine_service()
@@ -151,7 +151,7 @@ def _get_vertex_session_service():
 _RUNNER_TTL = 10 * 60  # 10 minutes
 
 # { user_id: (Runner, cache_key_tuple, created_monotonic) }
-_runner_cache: dict[str, tuple["Runner", tuple, float]] = {}
+_runner_cache: dict[str, tuple[Runner, tuple, float]] = {}
 _runner_lock = asyncio.Lock()
 
 
@@ -165,8 +165,9 @@ async def _get_runner(user_id: str, session_service=None):
     Otherwise a fresh runner is built (and cached).
     """
     from google.adk.runners import Runner
-    from app.agents.root_agent import build_root_agent
+
     from app.agents.personas import get_default_personas
+    from app.agents.root_agent import build_root_agent
 
     ss = session_service or _get_session_service()
 
@@ -292,16 +293,17 @@ async def _get_or_create_adk_session(user_id: str, session_service=None, *, forc
 
 # ── Chat Runner pool — uses TEXT_MODEL for generateContent ────────────
 
-_chat_runner_cache: dict[str, tuple["Runner", tuple, float]] = {}
+_chat_runner_cache: dict[str, tuple[Runner, tuple, float]] = {}
 _chat_runner_lock = asyncio.Lock()
 
 
 async def _get_chat_runner(user_id: str, session_service=None):
     """Return a Runner using TEXT_MODEL for the chat (non-live) endpoint."""
     from google.adk.runners import Runner
-    from app.agents.root_agent import build_root_agent
+
     from app.agents.agent_factory import TEXT_MODEL
     from app.agents.personas import get_default_personas
+    from app.agents.root_agent import build_root_agent
 
     ss = session_service or _get_session_service()
 
@@ -384,6 +386,7 @@ async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, Cli
     to resume (empty string if new).
     """
     from firebase_admin import auth as firebase_auth
+
     from app.models.client import ClientType
 
     try:
@@ -472,6 +475,7 @@ async def _upstream(
     user_id: str,
     client_type: ClientType | None = None,
     firestore_session_id: str | None = None,
+    conn_tag: str = "",
 ) -> None:
     """Receive frames from the client and push into the ADK queue.
 
@@ -497,11 +501,21 @@ async def _upstream(
                     continue
                 msg_type = data.get("type", "")
                 if msg_type == "text":
+                    content_str = data.get("content", "")
                     content = types.Content(
-                        parts=[types.Part(text=data.get("content", ""))],
+                        parts=[types.Part(text=content_str)],
                         role="user",
                     )
                     queue.send_content(content)
+                    # Publish text to EventBus for cross-client sync
+                    bus = get_event_bus()
+                    if bus and user_id:
+                        user_msg = {
+                            "type": "user_message",
+                            "content": content_str,
+                            "_origin_conn": conn_tag
+                        }
+                        asyncio.create_task(bus.publish(user_id, json.dumps(user_msg)))
                     # Increment message count (best-effort, non-blocking)
                     if firestore_session_id:
                         asyncio.create_task(_increment_msg_count(firestore_session_id))
@@ -541,7 +555,6 @@ async def _upstream(
                 elif msg_type == "capability_update":
                     # Client updating capabilities mid-session
                     mgr = get_connection_manager()
-                    from app.models.client import ClientType as CT
                     # We need client_type — stored in closure by the caller
                     mgr.update_capabilities(
                         user_id,
@@ -943,21 +956,21 @@ async def ws_live(websocket: WebSocket) -> None:
     user, client_type, os_name, requested_session_id, capabilities, local_tools, persona_id, voice_name = auth_result
 
     mgr = get_connection_manager()
-    
+
     # Check if OTHER client types are already online (for session continuity)
     other_clients = mgr.get_other_clients_online(user.uid, client_type)
-    
+
     # Phase 2 — Register connection + store capabilities + prepare ADK session
     await mgr.connect(websocket, user.uid, client_type, os_name=os_name)
     if capabilities or local_tools:
         mgr.store_capabilities(user.uid, client_type, capabilities, local_tools)
-    
+
     # Get or create the ADK session (InMemory; we cache the ID)
     active_session_service = _get_session_service()
 
     # Create/link Firestore session to ADK session
-    from app.services.session_service import get_session_service as _get_fs_svc
     from app.models.session import SessionCreate
+    from app.services.session_service import get_session_service as _get_fs_svc
     _fs_svc = _get_fs_svc()
     firestore_session_id = None
     session_id = None
@@ -1081,6 +1094,27 @@ async def ws_live(websocket: WebSocket) -> None:
     queue = LiveRequestQueue()
     runner = await _get_runner(user.uid, session_service=active_session_service)
 
+    # Subscribe to EventBus so events from other sessions (e.g. /ws/chat or another /ws/live)
+    # are forwarded to this connection in real-time.
+    bus = get_event_bus()
+    own_conn_tag = str(id(websocket))
+    cross_queue = bus.create_queue()
+    bus.subscribe(user.uid, cross_queue)
+    relay_task = asyncio.create_task(
+        _relay_cross_events(websocket, cross_queue, own_conn_tag),
+        name=f"live_relay_{own_conn_tag}",
+    )
+
+    # Broadcast session creation/resumption so idle devices can auto-join
+    if firestore_session_id:
+        session_msg = {
+            "type": "session_suggestion",
+            "session_id": firestore_session_id,
+            "message": "Session active on another device.",
+            "_origin_conn": own_conn_tag
+        }
+        asyncio.create_task(bus.publish(user.uid, json.dumps(session_msg)))
+
     logger.info(
         "live_session_ready",
         user_id=user.uid,
@@ -1092,7 +1126,7 @@ async def ws_live(websocket: WebSocket) -> None:
     down_task: asyncio.Task | None = None
     try:
         up_task = asyncio.create_task(
-            _upstream(websocket, queue, user.uid, client_type, firestore_session_id), name="upstream",
+            _upstream(websocket, queue, user.uid, client_type, firestore_session_id, own_conn_tag), name="upstream",
         )
         down_task = asyncio.create_task(
             _downstream(websocket, runner, user.uid, session_id, queue, run_config),
@@ -1115,6 +1149,10 @@ async def ws_live(websocket: WebSocket) -> None:
     except Exception:
         logger.exception("ws_live_error", user_id=user.uid)
     finally:
+        # Cancel cross-client relay and unsubscribe from EventBus
+        relay_task.cancel()
+        bus.unsubscribe(user.uid, cross_queue)
+
         # Phase 4 — Cleanup
         queue.close()  # Ensure queue is closed (upstream also closes, but be safe)
 
@@ -1156,7 +1194,6 @@ async def ws_live(websocket: WebSocket) -> None:
 @router.websocket("/chat")
 async def ws_chat(websocket: WebSocket) -> None:
     """ADK text-only chat over WebSocket — no audio, no live session required."""
-    from google.adk.runners import Runner
     from google.genai import types
 
     await websocket.accept()
@@ -1180,8 +1217,8 @@ async def ws_chat(websocket: WebSocket) -> None:
         mgr.store_capabilities(user.uid, client_type, capabilities, local_tools)
 
     # Link Firestore session to ADK session
-    from app.services.session_service import get_session_service as _get_fs_svc
     from app.models.session import SessionCreate
+    from app.services.session_service import get_session_service as _get_fs_svc
     _fs_svc = _get_fs_svc()
     firestore_session_id = None
     try:

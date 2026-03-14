@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.models.mcp import MCPCatalogItem, MCPConfig, MCPToggle, TransportType
+from app.models.mcp import MCPCatalogItem, MCPConfig, TransportType
 from app.services.mcp_manager import (
     MCP_CATALOG,
     MCPManager,

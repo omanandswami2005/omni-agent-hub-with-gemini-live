@@ -22,9 +22,7 @@ from app.utils.logging import get_logger
 
 if TYPE_CHECKING:
     from google.adk.agents.context import Context
-    from google.adk.models.llm_request import LlmRequest
     from google.adk.models.llm_response import LlmResponse
-    from google.adk.tools.base_tool import BaseTool
     from google.genai.types import Content
 
 logger = get_logger(__name__)

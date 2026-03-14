@@ -16,7 +16,6 @@ import json
 
 import pytest
 
-
 # ── ConnectionManager Capability Tests ───────────────────────────────
 
 
@@ -130,8 +129,9 @@ class TestConnectionManagerCapabilities:
 
     @pytest.mark.asyncio
     async def test_disconnect_cleans_capabilities(self):
-        from app.models.client import ClientType
         from unittest.mock import AsyncMock, MagicMock
+
+        from app.models.client import ClientType
 
         mgr = self._make_mgr()
 
@@ -271,11 +271,11 @@ class TestToolRegistry:
         assert reg.get_t3_tool_names("nonexistent") == []
 
     def test_get_t3_tool_names_with_capabilities(self):
+        import app.services.connection_manager as cm_mod
+        import app.services.tool_registry as tr_mod
         from app.models.client import ClientType
         from app.services.connection_manager import ConnectionManager
         from app.services.tool_registry import ToolRegistry
-        import app.services.tool_registry as tr_mod
-        import app.services.connection_manager as cm_mod
 
         # Set up a temporary ConnectionManager with capabilities
         mgr = ConnectionManager()
@@ -327,8 +327,9 @@ class TestT3ProxyTools:
         assert tool.name == "write_file"
 
     def test_resolve_tool_result_success(self):
-        from app.services.tool_registry import resolve_tool_result, _pending_results
         import asyncio
+
+        from app.services.tool_registry import _pending_results, resolve_tool_result
 
         loop = asyncio.new_event_loop()
         fut = loop.create_future()
@@ -343,8 +344,9 @@ class TestT3ProxyTools:
         loop.close()
 
     def test_resolve_tool_result_error(self):
-        from app.services.tool_registry import resolve_tool_result, _pending_results
         import asyncio
+
+        from app.services.tool_registry import _pending_results, resolve_tool_result
 
         loop = asyncio.new_event_loop()
         fut = loop.create_future()
@@ -385,10 +387,10 @@ class TestT3ProxyTools:
 
     @pytest.mark.asyncio
     async def test_proxy_tool_client_offline(self):
-        from app.models.client import ClientType
-        from app.services.tool_registry import _create_proxy_tool
-        from app.services.connection_manager import ConnectionManager
         import app.services.tool_registry as tr_mod
+        from app.models.client import ClientType
+        from app.services.connection_manager import ConnectionManager
+        from app.services.tool_registry import _create_proxy_tool
 
         mgr = ConnectionManager()
         old_fn = tr_mod.get_connection_manager
@@ -415,10 +417,10 @@ class TestToolRegistryBuildSession:
 
     @pytest.mark.asyncio
     async def test_build_with_t3_tools(self):
+        import app.services.tool_registry as tr_mod
         from app.models.client import ClientType
         from app.services.connection_manager import ConnectionManager
         from app.services.tool_registry import ToolRegistry
-        import app.services.tool_registry as tr_mod
 
         mgr = ConnectionManager()
         old_cm = tr_mod.get_connection_manager
@@ -449,8 +451,9 @@ class TestBugFixes:
 
     def test_resolve_pops_from_pending(self):
         """Fix #1: resolve_tool_result must pop the call_id to prevent leak."""
-        from app.services.tool_registry import resolve_tool_result, _pending_results
         import asyncio
+
+        from app.services.tool_registry import _pending_results, resolve_tool_result
 
         loop = asyncio.new_event_loop()
         fut = loop.create_future()
@@ -504,14 +507,14 @@ class TestBugFixes:
 
     def test_safe_category_valid(self):
         """Fix #5: _safe_category handles valid categories."""
-        from app.services.mcp_manager import _safe_category
         from app.models.mcp import MCPCategory
+        from app.services.mcp_manager import _safe_category
         assert _safe_category("search") == MCPCategory.SEARCH
 
     def test_safe_category_invalid(self):
         """Fix #5: _safe_category returns OTHER for unknown categories."""
-        from app.services.mcp_manager import _safe_category
         from app.models.mcp import MCPCategory
+        from app.services.mcp_manager import _safe_category
         assert _safe_category("totally_unknown_category") == MCPCategory.OTHER
 
     def test_event_bus_higher_queue_size(self):

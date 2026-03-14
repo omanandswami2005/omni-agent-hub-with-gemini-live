@@ -8,10 +8,10 @@ import asyncio
 from fastapi import APIRouter, Depends
 
 from app.middleware.auth_middleware import CurrentUser
-from app.services.persona_service import PersonaService, get_persona_service
-from app.services.session_service import SessionService, get_session_service
 from app.services.mcp_manager import get_mcp_manager
+from app.services.persona_service import PersonaService, get_persona_service
 from app.services.plugin_registry import get_plugin_registry
+from app.services.session_service import SessionService, get_session_service
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -45,7 +45,7 @@ async def bootstrap(
             ),
             timeout=_INIT_TIMEOUT,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("init_firestore_timeout", user_id=user.uid, timeout=_INIT_TIMEOUT)
         sessions_result, personas_result = [], []
 

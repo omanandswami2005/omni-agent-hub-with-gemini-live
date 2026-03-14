@@ -59,7 +59,7 @@ async def _await_tool_result(call_id: str, timeout: float = _T3_TIMEOUT) -> dict
     try:
         result = await asyncio.wait_for(fut, timeout=timeout)
         return result
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {"error": f"Client did not respond within {timeout}s"}
     finally:
         _pending_results.pop(call_id, None)
