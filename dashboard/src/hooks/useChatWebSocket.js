@@ -106,25 +106,23 @@ export function useChatWebSocket() {
                 case 'tool_call':
                     if (msg.tool_name === 'transfer_to_agent') break;
                     store.setToolActive(msg.tool_name, true);
-                    store.addMessage({
-                        role: 'system',
-                        type: 'tool_call',
-                        content: `Using tool: ${msg.tool_name}`,
+                    store.addAction({
                         tool_name: msg.tool_name,
                         arguments: msg.arguments,
                         status: msg.status,
+                        action_kind: msg.action_kind || 'tool',
+                        source_label: msg.source_label || '',
                         ...(fromOtherDevice && { cross_client: true }),
                     });
                     break;
                 case 'tool_response':
                     if (msg.tool_name === 'transfer_to_agent') break;
                     store.setToolActive(msg.tool_name, false);
-                    store.addMessage({
-                        role: 'system',
-                        type: 'tool_response',
-                        content: msg.result || `Tool ${msg.tool_name} completed`,
-                        tool_name: msg.tool_name,
+                    store.completeAction(msg.tool_name, {
+                        result: msg.result || `Tool ${msg.tool_name} completed`,
                         success: msg.success,
+                        action_kind: msg.action_kind || 'tool',
+                        source_label: msg.source_label || '',
                     });
                     break;
                 case 'image_response':
@@ -157,6 +155,15 @@ export function useChatWebSocket() {
                 case 'client_status_update':
                     useClientStore.getState().setClients(msg.clients);
                     break;
+                case 'session_suggestion': {
+                    // If the server included a session_id, switch to it
+                    if (msg.session_id) {
+                        const ss = useSessionStore.getState();
+                        ss.setActiveSession(msg.session_id);
+                        ss.ensureSession(msg.session_id);
+                    }
+                    break;
+                }
                 case 'error': {
                     const description = msg.description || 'An unexpected error occurred.';
                     toast.error(description, { duration: 6000 });

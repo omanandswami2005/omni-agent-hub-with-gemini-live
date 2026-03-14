@@ -54,6 +54,8 @@ async def list_messages(
 
     Tries InMemorySessionService first (fast, current process),
     then falls back to VertexAiSessionService (persisted across restarts).
+    
+    Also updates message_count in Firestore to stay in sync.
     """
     fs_session = await svc.get_session(user.uid, session_id)
     adk_sid = fs_session.adk_session_id
@@ -86,7 +88,16 @@ async def list_messages(
     if session is None or not session.events:
         return []
 
-    return _events_to_messages(session.events)
+    messages = _events_to_messages(session.events)
+    
+    # Update message_count in Firestore to stay in sync with actual message count
+    if messages:
+        try:
+            await svc.update_message_count(session_id, len(messages))
+        except Exception:
+            pass  # Non-critical - silently ignore
+    
+    return messages
 
 
 def _events_to_messages(events: list) -> list[ChatMessage]:
@@ -182,31 +193,45 @@ def _events_to_messages(events: list) -> list[ChatMessage]:
             kind, label = _classify_tool(fr.name)
             # Check if this is an image tool
             is_image_tool = fr.name in _IMAGE_TOOL_NAMES
+            
+            # Extract response as dict if possible
+            response_dict = None
+            if fr.response and hasattr(fr.response, 'get'):
+                response_dict = fr.response
+            elif fr.response and isinstance(fr.response, dict):
+                response_dict = fr.response
+            
             result_str = str(fr.response) if fr.response else f"Tool {fr.name} completed"
 
-            # For image tools, emit an image message so the UI can show the image placeholder
-            if is_image_tool:
+            # For image tools, emit an image message with URL so the UI can show the image
+            if is_image_tool and response_dict:
+                image_url = response_dict.get('image_url') or response_dict.get('gcs_uri') or ''
+                # Only emit the image message, not the action (avoid duplicate)
                 messages.append(ChatMessage(
                     role="assistant",
                     content=result_str,
                     type="image",
                     tool_name=fr.name,
-                    description=result_str,
+                    description=response_dict.get('description', result_str),
+                    image_url=image_url,
+                    responded=True,
+                    success=True,
                     action_kind=kind,
                     source_label=label,
                 ))
-
-            messages.append(ChatMessage(
-                role="system",
-                content=result_str,
-                type="action",
-                tool_name=fr.name,
-                result=result_str,
-                success=True,
-                responded=True,
-                action_kind=kind,
-                source_label=label,
-            ))
+            else:
+                # For non-image tools, emit action message
+                messages.append(ChatMessage(
+                    role="system",
+                    content=result_str,
+                    type="action",
+                    tool_name=fr.name,
+                    result=result_str,
+                    success=True,
+                    responded=True,
+                    action_kind=kind,
+                    source_label=label,
+                ))
 
     return messages
 

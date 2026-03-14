@@ -62,11 +62,11 @@ def _build_root_instruction(persona_names: list[tuple[str, str]], has_device: bo
         "1. If the user names a persona explicitly, transfer to that persona.\n"
         "2. For complex multi-step requests → call plan_task first.\n"
         "3. For device control, sending to desktop/chrome/dashboard → transfer to device_agent.\n"
-        "4. For search/research/factual queries → transfer to researcher.\n"
+        "4. For deep research, complex analysis, or when explicit research is requested → transfer to researcher.\n"
         "5. For code writing or execution → transfer to coder.\n"
         "6. For image generation → transfer to creative.\n"
         "7. For data/charts/analysis → transfer to analyst.\n"
-        "8. For everything else → transfer to assistant.\n\n"
+        "8. For scheduling, email drafts, quick look-ups, everyday questions, and everything else → transfer to assistant.\n\n"
         "IMPORTANT: Do NOT invent tool names. You only have transfer_to_agent and plan_task."
     )
 

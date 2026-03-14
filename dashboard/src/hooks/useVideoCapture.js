@@ -30,6 +30,15 @@ const MAX_DIMENSION = 1024;
  */
 function classifyError(err, src) {
     const name = err?.name || '';
+    // Check if getDisplayMedia is not supported (mobile browsers)
+    if (err?.message?.includes('getDisplayMedia') || name === 'NotSupportedError') {
+        return {
+            type: 'not_supported',
+            device: src,
+            title: 'Screen sharing not supported',
+            message: 'Screen sharing is not available on this device or browser. Please use a desktop browser for screen sharing.',
+        };
+    }
     if (name === 'NotAllowedError') {
         // Screen share picker cancelled by user — silent, no toast needed
         if (src === 'screen') return null;
@@ -101,6 +110,17 @@ export function useVideoCapture({ onFrameData, fps = DEFAULT_FPS, quality = DEFA
         stopCapture();
 
         try {
+            // Check if getDisplayMedia is available (not available on mobile Safari/Chrome)
+            if (src === 'screen' && typeof navigator.mediaDevices?.getDisplayMedia !== 'function') {
+                setPermissionError({
+                    type: 'not_supported',
+                    device: 'screen',
+                    title: 'Screen sharing not supported',
+                    message: 'Screen sharing is not available on this device or browser. Please use a desktop browser for screen sharing.',
+                });
+                return;
+            }
+
             const stream = src === 'screen'
                 ? await navigator.mediaDevices.getDisplayMedia({ video: true })
                 : await navigator.mediaDevices.getUserMedia({

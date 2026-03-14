@@ -120,6 +120,13 @@ class SessionService:
             "updated_at": datetime.now(UTC),
         })
 
+    async def update_message_count(self, session_id: str, count: int) -> None:
+        """Set message_count to a specific value (to sync with actual message count)."""
+        self.db.collection(COLLECTION).document(session_id).update({
+            "message_count": count,
+            "updated_at": datetime.now(UTC),
+        })
+
     async def get_latest_session_for_user(self, user_id: str) -> SessionResponse | None:
         """Return the most recent session for a user, or None."""
         query = (

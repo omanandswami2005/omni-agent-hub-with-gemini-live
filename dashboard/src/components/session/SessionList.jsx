@@ -6,7 +6,7 @@ import { useState } from 'react';
 import SessionItem from './SessionItem';
 import SessionSearch from './SessionSearch';
 
-export default function SessionList({ sessions = [], activeId, onSelect, onDelete }) {
+export default function SessionList({ sessions = [], activeId, onSelect, onDelete, onRename }) {
   const [search, setSearch] = useState('');
 
   const filtered = search
@@ -29,6 +29,7 @@ export default function SessionList({ sessions = [], activeId, onSelect, onDelet
               isActive={session.id === activeId}
               onSelect={onSelect}
               onDelete={onDelete}
+              onRename={onRename}
             />
           ))}
         </div>

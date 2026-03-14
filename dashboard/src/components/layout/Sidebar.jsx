@@ -2,7 +2,7 @@
  * Layout: Sidebar — Navigation sidebar with collapsible session list.
  */
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router';
 import {
   Home,
@@ -42,19 +42,53 @@ function SidebarSessionList() {
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const switchSession = useSessionStore((s) => s.switchSession);
+  const renameSession = useSessionStore((s) => s.renameSession);
   const clearMessages = useChatStore((s) => s.clearMessages);
   const navigate = useNavigate();
   const voice = useVoice();
 
+  const [editingId, setEditingId] = useState(null);
+  const [editTitle, setEditTitle] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (editingId && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editingId]);
+
   const recent = sessions.slice(0, 10);
 
   const handleClick = (session) => {
-    if (session.id === activeSessionId) return; // already on this session
+    if (editingId) return;
+    if (session.id === activeSessionId) return;
     switchSession(session.id);
     clearMessages();
     navigate(`/session/${session.id}`);
-    // Reconnect WS so server binds to this session
-    voice.reconnect?.();
+    // Don't reconnect here - DashboardPage useEffect will handle session loading
+    // and the websocket will naturally connect with the correct session_id
+  };
+
+  const handleDoubleClick = (session) => {
+    setEditTitle(session.title || '');
+    setEditingId(session.id);
+  };
+
+  const commitRename = () => {
+    const trimmed = editTitle.trim();
+    if (trimmed && editingId) {
+      const session = sessions.find((s) => s.id === editingId);
+      if (session && trimmed !== session.title) {
+        renameSession(editingId, trimmed);
+      }
+    }
+    setEditingId(null);
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') commitRename();
+    if (e.key === 'Escape') setEditingId(null);
   };
 
   if (recent.length === 0) {
@@ -69,16 +103,29 @@ function SidebarSessionList() {
         <button
           key={s.id}
           onClick={() => handleClick(s)}
+          onDoubleClick={() => handleDoubleClick(s)}
           className={cn(
             'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs transition-colors',
             s.id === activeSessionId
               ? 'bg-primary/10 text-primary font-medium'
               : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
           )}
-          title={s.title || 'Untitled Session'}
+          title={editingId === s.id ? undefined : (s.title || 'Untitled Session — double-click to rename')}
         >
           <MessageSquare size={12} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate">{s.title || 'Untitled'}</span>
+          {editingId === s.id ? (
+            <input
+              ref={inputRef}
+              value={editTitle}
+              onChange={(e) => setEditTitle(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={handleKeyDown}
+              onClick={(e) => e.stopPropagation()}
+              className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-primary"
+            />
+          ) : (
+            <span className="min-w-0 flex-1 truncate">{s.title || 'Untitled'}</span>
+          )}
           <span className="shrink-0 text-[10px] opacity-60">
             {s.created_at ? formatDistanceToNow(new Date(s.created_at), { addSuffix: false }) : ''}
           </span>
@@ -100,8 +147,9 @@ export default function Sidebar() {
   const handleNewChat = () => {
     clearMessages();
     useSessionStore.getState().setActiveSession(null);
+    useSessionStore.getState().setWantsNewSession(true);
     navigate('/');
-    // Reconnect WS so server creates a fresh session
+    // Reconnect to create a new session
     voice.reconnect?.();
   };
 
@@ -144,13 +192,9 @@ export default function Sidebar() {
             : location.pathname.startsWith(to);
 
           if (hasSublist && sidebarOpen) {
-            // Sessions with collapsible sublist
+            // Sessions with collapsible sublist - use click to toggle instead of hover for better UX
             return (
-              <div
-                key={to}
-                onMouseEnter={() => setSessionsExpanded(true)}
-                onMouseLeave={() => setSessionsExpanded(false)}
-              >
+              <div key={to}>
                 <button
                   onClick={() => setSessionsExpanded((prev) => !prev)}
                   className={cn(

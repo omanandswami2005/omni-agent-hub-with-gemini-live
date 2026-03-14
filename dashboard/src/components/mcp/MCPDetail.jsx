@@ -55,9 +55,13 @@ export default function MCPDetail({ server, onToggle, onClose }) {
       } else {
         await startOAuth(server.id);
       }
-    } catch {
-      setOauthLoading(false);
+    } catch (err) {
+      console.error('OAuth connection error:', err);
+      // Show error briefly then reset loading state
+      setTimeout(() => setOauthLoading(false), 2000);
     }
+    // Reset loading after a timeout in case no callback comes
+    setTimeout(() => setOauthLoading(false), 10000);
   };
 
   const handleOAuthDisconnect = async () => {

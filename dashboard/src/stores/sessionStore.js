@@ -7,6 +7,8 @@ export const useSessionStore = create((set, get) => ({
     loading: false,
     messagesLoading: false,
     error: null,
+    // Flag to indicate user explicitly wants a new session
+    wantsNewSession: false,
 
     loadSessions: async () => {
         set({ loading: true, error: null });
@@ -44,9 +46,20 @@ export const useSessionStore = create((set, get) => ({
         });
     },
 
+    renameSession: async (id, title) => {
+        const updated = await api.put(`/sessions/${id}`, { title });
+        set({
+            sessions: get().sessions.map((s) =>
+                s.id === id ? { ...s, title: updated.title ?? title } : s,
+            ),
+        });
+        return updated;
+    },
+
     switchSession: (id) => set({ activeSessionId: id }),
     setSessions: (sessions) => set({ sessions }),
     setActiveSession: (id) => set({ activeSessionId: id }),
+    setWantsNewSession: (val) => set({ wantsNewSession: val }),
 
     /**
      * Ensure a session exists in the local list (fetch from API if missing).

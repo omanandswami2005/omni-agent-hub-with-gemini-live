@@ -12,6 +12,7 @@ import FloatingVoiceBubble from '@/components/chat/FloatingVoiceBubble';
 import MediaPreviewOverlay from '@/components/chat/MediaPreviewOverlay';
 import PermissionErrorBanner from '@/components/chat/PermissionErrorBanner';
 import SessionSuggestionBanner from '@/components/clients/SessionSuggestionBanner';
+import CommandPalette from '@/components/layout/CommandPalette';
 import { VoiceProvider, useVoice } from '@/hooks/useVoiceProvider';
 import { useBootstrap } from '@/hooks/useBootstrap';
 import { useEventSocket } from '@/hooks/useEventSocket';
@@ -60,6 +61,9 @@ function ShellLayout() {
           onClose={voice.videoSource === 'screen' ? voice.toggleScreen : voice.toggleCamera}
         />
       )}
+
+      {/* Global command palette (⌘K) */}
+      <CommandPalette />
 
       {/* Global floating voice bubble — always visible */}
       <FloatingVoiceBubble

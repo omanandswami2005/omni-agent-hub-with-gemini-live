@@ -81,6 +81,17 @@ export const useChatStore = create((set, get) => ({
       return { activeTools: tools };
     }),
 
+  /** Mark all unresponded actions as cancelled (for interruptions) */
+  cancelAllActions: () =>
+    set((s) => ({
+      messages: s.messages.map((m) =>
+        m.type === 'action' && !m.responded
+          ? { ...m, responded: true, success: false, result: 'Cancelled' }
+          : m
+      ),
+      activeTools: new Set(),
+    })),
+
   // Audio queue for playback
   audioQueue: [],
   voiceOutputEnabled: true,

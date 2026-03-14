@@ -57,12 +57,24 @@ export function useWebSocket() {
       // Send auth handshake as first frame (token NOT in URL for security)
       // Include platform/OS info so the server can display it in the clients panel
       const activeId = useSessionStore.getState().activeSessionId;
+      const wantsNew = useSessionStore.getState().wantsNewSession;
       const activePersona = usePersonaStore.getState().activePersona;
+
+      // Determine session_id to send
+      let sessionIdToSend = undefined;
+      if (wantsNew) {
+        sessionIdToSend = "new";
+        // Clear the flag after sending
+        useSessionStore.getState().setWantsNewSession(false);
+      } else if (activeId) {
+        sessionIdToSend = activeId;
+      }
+
       sendJsonMessage(ws, {
         type: 'auth',
         token: freshToken,
         user_agent: navigator.userAgent,
-        ...(activeId ? { session_id: activeId } : {}),
+        ...(sessionIdToSend !== undefined ? { session_id: sessionIdToSend } : {}),
         ...(activePersona?.id ? { persona_id: activePersona.id } : {}),
         ...(activePersona?.voice ? { voice: activePersona.voice } : {}),
       });
@@ -96,9 +108,10 @@ export function useWebSocket() {
           break;
         case 'status':
           useChatStore.getState().setAgentState(msg.state);
-          // On interruption, clear audio queue so stale playback stops
-          if (msg.state === 'listening' && msg.detail === 'Interrupted by user') {
+          // On interruption, clear audio queue and cancel any active tools
+          if (msg.detail && msg.detail.toLowerCase().includes('interrupt')) {
             useChatStore.getState().clearAudioQueue?.();
+            useChatStore.getState().cancelAllActions?.();
           }
           break;
         case 'tool_call':
@@ -167,14 +180,19 @@ export function useWebSocket() {
           break;
         case 'session_suggestion': {
           const sss = useSessionSuggestionStore.getState();
+          // If the server included a session_id, switch to it for continuity
+          if (msg.session_id) {
+            const ss = useSessionStore.getState();
+            ss.setActiveSession(msg.session_id);
+            ss.ensureSession(msg.session_id);
+          }
           if (sss.autoJoin) {
-            // Already opted in — just show a brief toast
             toast.info(`Joined your active session from ${msg.available_clients?.join(', ') || 'another device'}`, { duration: 3000 });
           } else {
-            // First time — show the banner so user can decide
             sss.setSuggestion({
               availableClients: msg.available_clients || [],
               message: msg.message || 'You have an active session on another device.',
+              sessionId: msg.session_id || '',
             });
           }
           break;

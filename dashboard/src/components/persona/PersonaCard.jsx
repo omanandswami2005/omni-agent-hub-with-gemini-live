@@ -5,12 +5,13 @@
 import { Pencil, Trash2 } from 'lucide-react';
 
 export default function PersonaCard({ persona, onSelect, isActive = false, onEdit, onDelete }) {
+  const handleClick = () => onSelect?.(persona);
   return (
     <div
-      className={`group relative w-full rounded-lg border p-4 text-left transition-colors ${isActive ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'
-        }`}
+      onClick={handleClick}
+      className={`group relative w-full cursor-pointer rounded-lg border p-4 text-left transition-colors ${isActive ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'}`}
     >
-      <button onClick={() => onSelect?.(persona)} className="flex w-full items-center gap-3">
+      <div className="flex w-full items-center gap-3">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
           {persona?.avatar_url ? (
             <img src={persona.avatar_url} alt="" className="h-10 w-10 rounded-full object-cover" />
@@ -22,7 +23,7 @@ export default function PersonaCard({ persona, onSelect, isActive = false, onEdi
           <p className="font-medium">{persona?.name}</p>
           <p className="truncate text-sm text-muted-foreground">{persona?.voice || persona?.tagline}</p>
         </div>
-      </button>
+      </div>
 
       {/* Edit / Delete (visible on hover) */}
       {(onEdit || onDelete) && (

@@ -976,16 +976,40 @@ async def ws_live(websocket: WebSocket) -> None:
                 # ADK session gone (cold start) or never linked — create new
                 session_id = await _get_or_create_adk_session(user.uid, active_session_service, force_new=True)
                 await _fs_svc.link_adk_session(firestore_session_id, session_id)
-        else:
-            # No specific session requested — reuse latest or create new
-            session_id = await _get_or_create_adk_session(user.uid, active_session_service)
+        elif other_clients:
+            # Other clients are online — reuse their session for continuity
             latest = await _fs_svc.get_latest_session_for_user(user.uid)
-            if latest and latest.adk_session_id == session_id:
+            if latest:
                 firestore_session_id = latest.id
+                if latest.adk_session_id and await _adk_session_exists(
+                    latest.adk_session_id, user.uid, active_session_service
+                ):
+                    session_id = latest.adk_session_id
+                    _adk_session_id_cache[user.uid] = session_id
+                else:
+                    session_id = await _get_or_create_adk_session(user.uid, active_session_service, force_new=True)
+                    await _fs_svc.link_adk_session(firestore_session_id, session_id)
             else:
+                # No existing session — create fresh
+                session_id = await _get_or_create_adk_session(user.uid, active_session_service)
                 fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
                 firestore_session_id = fs_session.id
                 await _fs_svc.link_adk_session(firestore_session_id, session_id)
+        else:
+            # No specific session requested — only create if user explicitly wants a new session
+            # The frontend sends session_id="new" when user clicks "New Session" button
+            if requested_session_id == "new":
+                # User explicitly wants a new session
+                session_id = await _get_or_create_adk_session(user.uid, active_session_service, force_new=True)
+                fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
+                firestore_session_id = fs_session.id
+                await _fs_svc.link_adk_session(firestore_session_id, session_id)
+            else:
+                # No session requested — stay stateless (no session created)
+                # This happens when user visits dashboard without selecting a session
+                session_id = None
+                firestore_session_id = None
+                logger.info("stateless_connection", user_id=user.uid)
     except Exception:
         # Requested session not found or creation failed — create a new one
         if not session_id:
@@ -1047,7 +1071,8 @@ async def ws_live(websocket: WebSocket) -> None:
         from app.models.ws_messages import SessionSuggestionMessage
         suggestion = SessionSuggestionMessage(
             available_clients=[str(ct) for ct in other_clients],
-            message=f"You're already active on {', '.join(str(ct) for ct in other_clients)}. Join that session for uninterrupted context?"
+            message=f"You're already active on {', '.join(str(ct) for ct in other_clients)}. Join that session for uninterrupted context?",
+            session_id=firestore_session_id or "",
         )
         await websocket.send_text(suggestion.model_dump_json())
 

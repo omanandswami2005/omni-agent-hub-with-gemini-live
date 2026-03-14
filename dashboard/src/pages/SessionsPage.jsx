@@ -8,14 +8,12 @@ import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import SessionList from '@/components/session/SessionList';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useChatStore } from '@/stores/chatStore';
-import { useVoice } from '@/hooks/useVoiceProvider';
 
 export default function SessionsPage() {
   useDocumentTitle('Sessions');
   const navigate = useNavigate();
-  const { sessions, activeSessionId, loading, loadSessions, switchSession, deleteSession, createSession } = useSessionStore();
+  const { sessions, activeSessionId, loading, loadSessions, switchSession, deleteSession, createSession, renameSession } = useSessionStore();
   const clearMessages = useChatStore((s) => s.clearMessages);
-  const voice = useVoice();
 
   useEffect(() => {
     loadSessions();
@@ -25,7 +23,6 @@ export default function SessionsPage() {
     switchSession(session.id);
     clearMessages?.();
     navigate(`/session/${session.id}`);
-    voice.reconnect?.();
   };
 
   const handleDelete = async (session) => {
@@ -34,7 +31,6 @@ export default function SessionsPage() {
     if (wasActive) {
       clearMessages();
       navigate('/');
-      voice.reconnect?.();
     }
   };
 
@@ -42,11 +38,15 @@ export default function SessionsPage() {
     try {
       const session = await createSession();
       clearMessages();
+      switchSession(session.id);
       navigate(`/session/${session.id}`);
-      voice.reconnect?.();
     } catch {
       // silently ignore
     }
+  };
+
+  const handleRename = async (session, title) => {
+    await renameSession(session.id, title);
   };
 
   return (
@@ -68,6 +68,7 @@ export default function SessionsPage() {
           activeId={activeSessionId}
           onSelect={handleSelect}
           onDelete={handleDelete}
+          onRename={handleRename}
         />
       )}
     </div>

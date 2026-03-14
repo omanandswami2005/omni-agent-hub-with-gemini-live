@@ -98,6 +98,7 @@ class SessionSuggestionMessage(BaseModel):
     type: Literal["session_suggestion"] = "session_suggestion"
     available_clients: list[str]  # e.g., ["desktop", "mobile"]
     message: str
+    session_id: str = ""  # Firestore session ID to join for continuity
 
 
 class JoinSessionMessage(BaseModel):
