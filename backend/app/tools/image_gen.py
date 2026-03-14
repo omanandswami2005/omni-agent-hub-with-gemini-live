@@ -138,9 +138,11 @@ async def generate_image(
 
     svc = get_storage_service()
     gcs_uri = await asyncio.to_thread(
-        svc.upload_image, image_bytes,
+        svc.upload_image,
+        image_bytes,
         user_id=user_id or "anonymous",
-        filename=filename, content_type=mime_type,
+        filename=filename,
+        content_type=mime_type,
     )
 
     image_b64 = base64.b64encode(image_bytes).decode()
@@ -154,13 +156,16 @@ async def generate_image(
 
     # Queue image for WebSocket delivery (NOT returned to Gemini)
     if user_id:
-        _queue_image(user_id, {
-            "tool_name": "generate_image",
-            "image_base64": image_b64,
-            "mime_type": mime_type,
-            "image_url": gcs_uri,
-            "description": full_prompt,
-        })
+        _queue_image(
+            user_id,
+            {
+                "tool_name": "generate_image",
+                "image_base64": image_b64,
+                "mime_type": mime_type,
+                "image_url": gcs_uri,
+                "description": full_prompt,
+            },
+        )
     else:
         logger.warning("image_generated_no_user_id", prompt=prompt[:80])
 
@@ -218,11 +223,13 @@ async def generate_rich_image(
                     "mime_type": part.inline_data.mime_type,
                 }
                 images.append(img_entry)
-                ordered_parts.append({
-                    "type": "image",
-                    "base64": img_b64,
-                    "mime_type": part.inline_data.mime_type,
-                })
+                ordered_parts.append(
+                    {
+                        "type": "image",
+                        "base64": img_b64,
+                        "mime_type": part.inline_data.mime_type,
+                    }
+                )
 
     # Persist images to GCS (sync SDK — offload to thread pool)
     from app.services.storage_service import get_storage_service
@@ -235,9 +242,11 @@ async def generate_rich_image(
         filename = f"{uuid.uuid4().hex}.{ext}"
         raw = base64.b64decode(img["base64"])
         gcs_uri = await asyncio.to_thread(
-            svc.upload_image, raw,
+            svc.upload_image,
+            raw,
             user_id=user_id or "anonymous",
-            filename=filename, content_type=img["mime_type"],
+            filename=filename,
+            content_type=img["mime_type"],
         )
         img["gcs_uri"] = gcs_uri
 
@@ -252,12 +261,15 @@ async def generate_rich_image(
 
     # Queue images for WebSocket delivery (NOT returned to Gemini)
     if user_id:
-        _queue_image(user_id, {
-            "tool_name": "generate_rich_image",
-            "text": summary,
-            "images": images,
-            "parts": ordered_parts,
-        })
+        _queue_image(
+            user_id,
+            {
+                "tool_name": "generate_rich_image",
+                "text": summary,
+                "images": images,
+                "parts": ordered_parts,
+            },
+        )
     else:
         logger.warning("rich_image_generated_no_user_id", prompt=prompt[:80])
 

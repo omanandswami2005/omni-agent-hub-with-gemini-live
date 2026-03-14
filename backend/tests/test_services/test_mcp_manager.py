@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.models.mcp import MCPCatalogItem, MCPConfig, MCPToggle, TransportType
+from app.models.mcp import MCPCatalogItem, MCPConfig, TransportType
 from app.services.mcp_manager import (
     MCP_CATALOG,
     MCPManager,
@@ -112,4 +112,3 @@ class TestSingleton:
     def test_is_mcp_manager(self):
         mgr = get_mcp_manager()
         assert isinstance(mgr, MCPManager)
-

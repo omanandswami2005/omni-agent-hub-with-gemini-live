@@ -7,7 +7,7 @@ is delegated to :class:`~app.services.plugin_registry.PluginRegistry`.
 
 from __future__ import annotations
 
-from app.models.mcp import MCPCatalogItem, MCPConfig, MCPToggle, TransportType, MCPCategory
+from app.models.mcp import MCPCatalogItem, MCPCategory, MCPConfig, MCPToggle, TransportType
 from app.models.plugin import PluginToggle
 from app.services.plugin_registry import _load_mcp_configs, get_plugin_registry
 from app.utils.logging import get_logger
@@ -35,18 +35,20 @@ def _build_catalog() -> list[MCPConfig]:
         transport = TransportType.STDIO
         if m.kind in ("mcp_http", "mcp_oauth"):
             transport = TransportType.STREAMABLE_HTTP
-        result.append(MCPConfig(
-            id=m.id,
-            name=m.name,
-            description=m.description,
-            category=_safe_category(m.category),
-            transport=transport,
-            command=m.command,
-            args=m.args,
-            url=m.url,
-            env=m.env,
-            icon=m.icon,
-        ))
+        result.append(
+            MCPConfig(
+                id=m.id,
+                name=m.name,
+                description=m.description,
+                category=_safe_category(m.category),
+                transport=transport,
+                command=m.command,
+                args=m.args,
+                url=m.url,
+                env=m.env,
+                icon=m.icon,
+            )
+        )
     return result
 
 
@@ -182,4 +184,3 @@ def get_mcp_manager() -> MCPManager:
     if _manager is None:
         _manager = MCPManager()
     return _manager
-

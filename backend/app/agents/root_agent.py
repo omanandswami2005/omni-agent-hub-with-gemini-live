@@ -36,37 +36,58 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-def _build_root_instruction(persona_names: list[tuple[str, str]], has_device: bool) -> str:
-    """Dynamically build the root instruction from active personas."""
-    persona_lines = "\n".join(
-        f"- {pid} — {pname}" for pid, pname in persona_names
+def _build_root_instruction(
+    persona_names: list[tuple[str, str]], has_device: bool, tools_map: dict[str, list]
+) -> str:
+    """Dynamically build the root instruction from active personas and their available tools."""
+
+    # Build detailed persona list with their tools
+    persona_lines = []
+    for pid, pname in persona_names:
+        tools = tools_map.get(pid, [])
+        tool_names = [getattr(t, "name", str(t)) for t in tools] if tools else []
+        if tool_names:
+            persona_lines.append(f"- {pid} — {pname}. Available tools: {', '.join(tool_names)}")
+        else:
+            persona_lines.append(f"- {pid} — {pname}")
+
+    persona_text = "\n".join(persona_lines)
+
+    device_tools = tools_map.get("__device__", [])
+    device_tool_names = [getattr(t, "name", str(t)) for t in device_tools] if device_tools else []
+    device_tools_text = (
+        f" Available tools: {', '.join(device_tool_names)}" if device_tool_names else ""
     )
+
     device_section = (
         "\n\nDevice actions:\n"
-        "- device_agent — controls connected devices (desktop, Chrome, web dashboard). "
+        f"- device_agent — controls connected devices (desktop, Chrome, web dashboard).{device_tools_text} "
         "Transfer here for any device-control, cross-client, or local tool requests."
-        if has_device else ""
+        if has_device
+        else ""
     )
+
     return (
         "You are Omni, a multi-persona AI hub that routes requests to specialist agents. "
         "You MUST use the transfer_to_agent tool to delegate every user request to the correct agent. "
         "NEVER try to answer directly — always transfer first.\n\n"
-        "Available personas (use these exact names with transfer_to_agent):\n"
-        f"{persona_lines}\n"
+        "Available personas (use these exact names with transfer_to_agent) and their specific tools:\n"
+        f"{persona_text}\n"
         f"{device_section}\n\n"
         "You also have a plan_task tool. Call it when the user request clearly "
         "requires MULTIPLE specialists working together (e.g. 'research X, write code, "
         "then make an image'). The tool returns an ordered plan; then transfer to each "
         "persona in order.\n\n"
         "Routing rules:\n"
-        "1. If the user names a persona explicitly, transfer to that persona.\n"
-        "2. For complex multi-step requests → call plan_task first.\n"
-        "3. For device control, sending to desktop/chrome/dashboard → transfer to device_agent.\n"
-        "4. For deep research, complex analysis, or when explicit research is requested → transfer to researcher.\n"
-        "5. For code writing or execution → transfer to coder.\n"
-        "6. For image generation → transfer to creative.\n"
-        "7. For data/charts/analysis → transfer to analyst.\n"
-        "8. For scheduling, email drafts, quick look-ups, everyday questions, and everything else → transfer to assistant.\n\n"
+        "1. If the user asks to use a specific tool, transfer to the persona that has that tool available!\n"
+        "2. If the user names a persona explicitly, transfer to that persona.\n"
+        "3. For complex multi-step requests → call plan_task first.\n"
+        "4. For device control, sending to desktop/chrome/dashboard → transfer to device_agent.\n"
+        "5. For deep research, complex analysis, or when explicit research is requested → transfer to researcher.\n"
+        "6. For code writing or execution → transfer to coder.\n"
+        "7. For image generation → transfer to creative.\n"
+        "8. For data/charts/analysis → transfer to analyst.\n"
+        "9. For scheduling, email drafts, quick look-ups, everyday questions, and everything else → transfer to assistant.\n\n"
         "IMPORTANT: Do NOT invent tool names. You only have transfer_to_agent and plan_task."
     )
 
@@ -121,7 +142,8 @@ def build_root_agent(
     device_tools = tools_map.get("__device__")
     has_device = True  # Always include device_agent (cross-client always available)
     device_agent = build_cross_client_agent(
-        device_tools=device_tools, model=effective_model,
+        device_tools=device_tools,
+        model=effective_model,
     )
     sub_agents.append(device_agent)
 
@@ -129,7 +151,7 @@ def build_root_agent(
     root_tools = [get_task_planner_tool()]
 
     # ── Layer 0: Root router ──────────────────────────────────────────
-    instruction = _build_root_instruction(persona_names, has_device)
+    instruction = _build_root_instruction(persona_names, has_device, tools_map)
 
     root = Agent(
         name="omni_root",

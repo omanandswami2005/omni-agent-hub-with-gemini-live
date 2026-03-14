@@ -33,7 +33,9 @@ class NotFoundError(OmniError):
     """Requested resource does not exist."""
 
     def __init__(self, resource: str = "Resource", identifier: str = ""):
-        detail = f"{resource} not found" if not identifier else f"{resource} '{identifier}' not found"
+        detail = (
+            f"{resource} not found" if not identifier else f"{resource} '{identifier}' not found"
+        )
         super().__init__(message=detail, status_code=404)
 
 

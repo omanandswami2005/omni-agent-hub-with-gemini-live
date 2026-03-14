@@ -59,15 +59,13 @@ async def _await_tool_result(call_id: str, timeout: float = _T3_TIMEOUT) -> dict
     try:
         result = await asyncio.wait_for(fut, timeout=timeout)
         return result
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {"error": f"Client did not respond within {timeout}s"}
     finally:
         _pending_results.pop(call_id, None)
 
 
-def _create_proxy_tool(
-    tool_def: dict, user_id: str, client_type: ClientType
-) -> FunctionTool:
+def _create_proxy_tool(tool_def: dict, user_id: str, client_type: ClientType) -> FunctionTool:
     """Create an ephemeral proxy tool that routes calls to a connected client via reverse-RPC."""
 
     tool_name = tool_def.get("name", "unknown_tool")
@@ -80,12 +78,14 @@ def _create_proxy_tool(
             return f"Error: {client_type} client is not connected."
 
         call_id = uuid4().hex
-        invocation = json.dumps({
-            "type": "tool_invocation",
-            "call_id": call_id,
-            "tool": tool_name,
-            "args": kwargs,
-        })
+        invocation = json.dumps(
+            {
+                "type": "tool_invocation",
+                "call_id": call_id,
+                "tool": tool_name,
+                "args": kwargs,
+            }
+        )
 
         await cm.send_to_client(user_id, client_type, invocation)
         logger.info(
@@ -107,7 +107,14 @@ def _create_proxy_tool(
         annotations = {}
         for param_name, param_info in tool_params.items():
             ptype = param_info.get("type", "string")
-            type_map = {"string": str, "integer": int, "number": float, "boolean": bool, "array": list, "object": dict}
+            type_map = {
+                "string": str,
+                "integer": int,
+                "number": float,
+                "boolean": bool,
+                "array": list,
+                "object": dict,
+            }
             annotations[param_name] = type_map.get(ptype, str)
         annotations["return"] = dict | str
         proxy_fn.__annotations__ = annotations
@@ -151,7 +158,9 @@ class ToolRegistry:
                 if tools:
                     plugin_tools[plugin_id] = tools
             except Exception:
-                logger.warning("t2_tools_load_failed", user_id=user_id, plugin_id=plugin_id, exc_info=True)
+                logger.warning(
+                    "t2_tools_load_failed", user_id=user_id, plugin_id=plugin_id, exc_info=True
+                )
 
         # ── Distribute T2 tools to personas by tag matching ───────────
         result: dict[str, list] = {}

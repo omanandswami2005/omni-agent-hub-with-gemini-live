@@ -89,7 +89,11 @@ class TestProcessEvent:
         event = Event(
             author="agent",
             content=types.Content(
-                parts=[types.Part(inline_data=types.Blob(mime_type="audio/pcm;rate=24000", data=audio_data))],
+                parts=[
+                    types.Part(
+                        inline_data=types.Blob(mime_type="audio/pcm;rate=24000", data=audio_data)
+                    )
+                ],
             ),
         )
         await _process_event(ws, event)
@@ -177,7 +181,7 @@ class TestAuthenticateWs:
             result = await _authenticate_ws(ws)
 
         assert result is not None
-        user, client_type = result
+        user, _client_type, *_ = result
         assert user.uid == "u1"
 
     async def test_invalid_json_returns_none(self):

@@ -16,7 +16,6 @@ import json
 
 import pytest
 
-
 # ── ConnectionManager Capability Tests ───────────────────────────────
 
 
@@ -25,10 +24,12 @@ class TestConnectionManagerCapabilities:
 
     def _make_mgr(self):
         from app.services.connection_manager import ConnectionManager
+
         return ConnectionManager()
 
     def test_store_and_get_capabilities(self):
         from app.models.client import ClientType
+
         mgr = self._make_mgr()
 
         mgr.store_capabilities(
@@ -36,14 +37,26 @@ class TestConnectionManagerCapabilities:
             ClientType.DESKTOP,
             capabilities=["write_file", "read_file", "capture_screen"],
             local_tools=[
-                {"name": "write_file", "description": "Write to disk", "parameters": {"path": {"type": "string"}, "content": {"type": "string"}}},
-                {"name": "read_file", "description": "Read from disk", "parameters": {"path": {"type": "string"}}},
+                {
+                    "name": "write_file",
+                    "description": "Write to disk",
+                    "parameters": {"path": {"type": "string"}, "content": {"type": "string"}},
+                },
+                {
+                    "name": "read_file",
+                    "description": "Read from disk",
+                    "parameters": {"path": {"type": "string"}},
+                },
             ],
         )
 
         caps = mgr.get_capabilities("user1")
         assert ClientType.DESKTOP in caps
-        assert caps[ClientType.DESKTOP]["capabilities"] == ["write_file", "read_file", "capture_screen"]
+        assert caps[ClientType.DESKTOP]["capabilities"] == [
+            "write_file",
+            "read_file",
+            "capture_screen",
+        ]
         assert len(caps[ClientType.DESKTOP]["local_tools"]) == 2
 
     def test_get_capabilities_empty_user(self):
@@ -52,9 +65,12 @@ class TestConnectionManagerCapabilities:
 
     def test_store_multiple_clients(self):
         from app.models.client import ClientType
+
         mgr = self._make_mgr()
 
-        mgr.store_capabilities("user1", ClientType.DESKTOP, ["write_file"], [{"name": "write_file"}])
+        mgr.store_capabilities(
+            "user1", ClientType.DESKTOP, ["write_file"], [{"name": "write_file"}]
+        )
         mgr.store_capabilities("user1", ClientType.MOBILE, ["send_sms"], [{"name": "send_sms"}])
 
         caps = mgr.get_capabilities("user1")
@@ -64,6 +80,7 @@ class TestConnectionManagerCapabilities:
 
     def test_update_capabilities_add(self):
         from app.models.client import ClientType
+
         mgr = self._make_mgr()
 
         mgr.store_capabilities("user1", ClientType.MOBILE, ["camera"], [])
@@ -76,6 +93,7 @@ class TestConnectionManagerCapabilities:
 
     def test_update_capabilities_remove(self):
         from app.models.client import ClientType
+
         mgr = self._make_mgr()
 
         mgr.store_capabilities("user1", ClientType.MOBILE, ["camera", "gps", "nfc"], [])
@@ -87,11 +105,13 @@ class TestConnectionManagerCapabilities:
 
     def test_update_capabilities_add_tools(self):
         from app.models.client import ClientType
+
         mgr = self._make_mgr()
 
         mgr.store_capabilities("user1", ClientType.DESKTOP, [], [{"name": "write_file"}])
         mgr.update_capabilities(
-            "user1", ClientType.DESKTOP,
+            "user1",
+            ClientType.DESKTOP,
             added_tools=[{"name": "run_command", "description": "Run shell command"}],
         )
 
@@ -102,12 +122,18 @@ class TestConnectionManagerCapabilities:
 
     def test_update_capabilities_remove_tools(self):
         from app.models.client import ClientType
+
         mgr = self._make_mgr()
 
-        mgr.store_capabilities("user1", ClientType.DESKTOP, [], [
-            {"name": "write_file"},
-            {"name": "read_file"},
-        ])
+        mgr.store_capabilities(
+            "user1",
+            ClientType.DESKTOP,
+            [],
+            [
+                {"name": "write_file"},
+                {"name": "read_file"},
+            ],
+        )
         mgr.update_capabilities("user1", ClientType.DESKTOP, removed_tools=["read_file"])
 
         caps = mgr.get_capabilities("user1")
@@ -117,11 +143,13 @@ class TestConnectionManagerCapabilities:
 
     def test_update_no_duplicate_tools(self):
         from app.models.client import ClientType
+
         mgr = self._make_mgr()
 
         mgr.store_capabilities("user1", ClientType.DESKTOP, [], [{"name": "write_file"}])
         mgr.update_capabilities(
-            "user1", ClientType.DESKTOP,
+            "user1",
+            ClientType.DESKTOP,
             added_tools=[{"name": "write_file", "description": "duplicate"}],
         )
 
@@ -130,8 +158,9 @@ class TestConnectionManagerCapabilities:
 
     @pytest.mark.asyncio
     async def test_disconnect_cleans_capabilities(self):
-        from app.models.client import ClientType
         from unittest.mock import AsyncMock, MagicMock
+
+        from app.models.client import ClientType
 
         mgr = self._make_mgr()
 
@@ -140,7 +169,9 @@ class TestConnectionManagerCapabilities:
         mock_ws.close = AsyncMock()
 
         await mgr.connect(mock_ws, "user1", ClientType.DESKTOP)
-        mgr.store_capabilities("user1", ClientType.DESKTOP, ["write_file"], [{"name": "write_file"}])
+        mgr.store_capabilities(
+            "user1", ClientType.DESKTOP, ["write_file"], [{"name": "write_file"}]
+        )
 
         assert ClientType.DESKTOP in mgr.get_capabilities("user1")
 
@@ -159,6 +190,7 @@ class TestClientType:
 
     def test_original_types(self):
         from app.models.client import ClientType
+
         assert ClientType.WEB == "web"
         assert ClientType.DESKTOP == "desktop"
         assert ClientType.CHROME == "chrome"
@@ -167,6 +199,7 @@ class TestClientType:
 
     def test_new_types(self):
         from app.models.client import ClientType
+
         assert ClientType.CLI == "cli"
         assert ClientType.TV == "tv"
         assert ClientType.CAR == "car"
@@ -176,6 +209,7 @@ class TestClientType:
 
     def test_total_count(self):
         from app.models.client import ClientType
+
         assert len(ClientType) == 11
 
 
@@ -187,6 +221,7 @@ class TestWSMessages:
 
     def test_auth_message_with_capabilities(self):
         from app.models.ws_messages import AuthMessage
+
         msg = AuthMessage(
             token="jwt",
             client_type="cli",
@@ -198,6 +233,7 @@ class TestWSMessages:
 
     def test_auth_response_with_tools(self):
         from app.models.ws_messages import AuthResponse
+
         msg = AuthResponse(
             status="ok",
             user_id="u1",
@@ -211,6 +247,7 @@ class TestWSMessages:
 
     def test_capability_update_message(self):
         from app.models.ws_messages import CapabilityUpdateMessage
+
         msg = CapabilityUpdateMessage(
             added=["camera"],
             removed=["nfc"],
@@ -223,6 +260,7 @@ class TestWSMessages:
 
     def test_tool_invocation_message(self):
         from app.models.ws_messages import ToolInvocationMessage
+
         msg = ToolInvocationMessage(
             call_id="abc123",
             tool="write_file",
@@ -235,6 +273,7 @@ class TestWSMessages:
 
     def test_tool_result_message(self):
         from app.models.ws_messages import ToolResultMessage
+
         msg = ToolResultMessage(
             call_id="abc123",
             result={"success": True},
@@ -245,6 +284,7 @@ class TestWSMessages:
 
     def test_tool_result_error(self):
         from app.models.ws_messages import ToolResultMessage
+
         msg = ToolResultMessage(
             call_id="abc123",
             error="Permission denied",
@@ -261,21 +301,23 @@ class TestToolRegistry:
 
     def test_singleton(self):
         from app.services.tool_registry import get_tool_registry
+
         r1 = get_tool_registry()
         r2 = get_tool_registry()
         assert r1 is r2
 
     def test_get_t3_tool_names_empty(self):
         from app.services.tool_registry import ToolRegistry
+
         reg = ToolRegistry()
         assert reg.get_t3_tool_names("nonexistent") == []
 
     def test_get_t3_tool_names_with_capabilities(self):
+        import app.services.connection_manager as cm_mod
+        import app.services.tool_registry as tr_mod
         from app.models.client import ClientType
         from app.services.connection_manager import ConnectionManager
         from app.services.tool_registry import ToolRegistry
-        import app.services.tool_registry as tr_mod
-        import app.services.connection_manager as cm_mod
 
         # Set up a temporary ConnectionManager with capabilities
         mgr = ConnectionManager()
@@ -283,13 +325,23 @@ class TestToolRegistry:
         cm_mod.get_connection_manager = lambda: mgr
 
         try:
-            mgr.store_capabilities("user1", ClientType.DESKTOP, [], [
-                {"name": "write_file"},
-                {"name": "read_file"},
-            ])
-            mgr.store_capabilities("user1", ClientType.MOBILE, [], [
-                {"name": "send_sms"},
-            ])
+            mgr.store_capabilities(
+                "user1",
+                ClientType.DESKTOP,
+                [],
+                [
+                    {"name": "write_file"},
+                    {"name": "read_file"},
+                ],
+            )
+            mgr.store_capabilities(
+                "user1",
+                ClientType.MOBILE,
+                [],
+                [
+                    {"name": "send_sms"},
+                ],
+            )
 
             # Temporarily patch the cm import in tool_registry
             old_cm = tr_mod.get_connection_manager
@@ -327,8 +379,9 @@ class TestT3ProxyTools:
         assert tool.name == "write_file"
 
     def test_resolve_tool_result_success(self):
-        from app.services.tool_registry import resolve_tool_result, _pending_results
         import asyncio
+
+        from app.services.tool_registry import _pending_results, resolve_tool_result
 
         loop = asyncio.new_event_loop()
         fut = loop.create_future()
@@ -343,8 +396,9 @@ class TestT3ProxyTools:
         loop.close()
 
     def test_resolve_tool_result_error(self):
-        from app.services.tool_registry import resolve_tool_result, _pending_results
         import asyncio
+
+        from app.services.tool_registry import _pending_results, resolve_tool_result
 
         loop = asyncio.new_event_loop()
         fut = loop.create_future()
@@ -359,6 +413,7 @@ class TestT3ProxyTools:
 
     def test_resolve_orphaned_call(self):
         from app.services.tool_registry import resolve_tool_result
+
         resolved = resolve_tool_result("nonexistent_call", {"data": 1})
         assert resolved is False
 
@@ -385,10 +440,10 @@ class TestT3ProxyTools:
 
     @pytest.mark.asyncio
     async def test_proxy_tool_client_offline(self):
-        from app.models.client import ClientType
-        from app.services.tool_registry import _create_proxy_tool
-        from app.services.connection_manager import ConnectionManager
         import app.services.tool_registry as tr_mod
+        from app.models.client import ClientType
+        from app.services.connection_manager import ConnectionManager
+        from app.services.tool_registry import _create_proxy_tool
 
         mgr = ConnectionManager()
         old_fn = tr_mod.get_connection_manager
@@ -399,7 +454,7 @@ class TestT3ProxyTools:
             tool = _create_proxy_tool(tool_def, "user1", ClientType.DESKTOP)
 
             # Get the underlying function
-            fn = tool._func if hasattr(tool, '_func') else None
+            fn = tool._func if hasattr(tool, "_func") else None
             if fn:
                 result = await fn(path="/tmp/test.txt")
                 assert "not connected" in str(result)
@@ -415,26 +470,35 @@ class TestToolRegistryBuildSession:
 
     @pytest.mark.asyncio
     async def test_build_with_t3_tools(self):
+        import app.services.tool_registry as tr_mod
         from app.models.client import ClientType
         from app.services.connection_manager import ConnectionManager
         from app.services.tool_registry import ToolRegistry
-        import app.services.tool_registry as tr_mod
 
         mgr = ConnectionManager()
         old_cm = tr_mod.get_connection_manager
         tr_mod.get_connection_manager = lambda: mgr
 
         try:
-            mgr.store_capabilities("user1", ClientType.DESKTOP, [], [
-                {"name": "write_file", "description": "Write a file", "parameters": {"path": {"type": "string"}}},
-                {"name": "capture_screen", "description": "Take screenshot", "parameters": {}},
-            ])
+            mgr.store_capabilities(
+                "user1",
+                ClientType.DESKTOP,
+                [],
+                [
+                    {
+                        "name": "write_file",
+                        "description": "Write a file",
+                        "parameters": {"path": {"type": "string"}},
+                    },
+                    {"name": "capture_screen", "description": "Take screenshot", "parameters": {}},
+                ],
+            )
 
             reg = ToolRegistry()
             tools = await reg.build_for_session("user1")
 
             # Should contain T3 proxy tools (T2 may be empty if no plugins enabled)
-            tool_names = [getattr(t, 'name', '') for t in tools]
+            tool_names = [getattr(t, "name", "") for t in tools]
             assert "write_file" in tool_names
             assert "capture_screen" in tool_names
         finally:
@@ -449,15 +513,18 @@ class TestBugFixes:
 
     def test_resolve_pops_from_pending(self):
         """Fix #1: resolve_tool_result must pop the call_id to prevent leak."""
-        from app.services.tool_registry import resolve_tool_result, _pending_results
         import asyncio
+
+        from app.services.tool_registry import _pending_results, resolve_tool_result
 
         loop = asyncio.new_event_loop()
         fut = loop.create_future()
         _pending_results["leak_test"] = fut
 
         resolve_tool_result("leak_test", {"ok": True})
-        assert "leak_test" not in _pending_results, "_pending_results should be cleaned after resolve"
+        assert "leak_test" not in _pending_results, (
+            "_pending_results should be cleaned after resolve"
+        )
         loop.close()
 
     @pytest.mark.asyncio
@@ -483,7 +550,7 @@ class TestBugFixes:
             },
         }
         tool = _create_proxy_tool(tool_def, "user1", ClientType.CLI)
-        fn = getattr(tool, 'func', None) or getattr(tool, '_func', None)
+        fn = getattr(tool, "func", None) or getattr(tool, "_func", None)
         assert fn is not None
         annotations = fn.__annotations__
         assert annotations["items"] is list
@@ -493,30 +560,35 @@ class TestBugFixes:
     def test_safe_parse_json_valid(self):
         """Fix #4: _safe_parse_json handles valid JSON."""
         from app.tools.cross_client import _safe_parse_json
+
         result = _safe_parse_json('{"key": "value"}')
         assert result == {"key": "value"}
 
     def test_safe_parse_json_invalid(self):
         """Fix #4: _safe_parse_json returns raw string on invalid JSON."""
         from app.tools.cross_client import _safe_parse_json
+
         result = _safe_parse_json("not valid json {{{")
         assert result == "not valid json {{{"
 
     def test_safe_category_valid(self):
         """Fix #5: _safe_category handles valid categories."""
-        from app.services.mcp_manager import _safe_category
         from app.models.mcp import MCPCategory
+        from app.services.mcp_manager import _safe_category
+
         assert _safe_category("search") == MCPCategory.SEARCH
 
     def test_safe_category_invalid(self):
         """Fix #5: _safe_category returns OTHER for unknown categories."""
-        from app.services.mcp_manager import _safe_category
         from app.models.mcp import MCPCategory
+        from app.services.mcp_manager import _safe_category
+
         assert _safe_category("totally_unknown_category") == MCPCategory.OTHER
 
     def test_event_bus_higher_queue_size(self):
         """Fix #6: event bus queue should be 1024."""
         from app.services.event_bus import EventBus
+
         bus = EventBus()
         q = bus.create_queue()
         assert q.maxsize == 1024
@@ -524,6 +596,7 @@ class TestBugFixes:
     def test_plugin_template_not_discovered(self):
         """Fix #10: TEMPLATE.py must be excluded from auto-discovery."""
         from app.services.plugin_registry import PluginRegistry
+
         reg = PluginRegistry()
         # TEMPLATE has id="my-plugin" — it should NOT be discovered
         assert "my-plugin" not in [m for m in reg._catalog]

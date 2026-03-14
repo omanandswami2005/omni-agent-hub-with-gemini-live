@@ -94,7 +94,9 @@ class GoogleOAuthService:
         return f"{_AUTH_URL}?{urlencode(params)}"
 
     async def handle_callback(
-        self, code: str, state: str,
+        self,
+        code: str,
+        state: str,
     ) -> tuple[str, str]:
         """Exchange authorization code for tokens.
 
@@ -132,12 +134,21 @@ class GoogleOAuthService:
         # Persist refresh token to Secret Manager
         if tokens.refresh_token:
             try:
-                secret_service.store_secrets(user_id, f"{plugin_id}-google-oauth", {
-                    "refresh_token": tokens.refresh_token,
-                    "scope": tokens.scope,
-                })
+                secret_service.store_secrets(
+                    user_id,
+                    f"{plugin_id}-google-oauth",
+                    {
+                        "refresh_token": tokens.refresh_token,
+                        "scope": tokens.scope,
+                    },
+                )
             except Exception:
-                logger.warning("google_oauth_persist_failed", user_id=user_id, plugin_id=plugin_id, exc_info=True)
+                logger.warning(
+                    "google_oauth_persist_failed",
+                    user_id=user_id,
+                    plugin_id=plugin_id,
+                    exc_info=True,
+                )
 
         logger.info("google_oauth_tokens_received", user_id=user_id, plugin_id=plugin_id)
         return user_id, plugin_id

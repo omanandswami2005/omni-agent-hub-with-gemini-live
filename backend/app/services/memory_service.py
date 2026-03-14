@@ -132,10 +132,13 @@ class MemoryService:
 
         for fact in facts:
             doc_ref = col.document(uuid.uuid4().hex[:12])
-            batch.set(doc_ref, {
-                "text": fact,
-                "created_at": time.time(),
-            })
+            batch.set(
+                doc_ref,
+                {
+                    "text": fact,
+                    "created_at": time.time(),
+                },
+            )
 
         await batch.commit()
         logger.info("memories_stored", user_id=user_id, count=len(facts))
@@ -171,9 +174,7 @@ class MemoryService:
 
     # -- Extraction --------------------------------------------------------
 
-    async def extract_and_store(
-        self, user_id: str, conversation_text: str
-    ) -> list[str]:
+    async def extract_and_store(self, user_id: str, conversation_text: str) -> list[str]:
         """Extract facts from conversation text and persist them.
 
         Returns the list of extracted facts.
@@ -205,9 +206,7 @@ class MemoryService:
 
     # -- Recall ------------------------------------------------------------
 
-    async def recall_memories(
-        self, user_id: str, context: str = ""
-    ) -> list[str]:
+    async def recall_memories(self, user_id: str, context: str = "") -> list[str]:
         """Retrieve the most relevant memories for a session start.
 
         If *context* is provided, uses Gemini to filter for relevance.

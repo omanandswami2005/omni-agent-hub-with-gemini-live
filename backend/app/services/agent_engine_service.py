@@ -40,8 +40,7 @@ class AgentEngineService:
     @property
     def enabled(self) -> bool:
         return bool(
-            self._settings.GOOGLE_GENAI_USE_VERTEXAI
-            and self._settings.GOOGLE_CLOUD_PROJECT
+            self._settings.GOOGLE_GENAI_USE_VERTEXAI and self._settings.GOOGLE_CLOUD_PROJECT
         )
 
     def _get_client(self):

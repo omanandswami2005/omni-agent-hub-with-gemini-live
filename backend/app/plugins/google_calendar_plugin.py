@@ -117,14 +117,16 @@ async def list_calendar_events(
     for item in data.get("items", []):
         start = item.get("start", {}).get("dateTime") or item.get("start", {}).get("date", "")
         end = item.get("end", {}).get("dateTime") or item.get("end", {}).get("date", "")
-        events.append({
-            "id": item.get("id"),
-            "summary": item.get("summary", "(No title)"),
-            "start": start,
-            "end": end,
-            "location": item.get("location", ""),
-            "description": item.get("description", "")[:200],
-        })
+        events.append(
+            {
+                "id": item.get("id"),
+                "summary": item.get("summary", "(No title)"),
+                "start": start,
+                "end": end,
+                "location": item.get("location", ""),
+                "description": item.get("description", "")[:200],
+            }
+        )
 
     return {"events": events, "count": len(events)}
 

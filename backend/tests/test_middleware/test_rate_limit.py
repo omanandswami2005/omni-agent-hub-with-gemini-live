@@ -244,9 +244,7 @@ class TestBeforeToolCallback:
         import app.middleware.rate_limit as mod
 
         mod._mcp_limiter = None
-        result = before_tool_callback(
-            tool_name="mcp_something", tool_args={"user_id": "u1"}
-        )
+        result = before_tool_callback(tool_name="mcp_something", tool_args={"user_id": "u1"})
         assert result is None
         mod._mcp_limiter = None
 
@@ -258,9 +256,7 @@ class TestBeforeToolCallback:
         for _ in range(50):
             limiter.check("u1", "mcp")
 
-        result = before_tool_callback(
-            tool_name="mcp_test", tool_args={"user_id": "u1"}
-        )
+        result = before_tool_callback(tool_name="mcp_test", tool_args={"user_id": "u1"})
         assert result is not None
         assert "error" in result
         mod._mcp_limiter = None

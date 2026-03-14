@@ -155,9 +155,7 @@ class EvalService:
         )
         return response.text or ""
 
-    async def evaluate_response(
-        self, persona_id: str, prompt: str, response: str
-    ) -> EvalResult:
+    async def evaluate_response(self, persona_id: str, prompt: str, response: str) -> EvalResult:
         """Score a response using adaptive rubrics via Gemini."""
         client = self._get_client()
         eval_prompt = _RUBRIC_PROMPT.format(
@@ -216,9 +214,7 @@ class EvalService:
                 pass_rate=result.pass_rate,
             )
 
-        avg_pass = (
-            sum(r.pass_rate for r in results) / len(results) if results else 0.0
-        )
+        avg_pass = sum(r.pass_rate for r in results) / len(results) if results else 0.0
         logger.info(
             "persona_eval_done",
             persona_id=persona_id,

@@ -55,4 +55,5 @@ MANIFEST = PluginManifest(
 def get_tools() -> list[FunctionTool]:
     """Return RAG tools. Called by PluginRegistry when plugin is enabled."""
     from app.tools.rag import get_rag_tools
+
     return get_rag_tools()

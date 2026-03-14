@@ -3,11 +3,10 @@
 import os
 import threading
 import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager
-from typing import Callable
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -41,6 +40,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         import time as _t
+
         start = _t.monotonic()
         response = await call_next(request)
         elapsed_ms = round((_t.monotonic() - start) * 1000, 1)
@@ -104,11 +104,13 @@ async def lifespan(app: FastAPI):
     mgr.stop_reaper()
     try:
         from app.services.plugin_registry import get_plugin_registry
+
         await get_plugin_registry().shutdown()
     except Exception:
         pass
     try:
         from app.services.mcp_manager import get_mcp_manager
+
         await get_mcp_manager().shutdown()
     except Exception:
         pass

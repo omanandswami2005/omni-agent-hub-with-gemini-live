@@ -75,9 +75,7 @@ def _reset_cm_singleton():
 class TestSendToDesktop:
     @pytest.mark.asyncio
     async def test_delivers_when_online(self, mock_cm):
-        with patch(
-            "app.tools.cross_client.get_connection_manager", return_value=mock_cm
-        ):
+        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             result = await send_to_desktop("u1", "open_app", '{"app": "calc"}')
         assert result["delivered"] is True
         mock_cm.send_to_client.assert_awaited_once()
@@ -85,9 +83,7 @@ class TestSendToDesktop:
     @pytest.mark.asyncio
     async def test_fails_when_offline(self, mock_cm):
         mock_cm.is_online.return_value = False
-        with patch(
-            "app.tools.cross_client.get_connection_manager", return_value=mock_cm
-        ):
+        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             result = await send_to_desktop("u1", "open_app", "{}")
         assert result["delivered"] is False
         assert "not connected" in result["error"]
@@ -96,17 +92,13 @@ class TestSendToDesktop:
 class TestSendToChrome:
     @pytest.mark.asyncio
     async def test_delivers(self, mock_cm):
-        with patch(
-            "app.tools.cross_client.get_connection_manager", return_value=mock_cm
-        ):
+        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             result = await send_to_chrome("u1", "open_tab", '{"url": "https://x.com"}')
         assert result["delivered"] is True
 
     @pytest.mark.asyncio
     async def test_sends_correct_client_type(self, mock_cm):
-        with patch(
-            "app.tools.cross_client.get_connection_manager", return_value=mock_cm
-        ):
+        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             await send_to_chrome("u1", "get_page", "{}")
         args = mock_cm.send_to_client.call_args
         assert args[0][1] == ClientType.CHROME
@@ -115,9 +107,7 @@ class TestSendToChrome:
 class TestSendToDashboard:
     @pytest.mark.asyncio
     async def test_delivers(self, mock_cm):
-        with patch(
-            "app.tools.cross_client.get_connection_manager", return_value=mock_cm
-        ):
+        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             result = await send_to_dashboard("u1", "show_notification", '{"msg": "hi"}')
         assert result["delivered"] is True
 
@@ -125,17 +115,13 @@ class TestSendToDashboard:
 class TestNotifyClient:
     @pytest.mark.asyncio
     async def test_sends_notification(self, mock_cm):
-        with patch(
-            "app.tools.cross_client.get_connection_manager", return_value=mock_cm
-        ):
+        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             result = await notify_client("u1", "Hello!", "web")
         assert result["delivered"] is True
 
     @pytest.mark.asyncio
     async def test_invalid_client_type(self, mock_cm):
-        with patch(
-            "app.tools.cross_client.get_connection_manager", return_value=mock_cm
-        ):
+        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             result = await notify_client("u1", "Hello!", "invalid_type")
         assert result["delivered"] is False
         assert "Unknown client type" in result["error"]
@@ -144,9 +130,7 @@ class TestNotifyClient:
 class TestListConnectedClients:
     @pytest.mark.asyncio
     async def test_returns_clients(self, mock_cm):
-        with patch(
-            "app.tools.cross_client.get_connection_manager", return_value=mock_cm
-        ):
+        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             result = await list_connected_clients("u1")
         assert len(result["clients"]) == 2
         types = {c["client_type"] for c in result["clients"]}
@@ -160,9 +144,7 @@ class TestListConnectedClients:
 class TestMessageFormat:
     @pytest.mark.asyncio
     async def test_message_has_correct_structure(self, mock_cm):
-        with patch(
-            "app.tools.cross_client.get_connection_manager", return_value=mock_cm
-        ):
+        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             await send_to_desktop("u1", "capture_screen", '{"format": "png"}')
         sent_msg = mock_cm.send_to_client.call_args[0][2]
         parsed = json.loads(sent_msg)
@@ -177,17 +159,13 @@ class TestMessageFormat:
 class TestDesktopTools:
     @pytest.mark.asyncio
     async def test_capture_screen(self, mock_cm):
-        with patch(
-            "app.tools.cross_client.get_connection_manager", return_value=mock_cm
-        ):
+        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             result = await capture_screen("u1")
         assert result["delivered"] is True
 
     @pytest.mark.asyncio
     async def test_click_at(self, mock_cm):
-        with patch(
-            "app.tools.cross_client.get_connection_manager", return_value=mock_cm
-        ):
+        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             result = await click_at("u1", 100, 200)
         assert result["delivered"] is True
         sent = json.loads(mock_cm.send_to_client.call_args[0][2])
@@ -196,9 +174,7 @@ class TestDesktopTools:
 
     @pytest.mark.asyncio
     async def test_type_text(self, mock_cm):
-        with patch(
-            "app.tools.cross_client.get_connection_manager", return_value=mock_cm
-        ):
+        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             result = await type_text("u1", "hello world")
         assert result["delivered"] is True
         sent = json.loads(mock_cm.send_to_client.call_args[0][2])
@@ -206,9 +182,7 @@ class TestDesktopTools:
 
     @pytest.mark.asyncio
     async def test_open_application(self, mock_cm):
-        with patch(
-            "app.tools.cross_client.get_connection_manager", return_value=mock_cm
-        ):
+        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             result = await open_application("u1", "calculator")
         assert result["delivered"] is True
         sent = json.loads(mock_cm.send_to_client.call_args[0][2])

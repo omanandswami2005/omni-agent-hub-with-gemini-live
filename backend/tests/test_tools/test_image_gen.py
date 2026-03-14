@@ -118,7 +118,9 @@ class TestGenerateImage:
         assert "Successfully generated" in result
 
     @pytest.mark.asyncio
-    async def test_queues_image_for_ws_delivery(self, mock_genai_client, mock_storage, mock_tool_context):
+    async def test_queues_image_for_ws_delivery(
+        self, mock_genai_client, mock_storage, mock_tool_context
+    ):
         with (
             patch("app.tools.image_gen._get_client", return_value=mock_genai_client),
             patch("app.services.storage_service.get_storage_service", return_value=mock_storage),
@@ -188,7 +190,9 @@ class TestGenerateImage:
         assert call_kwargs[1]["user_id"] == "test-user-123"
 
     @pytest.mark.asyncio
-    async def test_image_base64_is_valid(self, mock_genai_client, mock_storage, mock_tool_context, fake_image_bytes):
+    async def test_image_base64_is_valid(
+        self, mock_genai_client, mock_storage, mock_tool_context, fake_image_bytes
+    ):
         with (
             patch("app.tools.image_gen._get_client", return_value=mock_genai_client),
             patch("app.services.storage_service.get_storage_service", return_value=mock_storage),
@@ -215,7 +219,9 @@ class TestGenerateRichImage:
         assert "Generated 1 image" in result
 
     @pytest.mark.asyncio
-    async def test_queues_interleaved_parts(self, mock_gemini_rich_client, mock_storage, mock_tool_context):
+    async def test_queues_interleaved_parts(
+        self, mock_gemini_rich_client, mock_storage, mock_tool_context
+    ):
         with (
             patch("app.tools.image_gen._get_client", return_value=mock_gemini_rich_client),
             patch("app.services.storage_service.get_storage_service", return_value=mock_storage),
@@ -232,7 +238,9 @@ class TestGenerateRichImage:
         assert payload["parts"][1]["type"] == "image"
 
     @pytest.mark.asyncio
-    async def test_images_have_base64_and_mime(self, mock_gemini_rich_client, mock_storage, mock_tool_context):
+    async def test_images_have_base64_and_mime(
+        self, mock_gemini_rich_client, mock_storage, mock_tool_context
+    ):
         with (
             patch("app.tools.image_gen._get_client", return_value=mock_gemini_rich_client),
             patch("app.services.storage_service.get_storage_service", return_value=mock_storage),
@@ -254,7 +262,9 @@ class TestGenerateRichImage:
         assert call_kwargs[1]["model"] == GEMINI_IMAGE_MODEL
 
     @pytest.mark.asyncio
-    async def test_uploads_images_to_gcs(self, mock_gemini_rich_client, mock_storage, mock_tool_context):
+    async def test_uploads_images_to_gcs(
+        self, mock_gemini_rich_client, mock_storage, mock_tool_context
+    ):
         with (
             patch("app.tools.image_gen._get_client", return_value=mock_gemini_rich_client),
             patch("app.services.storage_service.get_storage_service", return_value=mock_storage),

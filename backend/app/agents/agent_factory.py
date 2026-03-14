@@ -47,7 +47,7 @@ T1_TOOL_REGISTRY: dict[str, Callable[[], list]] = {
     TC.CODE_EXECUTION: get_code_exec_tools,
     TC.MEDIA: get_image_gen_tools,
     TC.COMMUNICATION: get_email_tools,
-    TC.DEVICE: lambda: get_cross_client_tools()
+    TC.DEVICE: lambda: get_cross_client_tools(),
 }
 
 # ── Built-in persona ID → capability mapping ─────────────────────────

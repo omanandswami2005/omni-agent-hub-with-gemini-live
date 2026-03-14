@@ -43,14 +43,10 @@ class PersonaService:
     async def list_personas(self, user_id: str) -> list[PersonaResponse]:
         """Return defaults + user-created personas."""
         defaults = get_default_personas()
-        query = (
-            self.db.collection(COLLECTION)
-            .where(filter=firestore.FieldFilter("user_id", "==", user_id))
+        query = self.db.collection(COLLECTION).where(
+            filter=firestore.FieldFilter("user_id", "==", user_id)
         )
-        user_personas = [
-            PersonaResponse(id=snap.id, **snap.to_dict())
-            for snap in query.stream()
-        ]
+        user_personas = [PersonaResponse(id=snap.id, **snap.to_dict()) for snap in query.stream()]
         user_personas.sort(key=lambda p: p.created_at or datetime.min, reverse=True)
         return defaults + user_personas
 
@@ -73,9 +69,7 @@ class PersonaService:
 
     # ── Create ────────────────────────────────────────────────────────
 
-    async def create_persona(
-        self, user_id: str, data: PersonaCreate
-    ) -> PersonaResponse:
+    async def create_persona(self, user_id: str, data: PersonaCreate) -> PersonaResponse:
         now = datetime.now(UTC)
         persona_id = uuid4().hex
         doc = {

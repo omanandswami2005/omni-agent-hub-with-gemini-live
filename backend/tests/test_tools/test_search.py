@@ -101,12 +101,8 @@ class TestProcessLlmRequest:
         return MagicMock()
 
     @pytest.mark.asyncio
-    async def test_injects_google_search_for_gemini_model(
-        self, tool, llm_request, tool_context
-    ):
-        await tool.process_llm_request(
-            tool_context=tool_context, llm_request=llm_request
-        )
+    async def test_injects_google_search_for_gemini_model(self, tool, llm_request, tool_context):
+        await tool.process_llm_request(tool_context=tool_context, llm_request=llm_request)
         assert len(llm_request.config.tools) == 1
         tool_decl = llm_request.config.tools[0]
         assert tool_decl.google_search is not None
@@ -118,9 +114,7 @@ class TestProcessLlmRequest:
         req.config = MagicMock()
         req.config.tools = []
         with pytest.raises(ValueError, match="not supported"):
-            await tool.process_llm_request(
-                tool_context=tool_context, llm_request=req
-            )
+            await tool.process_llm_request(tool_context=tool_context, llm_request=req)
 
 
 # ── Agent factory integration ────────────────────────────────────────

@@ -31,7 +31,10 @@ class TestSendEmail:
     async def test_includes_body_length(self, mock_tool_context):
         body = "A" * 100
         result = await send_email(
-            to="a@b.com", subject="test", body=body, tool_context=mock_tool_context,
+            to="a@b.com",
+            subject="test",
+            body=body,
+            tool_context=mock_tool_context,
         )
         assert "100 chars" in result
 
@@ -43,7 +46,10 @@ class TestSendEmail:
     @pytest.mark.asyncio
     async def test_stub_marker_present(self, mock_tool_context):
         result = await send_email(
-            to="a@b.com", subject="s", body="b", tool_context=mock_tool_context,
+            to="a@b.com",
+            subject="s",
+            body="b",
+            tool_context=mock_tool_context,
         )
         assert "Stub" in result
 
@@ -51,6 +57,7 @@ class TestSendEmail:
 class TestFunctionToolInstances:
     def test_send_email_tool_is_function_tool(self):
         from google.adk.tools import FunctionTool
+
         assert isinstance(send_email_tool, FunctionTool)
 
     def test_get_email_tools_returns_list(self):
@@ -59,6 +66,7 @@ class TestFunctionToolInstances:
 
     def test_communication_capability_provides_email(self):
         from app.agents.agent_factory import get_tools_for_capabilities
+
         tools = get_tools_for_capabilities(["communication"])
         names = [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
         assert "send_email" in names

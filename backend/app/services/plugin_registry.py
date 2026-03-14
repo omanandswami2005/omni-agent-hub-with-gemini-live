@@ -62,9 +62,11 @@ _TOOLSET_IDLE_TTL = 30 * 60
 # Built-in plugin catalog
 # ---------------------------------------------------------------------------
 
+
 def _sandbox_dir() -> str:
     """Return a cross-platform temp sandbox directory, creating it if needed."""
     import tempfile
+
     d = os.path.join(tempfile.gettempdir(), "omni_sandbox")
     os.makedirs(d, exist_ok=True)
     return d
@@ -93,10 +95,7 @@ def _load_mcp_configs() -> list[PluginManifest]:
             raw = _json.loads(path.read_text(encoding="utf-8"))
             # Replace sandbox placeholder in args
             if "args" in raw:
-                raw["args"] = [
-                    sandbox if a == "__SANDBOX_DIR__" else a
-                    for a in raw["args"]
-                ]
+                raw["args"] = [sandbox if a == "__SANDBOX_DIR__" else a for a in raw["args"]]
             manifest = PluginManifest(**raw)
             manifests.append(manifest)
             logger.info("mcp_config_loaded", path=path.name, plugin_id=manifest.id)
@@ -214,32 +213,31 @@ class PluginRegistry:
 
             summaries = self._discovered_summaries.get(m.id, m.tools_summary)
 
-            result.append(PluginStatus(
-                id=m.id,
-                name=m.name,
-                description=m.description,
-                category=m.category,
-                kind=m.kind,
-                icon=m.icon,
-                state=state,
-                error=error,
-                tools_summary=summaries,
-                requires_auth=m.requires_auth,
-                env_keys=m.env_keys,
-                google_oauth_scopes=m.google_oauth_scopes,
-                version=m.version,
-                author=m.author,
-            ))
+            result.append(
+                PluginStatus(
+                    id=m.id,
+                    name=m.name,
+                    description=m.description,
+                    category=m.category,
+                    kind=m.kind,
+                    icon=m.icon,
+                    state=state,
+                    error=error,
+                    tools_summary=summaries,
+                    requires_auth=m.requires_auth,
+                    env_keys=m.env_keys,
+                    google_oauth_scopes=m.google_oauth_scopes,
+                    version=m.version,
+                    author=m.author,
+                )
+            )
         return result
 
     def get_manifest(self, plugin_id: str) -> PluginManifest | None:
         return self._catalog.get(plugin_id)
 
     def get_enabled_ids(self, user_id: str) -> list[str]:
-        return [
-            pid for pid, on in self._user_enabled.get(user_id, {}).items()
-            if on
-        ]
+        return [pid for pid, on in self._user_enabled.get(user_id, {}).items() if on]
 
     # ------------------------------------------------------------------
     # User secrets
@@ -254,7 +252,9 @@ class PluginRegistry:
             secret_service.store_secrets(user_id, plugin_id, secrets)
             logger.info("plugin_secrets_stored_gcp", user_id=user_id, plugin_id=plugin_id)
         except Exception:
-            logger.warning("plugin_secrets_gcp_fallback", user_id=user_id, plugin_id=plugin_id, exc_info=True)
+            logger.warning(
+                "plugin_secrets_gcp_fallback", user_id=user_id, plugin_id=plugin_id, exc_info=True
+            )
 
     def _resolve_env(self, manifest: PluginManifest, user_id: str) -> dict[str, str] | None:
         """Build the environment dict for an MCP process.
@@ -289,7 +289,9 @@ class PluginRegistry:
     # ------------------------------------------------------------------
 
     def _build_mcp_params(
-        self, manifest: PluginManifest, env: dict[str, str] | None = None,
+        self,
+        manifest: PluginManifest,
+        env: dict[str, str] | None = None,
         oauth_headers: dict[str, str] | None = None,
     ) -> StdioConnectionParams | SseConnectionParams | StreamableHTTPConnectionParams:
         if manifest.kind == PluginKind.MCP_OAUTH:
@@ -338,7 +340,10 @@ class PluginRegistry:
         return False
 
     async def _connect_mcp(
-        self, user_id: str, plugin_id: str, manifest: PluginManifest,
+        self,
+        user_id: str,
+        plugin_id: str,
+        manifest: PluginManifest,
     ) -> bool:
         key = (user_id, plugin_id)
 
@@ -387,7 +392,10 @@ class PluginRegistry:
         return False
 
     async def _connect_mcp_oauth(
-        self, user_id: str, plugin_id: str, manifest: PluginManifest,
+        self,
+        user_id: str,
+        plugin_id: str,
+        manifest: PluginManifest,
     ) -> bool:
         """Connect to an MCP_OAUTH server using stored OAuth tokens."""
         key = (user_id, plugin_id)
@@ -425,7 +433,9 @@ class PluginRegistry:
                 ]
                 self._mcp_toolsets[key] = (toolset, time.monotonic())
                 self._user_enabled.setdefault(user_id, {})[plugin_id] = True
-                logger.info("mcp_oauth_connected", user_id=user_id, plugin_id=plugin_id, tools=len(tools))
+                logger.info(
+                    "mcp_oauth_connected", user_id=user_id, plugin_id=plugin_id, tools=len(tools)
+                )
                 return True
             except Exception as exc:
                 last_exc = exc
@@ -448,8 +458,7 @@ class PluginRegistry:
         self._native_tool_cache[plugin_id] = tools
         # Cache summaries
         self._discovered_summaries[plugin_id] = [
-            ToolSummary(name=t.name, description=getattr(t, "description", ""))
-            for t in tools
+            ToolSummary(name=t.name, description=getattr(t, "description", "")) for t in tools
         ]
         logger.info("native_plugin_loaded", plugin_id=plugin_id, tools=len(tools))
         return True
@@ -512,11 +521,15 @@ class PluginRegistry:
         return tools
 
     async def _get_plugin_tools(
-        self, user_id: str, plugin_id: str, manifest: PluginManifest,
+        self,
+        user_id: str,
+        plugin_id: str,
+        manifest: PluginManifest,
     ) -> list:
         """Get tools for a specific plugin."""
         if manifest.kind == PluginKind.E2B:
             from app.tools.code_exec import get_e2b_tools
+
             return get_e2b_tools()
 
         if manifest.kind == PluginKind.NATIVE:
@@ -562,12 +575,14 @@ class PluginRegistry:
                 continue
             summaries = self._discovered_summaries.get(plugin_id, manifest.tools_summary)
             for s in summaries:
-                result.append({
-                    "plugin": manifest.name,
-                    "plugin_id": plugin_id,
-                    "tool": s.name,
-                    "description": s.description,
-                })
+                result.append(
+                    {
+                        "plugin": manifest.name,
+                        "plugin_id": plugin_id,
+                        "tool": s.name,
+                        "description": s.description,
+                    }
+                )
         return result
 
     async def get_tool_schemas(self, plugin_id: str, user_id: str) -> list[ToolSchema]:
@@ -639,8 +654,7 @@ class PluginRegistry:
         """Close MCP toolsets idle longer than the TTL."""
         now = time.monotonic()
         expired: list[tuple[str, str]] = [
-            k for k, (_, ts) in self._mcp_toolsets.items()
-            if now - ts > _TOOLSET_IDLE_TTL
+            k for k, (_, ts) in self._mcp_toolsets.items() if now - ts > _TOOLSET_IDLE_TTL
         ]
         for key in expired:
             entry = self._mcp_toolsets.pop(key, None)

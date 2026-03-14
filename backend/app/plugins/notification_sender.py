@@ -77,7 +77,9 @@ async def send_notification(
 
     if channel == "log":
         logging.getLogger("notification").info(
-            "NOTIFICATION: %s — %s", title or "Alert", message,
+            "NOTIFICATION: %s — %s",
+            title or "Alert",
+            message,
         )
         return {
             "success": True,
