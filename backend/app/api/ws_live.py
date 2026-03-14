@@ -102,6 +102,7 @@ def _get_session_service():
         return _adk_session_service
 
     from google.adk.sessions import InMemorySessionService
+
     _adk_session_service = InMemorySessionService()
     logger.info("session_service_init", backend="in_memory", reason="zero_latency_hot_path")
     return _adk_session_service
@@ -172,10 +173,12 @@ async def _get_runner(user_id: str, session_service=None):
     ss = session_service or _get_session_service()
 
     from app.services.plugin_registry import get_plugin_registry
+
     enabled_ids = frozenset(get_plugin_registry().get_enabled_ids(user_id))
 
     # Include T3 tool names in cache key so runner rebuilds when clients connect/disconnect
     from app.services.tool_registry import get_tool_registry
+
     t3_names = frozenset(get_tool_registry().get_t3_tool_names(user_id))
     cache_key = (enabled_ids, t3_names)
 
@@ -244,7 +247,9 @@ async def _adk_session_exists(session_id: str, user_id: str, session_service=Non
         return False
 
 
-async def _get_or_create_adk_session(user_id: str, session_service=None, *, force_new: bool = False) -> str:
+async def _get_or_create_adk_session(
+    user_id: str, session_service=None, *, force_new: bool = False
+) -> str:
     """Return the ADK session ID for *user_id*, creating one if needed.
 
     VertexAiSessionService does NOT accept user-provided session IDs —
@@ -308,9 +313,11 @@ async def _get_chat_runner(user_id: str, session_service=None):
     ss = session_service or _get_session_service()
 
     from app.services.plugin_registry import get_plugin_registry
+
     enabled_ids = frozenset(get_plugin_registry().get_enabled_ids(user_id))
 
     from app.services.tool_registry import get_tool_registry
+
     t3_names = frozenset(get_tool_registry().get_t3_tool_names(user_id))
     cache_key = (enabled_ids, t3_names)
 
@@ -329,7 +336,9 @@ async def _get_chat_runner(user_id: str, session_service=None):
         except Exception:
             logger.warning("tool_registry_build_failed_chat", user_id=user_id, exc_info=True)
 
-        root = build_root_agent(personas=personas, tools_by_persona=tools_by_persona, model=TEXT_MODEL)
+        root = build_root_agent(
+            personas=personas, tools_by_persona=tools_by_persona, model=TEXT_MODEL
+        )
         runner = Runner(
             app_name=APP_NAME,
             agent=root,
@@ -337,7 +346,9 @@ async def _get_chat_runner(user_id: str, session_service=None):
         )
         t2_total = sum(len(v) for k, v in tools_by_persona.items() if k != "__device__")
         _chat_runner_cache[user_id] = (runner, cache_key, time.monotonic())
-        logger.debug("chat_runner_cached", user_id=user_id, model=TEXT_MODEL, t2_tool_count=t2_total)
+        logger.debug(
+            "chat_runner_cached", user_id=user_id, model=TEXT_MODEL, t2_tool_count=t2_total
+        )
         return runner
 
 
@@ -357,7 +368,9 @@ def _build_run_config(voice: str = "Aoede", voice_enabled: bool = True):
                     voice_name=voice,
                 ),
             ),
-        ) if voice_enabled else None,
+        )
+        if voice_enabled
+        else None,
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
         session_resumption=types.SessionResumptionConfig(
@@ -377,7 +390,9 @@ def _build_run_config(voice: str = "Aoede", voice_enabled: bool = True):
 # ── Authentication helper ─────────────────────────────────────────────
 
 
-async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, ClientType, str, str, list[str], list[dict], str, str] | None:
+async def _authenticate_ws(
+    websocket: WebSocket,
+) -> tuple[AuthenticatedUser, ClientType, str, str, list[str], list[dict], str, str] | None:
     """Wait for the first JSON frame and validate it as an auth message.
 
     Returns ``(AuthenticatedUser, client_type, os_name, requested_session_id, capabilities, local_tools, persona_id, voice_name)``
@@ -409,7 +424,11 @@ async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, Cli
     try:
         decoded = firebase_auth.verify_id_token(data["token"], clock_skew_seconds=5)
     except Exception as exc:
-        logger.warning("ws_auth_failed", client=websocket.client.host if websocket.client else "?", error=str(exc))
+        logger.warning(
+            "ws_auth_failed",
+            client=websocket.client.host if websocket.client else "?",
+            error=str(exc),
+        )
         await _send_auth_error(websocket, "Invalid or expired token")
         return None
 
@@ -422,6 +441,7 @@ async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, Cli
 
     # Detect OS from user agent sent by the client
     from app.models.client import detect_os
+
     user_agent = data.get("user_agent", "")
     os_name = detect_os(user_agent)
 
@@ -446,7 +466,16 @@ async def _authenticate_ws(websocket: WebSocket) -> tuple[AuthenticatedUser, Cli
     # Optional: client can override the voice directly
     voice_name = data.get("voice", "")
 
-    return AuthenticatedUser(decoded), client_type, os_name, requested_session_id, capabilities, local_tools, persona_id, voice_name
+    return (
+        AuthenticatedUser(decoded),
+        client_type,
+        os_name,
+        requested_session_id,
+        capabilities,
+        local_tools,
+        persona_id,
+        voice_name,
+    )
 
 
 async def _send_auth_error(websocket: WebSocket, error: str) -> None:
@@ -464,6 +493,7 @@ async def _increment_msg_count(firestore_session_id: str) -> None:
     """Best-effort increment of message_count on a Firestore session."""
     try:
         from app.services.session_service import get_session_service as _get_fs_svc
+
         await _get_fs_svc().increment_message_count(firestore_session_id)
     except Exception:
         pass  # Non-critical — silently ignore
@@ -513,7 +543,7 @@ async def _upstream(
                         user_msg = {
                             "type": "user_message",
                             "content": content_str,
-                            "_origin_conn": conn_tag
+                            "_origin_conn": conn_tag,
                         }
                         asyncio.create_task(bus.publish(user_id, json.dumps(user_msg)))
                     # Increment message count (best-effort, non-blocking)
@@ -535,16 +565,25 @@ async def _upstream(
                     if mcp_id:
                         mcp_mgr = get_mcp_manager()
                         from app.models.mcp import MCPToggle
+
                         toggle = MCPToggle(mcp_id=mcp_id, enabled=enabled)
                         try:
                             await mcp_mgr.toggle_mcp(user_id, toggle)
                             invalidate_runner(user_id)
-                            logger.info("mcp_toggle_during_session", user_id=user_id, mcp_id=mcp_id, enabled=enabled)
+                            logger.info(
+                                "mcp_toggle_during_session",
+                                user_id=user_id,
+                                mcp_id=mcp_id,
+                                enabled=enabled,
+                            )
                         except Exception:
-                            logger.warning("mcp_toggle_failed", user_id=user_id, mcp_id=mcp_id, exc_info=True)
+                            logger.warning(
+                                "mcp_toggle_failed", user_id=user_id, mcp_id=mcp_id, exc_info=True
+                            )
                 elif msg_type == "tool_result":
                     # T3 reverse-RPC: client returning a tool result
                     from app.services.tool_registry import resolve_tool_result
+
                     call_id = data.get("call_id", "")
                     result = data.get("result", {})
                     error = data.get("error", "")
@@ -570,7 +609,9 @@ async def _upstream(
                     action = data.get("action", "")
                     if action == "voice_toggle":
                         # Acknowledged — actual modality switch is frontend-side
-                        logger.info("voice_toggle", user_id=user_id, enabled=data.get("voice_enabled", True))
+                        logger.info(
+                            "voice_toggle", user_id=user_id, enabled=data.get("voice_enabled", True)
+                        )
                 # Other control messages (persona_switch)
                 # are handled at the API layer, not pushed to ADK
     except (WebSocketDisconnect, RuntimeError):
@@ -625,7 +666,10 @@ async def _downstream(
         exc_str_lower = exc_str.lower()
 
         # ADK session lost (Cloud Run cold start / new instance)
-        if "sessionnotfounderror" in type(exc).__name__.lower() or "session not found" in exc_str_lower:
+        if (
+            "sessionnotfounderror" in type(exc).__name__.lower()
+            or "session not found" in exc_str_lower
+        ):
             logger.warning("ws_downstream_session_lost", user_id=user_id, session_id=session_id)
             # Invalidate the cache so the next reconnect creates a fresh session
             _adk_session_id_cache.pop(user_id, None)
@@ -647,7 +691,11 @@ async def _downstream(
         )
         if normal_closure:
             logger.info("ws_downstream_session_ended", user_id=user_id, reason=exc_str)
-        elif isinstance(exc, TimeoutError) or "timed out" in exc_str_lower or "opening handshake" in exc_str_lower:
+        elif (
+            isinstance(exc, TimeoutError)
+            or "timed out" in exc_str_lower
+            or "opening handshake" in exc_str_lower
+        ):
             logger.warning("ws_downstream_live_timeout", user_id=user_id, error=exc_str)
             with contextlib.suppress(Exception):
                 err = ErrorMessage(
@@ -670,10 +718,15 @@ async def _downstream(
 # ── Tool classification ──────────────────────────────────────────────
 
 # Cross-device T3 tool names (from app.tools.cross_client)
-_CROSS_DEVICE_TOOLS = frozenset({
-    "send_to_desktop", "send_to_chrome", "send_to_dashboard",
-    "notify_client", "list_connected_clients",
-})
+_CROSS_DEVICE_TOOLS = frozenset(
+    {
+        "send_to_desktop",
+        "send_to_chrome",
+        "send_to_dashboard",
+        "notify_client",
+        "list_connected_clients",
+    }
+)
 
 # Native plugin tool names (from app.plugins.*)
 _NATIVE_PLUGIN_TOOLS: dict[str, str] = {
@@ -701,6 +754,7 @@ def _classify_tool(tool_name: str) -> tuple[ActionKind, str]:
     # If a tool isn't in any known set, check if it belongs to an MCP plugin.
     try:
         from app.services.plugin_registry import get_plugin_registry
+
         registry = get_plugin_registry()
         mcp_label = registry.get_tool_source(tool_name)
         if mcp_label:
@@ -903,7 +957,9 @@ async def _background_persist_to_vertex(
 
         # Retrieve the in-memory session (still alive in the singleton dict)
         session = await in_memory_service.get_session(
-            app_name=APP_NAME, user_id=user_id, session_id=session_id,
+            app_name=APP_NAME,
+            user_id=user_id,
+            session_id=session_id,
         )
         if session is None or not session.events:
             logger.debug("vertex_persist_skip_no_events", user_id=user_id)
@@ -911,7 +967,8 @@ async def _background_persist_to_vertex(
 
         # Create a new Vertex session to hold the persisted events
         vertex_session = await vertex_ss.create_session(
-            app_name=APP_NAME, user_id=user_id,
+            app_name=APP_NAME,
+            user_id=user_id,
         )
 
         persisted = 0
@@ -953,7 +1010,16 @@ async def ws_live(websocket: WebSocket) -> None:
     auth_result = await _authenticate_ws(websocket)
     if auth_result is None:
         return
-    user, client_type, os_name, requested_session_id, capabilities, local_tools, persona_id, voice_name = auth_result
+    (
+        user,
+        client_type,
+        os_name,
+        requested_session_id,
+        capabilities,
+        local_tools,
+        persona_id,
+        voice_name,
+    ) = auth_result
 
     mgr = get_connection_manager()
 
@@ -971,6 +1037,7 @@ async def ws_live(websocket: WebSocket) -> None:
     # Create/link Firestore session to ADK session
     from app.models.session import SessionCreate
     from app.services.session_service import get_session_service as _get_fs_svc
+
     _fs_svc = _get_fs_svc()
     firestore_session_id = None
     session_id = None
@@ -987,7 +1054,9 @@ async def ws_live(websocket: WebSocket) -> None:
                 _adk_session_id_cache[user.uid] = session_id
             else:
                 # ADK session gone (cold start) or never linked — create new
-                session_id = await _get_or_create_adk_session(user.uid, active_session_service, force_new=True)
+                session_id = await _get_or_create_adk_session(
+                    user.uid, active_session_service, force_new=True
+                )
                 await _fs_svc.link_adk_session(firestore_session_id, session_id)
         elif other_clients:
             # Other clients are online — reuse their session for continuity
@@ -1000,7 +1069,9 @@ async def ws_live(websocket: WebSocket) -> None:
                     session_id = latest.adk_session_id
                     _adk_session_id_cache[user.uid] = session_id
                 else:
-                    session_id = await _get_or_create_adk_session(user.uid, active_session_service, force_new=True)
+                    session_id = await _get_or_create_adk_session(
+                        user.uid, active_session_service, force_new=True
+                    )
                     await _fs_svc.link_adk_session(firestore_session_id, session_id)
             else:
                 # No existing session — create fresh
@@ -1013,7 +1084,9 @@ async def ws_live(websocket: WebSocket) -> None:
             # The frontend sends session_id="new" when user clicks "New Session" button
             if requested_session_id == "new":
                 # User explicitly wants a new session
-                session_id = await _get_or_create_adk_session(user.uid, active_session_service, force_new=True)
+                session_id = await _get_or_create_adk_session(
+                    user.uid, active_session_service, force_new=True
+                )
                 fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
                 firestore_session_id = fs_session.id
                 await _fs_svc.link_adk_session(firestore_session_id, session_id)
@@ -1051,6 +1124,7 @@ async def ws_live(websocket: WebSocket) -> None:
 
     # Determine voice from requested voice, persona, or default
     from app.agents.personas import get_default_personas
+
     personas = get_default_personas()
     selected_voice = "Aoede"  # fallback
     if voice_name:
@@ -1066,13 +1140,14 @@ async def ws_live(websocket: WebSocket) -> None:
 
     # Build available tool names for auth response
     from app.services.tool_registry import get_tool_registry
+
     tool_registry = get_tool_registry()
     available_tool_names: list[str] = []
     try:
         tools_map = await tool_registry.build_for_session(user.uid)
         for tools in tools_map.values():
             for t in tools:
-                name = getattr(t, 'name', getattr(t, '__name__', str(t)))
+                name = getattr(t, "name", getattr(t, "__name__", str(t)))
                 if name not in available_tool_names:
                     available_tool_names.append(name)
     except Exception:
@@ -1099,6 +1174,7 @@ async def ws_live(websocket: WebSocket) -> None:
     # If other clients are online, suggest session continuation
     if other_clients:
         from app.models.ws_messages import SessionSuggestionMessage
+
         suggestion = SessionSuggestionMessage(
             available_clients=[str(ct) for ct in other_clients],
             message=f"You're already active on {', '.join(str(ct) for ct in other_clients)}. Join that session for uninterrupted context?",
@@ -1113,6 +1189,7 @@ async def ws_live(websocket: WebSocket) -> None:
 
     # Phase 3 — Bidi streaming
     from google.adk.agents.live_request_queue import LiveRequestQueue
+
     queue = LiveRequestQueue()
     runner = await _get_runner(user.uid, session_service=active_session_service)
 
@@ -1133,7 +1210,7 @@ async def ws_live(websocket: WebSocket) -> None:
             "type": "session_suggestion",
             "session_id": firestore_session_id,
             "message": "Session active on another device.",
-            "_origin_conn": own_conn_tag
+            "_origin_conn": own_conn_tag,
         }
         asyncio.create_task(bus.publish(user.uid, json.dumps(session_msg)))
 
@@ -1148,7 +1225,12 @@ async def ws_live(websocket: WebSocket) -> None:
     down_task: asyncio.Task | None = None
     try:
         up_task = asyncio.create_task(
-            _upstream(websocket, queue, user.uid, client_type, firestore_session_id, own_conn_tag), name="upstream",
+            _upstream(websocket, queue, user.uid, client_type, firestore_session_id, own_conn_tag),
+            name="upstream",
+        )
+        down_task = asyncio.create_task(
+            _downstream(websocket, runner, user.uid, session_id, queue, run_config),
+            name="downstream",
         )
         # Only start downstream (agent runner) if we have a valid session_id
         # In stateless mode (no session), skip the agent runner
@@ -1162,7 +1244,8 @@ async def ws_live(websocket: WebSocket) -> None:
             tasks = {up_task}
         # When either task finishes (disconnect or error), cancel the other
         done, pending = await asyncio.wait(
-            tasks, return_when=asyncio.FIRST_COMPLETED,
+            {up_task, down_task},
+            return_when=asyncio.FIRST_COMPLETED,
         )
         for task in pending:
             task.cancel()
@@ -1171,7 +1254,12 @@ async def ws_live(websocket: WebSocket) -> None:
         # Re-raise if the completed task had an unexpected exception
         for task in done:
             if task.exception() and not isinstance(task.exception(), asyncio.CancelledError):
-                logger.warning("ws_task_error", user_id=user.uid, task=task.get_name(), exc_info=task.exception())
+                logger.warning(
+                    "ws_task_error",
+                    user_id=user.uid,
+                    task=task.get_name(),
+                    exc_info=task.exception(),
+                )
     except asyncio.CancelledError:
         logger.info("ws_live_cancelled", user_id=user.uid)
     except Exception:
@@ -1189,7 +1277,9 @@ async def ws_live(websocket: WebSocket) -> None:
         vertex_session_id: str | None = None
         if settings.USE_AGENT_ENGINE_SESSIONS:
             vertex_session_id = await _background_persist_to_vertex(
-                user.uid, session_id, active_session_service,
+                user.uid,
+                session_id,
+                active_session_service,
             )
 
         # Generate memories from the Vertex session (not the InMemory one)
@@ -1199,9 +1289,16 @@ async def ws_live(websocket: WebSocket) -> None:
             except Exception as exc:
                 exc_str = str(exc).lower()
                 if "throttled" in exc_str or "quota" in exc_str or "resource_exhausted" in exc_str:
-                    logger.debug("memory_bank_sync_throttled", user_id=user.uid, session_id=session_id)
+                    logger.debug(
+                        "memory_bank_sync_throttled", user_id=user.uid, session_id=session_id
+                    )
                 else:
-                    logger.warning("memory_bank_sync_failed", user_id=user.uid, session_id=session_id, exc_info=True)
+                    logger.warning(
+                        "memory_bank_sync_failed",
+                        user_id=user.uid,
+                        session_id=session_id,
+                        exc_info=True,
+                    )
 
         await mgr.disconnect(user.uid, client_type)
         logger.info("ws_live_closed", user_id=user.uid, session_id=session_id)
@@ -1219,6 +1316,7 @@ async def ws_live(websocket: WebSocket) -> None:
 #   4. Server signals completion with StatusMessage(state=idle)
 #
 
+
 @router.websocket("/chat")
 async def ws_chat(websocket: WebSocket) -> None:
     """ADK text-only chat over WebSocket — no audio, no live session required."""
@@ -1229,7 +1327,16 @@ async def ws_chat(websocket: WebSocket) -> None:
     auth_result = await _authenticate_ws(websocket)
     if auth_result is None:
         return
-    user, client_type, os_name, requested_session_id, capabilities, local_tools, _persona_id, _voice = auth_result
+    (
+        user,
+        client_type,
+        _os_name,
+        requested_session_id,
+        capabilities,
+        local_tools,
+        _persona_id,
+        _voice,
+    ) = auth_result
 
     mgr = get_connection_manager()
 
@@ -1247,6 +1354,7 @@ async def ws_chat(websocket: WebSocket) -> None:
     # Link Firestore session to ADK session
     from app.models.session import SessionCreate
     from app.services.session_service import get_session_service as _get_fs_svc
+
     _fs_svc = _get_fs_svc()
     firestore_session_id = None
     try:
@@ -1273,7 +1381,9 @@ async def ws_chat(websocket: WebSocket) -> None:
             logger.debug("firestore_session_link_failed_chat", user_id=user.uid)
 
     auth_ok = AuthResponse(
-        status="ok", user_id=user.uid, session_id=session_id,
+        status="ok",
+        user_id=user.uid,
+        session_id=session_id,
         firestore_session_id=firestore_session_id or "",
     )
     await websocket.send_text(auth_ok.model_dump_json())
@@ -1282,21 +1392,24 @@ async def ws_chat(websocket: WebSocket) -> None:
     clients = mgr.get_connected_clients(user.uid)
     if clients:
         import json as _json
-        status_payload = _json.dumps({
-            "type": "client_status_update",
-            "event": "snapshot",
-            "client_type": "web",
-            "clients": [
-                {
-                    "client_type": str(c.client_type),
-                    "client_id": c.client_id,
-                    "connected_at": c.connected_at.isoformat() if c.connected_at else None,
-                    "os_name": c.os_name,
-                    "connected": True,
-                }
-                for c in clients
-            ],
-        })
+
+        status_payload = _json.dumps(
+            {
+                "type": "client_status_update",
+                "event": "snapshot",
+                "client_type": "web",
+                "clients": [
+                    {
+                        "client_type": str(c.client_type),
+                        "client_id": c.client_id,
+                        "connected_at": c.connected_at.isoformat() if c.connected_at else None,
+                        "os_name": c.os_name,
+                        "connected": True,
+                    }
+                    for c in clients
+                ],
+            }
+        )
         with contextlib.suppress(Exception):
             await websocket.send_text(status_payload)
 
@@ -1388,7 +1501,9 @@ async def ws_chat(websocket: WebSocket) -> None:
         vertex_session_id: str | None = None
         if settings.USE_AGENT_ENGINE_SESSIONS:
             vertex_session_id = await _background_persist_to_vertex(
-                user.uid, session_id, active_session_service,
+                user.uid,
+                session_id,
+                active_session_service,
             )
         if vertex_session_id:
             try:

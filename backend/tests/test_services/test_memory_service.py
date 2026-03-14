@@ -104,9 +104,7 @@ class TestExtractAndStore:
 
     @pytest.mark.asyncio
     async def test_handles_bad_json(self, svc, mock_genai_client):
-        mock_genai_client.models.generate_content.return_value = MagicMock(
-            text="NOT VALID JSON"
-        )
+        mock_genai_client.models.generate_content.return_value = MagicMock(text="NOT VALID JSON")
         facts = await svc.extract_and_store("u1", "some conversation")
         assert facts == []
 

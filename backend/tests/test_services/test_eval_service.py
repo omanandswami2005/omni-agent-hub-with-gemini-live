@@ -97,9 +97,7 @@ class TestEvalResult:
 class TestRunInference:
     @pytest.mark.asyncio
     async def test_returns_model_response(self, svc, mock_client):
-        mock_client.models.generate_content.return_value = MagicMock(
-            text="Here is the answer."
-        )
+        mock_client.models.generate_content.return_value = MagicMock(text="Here is the answer.")
         result = await svc.run_inference("coder", "write hello world")
         assert result == "Here is the answer."
         mock_client.models.generate_content.assert_called_once()
@@ -112,15 +110,17 @@ class TestEvaluateResponse:
     @pytest.mark.asyncio
     async def test_returns_eval_result(self, svc, mock_client):
         mock_client.models.generate_content.return_value = MagicMock(
-            text=json.dumps({
-                "rubrics": [
-                    {"criterion": "addresses the question", "passed": True},
-                    {"criterion": "well-structured", "passed": True},
-                    {"criterion": "accurate", "passed": False},
-                ],
-                "pass_rate": 0.67,
-                "summary": "Mostly good, but inaccurate info.",
-            })
+            text=json.dumps(
+                {
+                    "rubrics": [
+                        {"criterion": "addresses the question", "passed": True},
+                        {"criterion": "well-structured", "passed": True},
+                        {"criterion": "accurate", "passed": False},
+                    ],
+                    "pass_rate": 0.67,
+                    "summary": "Mostly good, but inaccurate info.",
+                }
+            )
         )
         result = await svc.evaluate_response("analyst", "analyse inflation", "Inflation is 3%.")
         assert isinstance(result, EvalResult)
@@ -129,23 +129,21 @@ class TestEvaluateResponse:
 
     @pytest.mark.asyncio
     async def test_handles_bad_json(self, svc, mock_client):
-        mock_client.models.generate_content.return_value = MagicMock(
-            text="NOT JSON"
-        )
+        mock_client.models.generate_content.return_value = MagicMock(text="NOT JSON")
         result = await svc.evaluate_response("assistant", "prompt", "response")
         assert result.pass_rate == 0.0
         assert "failed" in result.summary.lower()
 
     @pytest.mark.asyncio
     async def test_strips_code_fences(self, svc, mock_client):
-        raw = json.dumps({
-            "rubrics": [{"criterion": "ok", "passed": True}],
-            "pass_rate": 1.0,
-            "summary": "Perfect.",
-        })
-        mock_client.models.generate_content.return_value = MagicMock(
-            text=f"```json\n{raw}\n```"
+        raw = json.dumps(
+            {
+                "rubrics": [{"criterion": "ok", "passed": True}],
+                "pass_rate": 1.0,
+                "summary": "Perfect.",
+            }
         )
+        mock_client.models.generate_content.return_value = MagicMock(text=f"```json\n{raw}\n```")
         result = await svc.evaluate_response("coder", "p", "r")
         assert result.pass_rate == 1.0
 
@@ -158,11 +156,13 @@ class TestEvaluatePersona:
     async def test_evaluates_all_prompts(self, svc, mock_client):
         # Inference calls
         mock_client.models.generate_content.return_value = MagicMock(
-            text=json.dumps({
-                "rubrics": [{"criterion": "good", "passed": True}],
-                "pass_rate": 0.9,
-                "summary": "Good.",
-            })
+            text=json.dumps(
+                {
+                    "rubrics": [{"criterion": "good", "passed": True}],
+                    "pass_rate": 0.9,
+                    "summary": "Good.",
+                }
+            )
         )
         results = await svc.evaluate_persona("coder")
         assert len(results) == len(PERSONA_EVAL_PROMPTS["coder"])

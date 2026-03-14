@@ -29,15 +29,17 @@ logger = get_logger(__name__)
 
 # ── Destructive tools that require permission ─────────────────────────
 # Tool names (T1/T2/T3) that destroy data or send external messages.
-_DESTRUCTIVE_TOOLS: frozenset[str] = frozenset({
-    "delete_file",
-    "remove_file",
-    "manage_files",
-    "send_email",
-    "send_gmail",
-    "file_delete",
-    "drop_table",
-})
+_DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
+    {
+        "delete_file",
+        "remove_file",
+        "manage_files",
+        "send_email",
+        "send_gmail",
+        "file_delete",
+        "drop_table",
+    }
+)
 
 
 def _get_state(ctx: Context) -> dict[str, Any]:
@@ -105,7 +107,7 @@ def context_injection_callback(
 
 # Rough per-token costs (USD) for Gemini 2.5 Flash (Vertex AI pricing).
 # These are estimates — real billing comes from the API usage dashboard.
-_INPUT_COST_PER_TOKEN = 0.000_000_15   # $0.15 per 1M input tokens
+_INPUT_COST_PER_TOKEN = 0.000_000_15  # $0.15 per 1M input tokens
 _OUTPUT_COST_PER_TOKEN = 0.000_000_60  # $0.60 per 1M output tokens
 
 
@@ -145,10 +147,7 @@ def cost_estimation_callback(
     else:
         input_tokens = 0
 
-    estimated_cost = (
-        input_tokens * _INPUT_COST_PER_TOKEN
-        + output_tokens * _OUTPUT_COST_PER_TOKEN
-    )
+    estimated_cost = input_tokens * _INPUT_COST_PER_TOKEN + output_tokens * _OUTPUT_COST_PER_TOKEN
 
     # Accumulate in state
     state = _get_state(ctx)
@@ -249,11 +248,14 @@ def after_agent_callback(callback_context=None, **kwargs) -> Content | None:
 
         user_id = state.get("user_id")
         if user_id:
-            EventBus.get_default().publish(user_id, {
-                "type": "agent_completed",
-                "agent": agent_name,
-                "elapsed_s": elapsed,
-            })
+            EventBus.get_default().publish(
+                user_id,
+                {
+                    "type": "agent_completed",
+                    "agent": agent_name,
+                    "elapsed_s": elapsed,
+                },
+            )
     except Exception:
         pass  # EventBus not available is fine
 

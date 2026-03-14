@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 class PluginKind(StrEnum):
     """How the plugin is executed."""
+
     MCP_STDIO = "mcp_stdio"
     MCP_HTTP = "mcp_http"
     MCP_OAUTH = "mcp_oauth"
@@ -35,6 +36,7 @@ class ToolCapability(StrEnum):
     Personas declare which capabilities they need via ``capabilities``.
     The ToolRegistry matches tools to personas by tag intersection.
     """
+
     SEARCH = "search"
     CODE_EXECUTION = "code_execution"
     KNOWLEDGE = "knowledge"
@@ -68,12 +70,14 @@ class ToolSummary(BaseModel):
     the tool (lazy loading).  Full JSON Schema ``parameters`` are only
     fetched once the user/agent requests it.
     """
+
     name: str
     description: str = ""
 
 
 class ToolSchema(BaseModel):
     """Full tool schema — loaded on demand when the plugin is activated."""
+
     name: str
     description: str = ""
     parameters: dict[str, Any] = Field(default_factory=dict)
@@ -85,6 +89,7 @@ class OAuthConfig(BaseModel):
     Fields are auto-discovered via RFC 9470 + RFC 8414 at runtime,
     so only ``client_name`` and ``scopes`` are typically specified in JSON.
     """
+
     client_name: str = Field(
         default="Omni Hub",
         description="Display name used during dynamic client registration.",
@@ -105,6 +110,7 @@ class PluginManifest(BaseModel):
     A developer creating a new plugin only needs to define this manifest.
     The PluginRegistry handles all lifecycle management.
     """
+
     id: str
     name: str
     description: str = ""
@@ -186,14 +192,16 @@ class PluginManifest(BaseModel):
 
 class PluginState(StrEnum):
     """Runtime state of a plugin for a user."""
-    AVAILABLE = "available"      # In catalog, not enabled
-    ENABLED = "enabled"          # User toggled on, toolset not yet connected
-    CONNECTED = "connected"      # Toolset active, tools loaded
-    ERROR = "error"              # Failed to connect/load
+
+    AVAILABLE = "available"  # In catalog, not enabled
+    ENABLED = "enabled"  # User toggled on, toolset not yet connected
+    CONNECTED = "connected"  # Toolset active, tools loaded
+    ERROR = "error"  # Failed to connect/load
 
 
 class PluginStatus(BaseModel):
     """Plugin runtime status for API responses."""
+
     id: str
     name: str
     description: str = ""
@@ -212,11 +220,13 @@ class PluginStatus(BaseModel):
 
 class PluginToggle(BaseModel):
     """Enable or disable a plugin."""
+
     plugin_id: str
     enabled: bool
 
 
 class PluginUserSecrets(BaseModel):
     """User-provided secrets for a plugin (e.g., API keys)."""
+
     plugin_id: str
     secrets: dict[str, str] = Field(default_factory=dict)

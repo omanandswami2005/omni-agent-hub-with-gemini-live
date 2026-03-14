@@ -54,7 +54,7 @@ async def list_messages(
 
     Tries InMemorySessionService first (fast, current process),
     then falls back to VertexAiSessionService (persisted across restarts).
-    
+
     Also updates message_count in Firestore to stay in sync.
     """
     fs_session = await svc.get_session(user.uid, session_id)
@@ -69,7 +69,9 @@ async def list_messages(
     session = None
     try:
         session = await inmem.get_session(
-            app_name=APP_NAME, user_id=user.uid, session_id=adk_sid,
+            app_name=APP_NAME,
+            user_id=user.uid,
+            session_id=adk_sid,
         )
     except Exception:
         pass
@@ -80,7 +82,9 @@ async def list_messages(
         if vertex_ss:
             try:
                 session = await vertex_ss.get_session(
-                    app_name=APP_NAME, user_id=user.uid, session_id=adk_sid,
+                    app_name=APP_NAME,
+                    user_id=user.uid,
+                    session_id=adk_sid,
                 )
             except Exception:
                 pass
@@ -121,19 +125,27 @@ def _events_to_messages(events: list) -> list[ChatMessage]:
         if event.content and event.content.role == "user" and event.content.parts:
             for part in event.content.parts:
                 if hasattr(part, "text") and part.text and part.text.strip():
-                    messages.append(ChatMessage(
-                        role="user", content=part.text.strip(),
-                        type="text", source="text",
-                    ))
+                    messages.append(
+                        ChatMessage(
+                            role="user",
+                            content=part.text.strip(),
+                            type="text",
+                            source="text",
+                        )
+                    )
 
         # Agent text response
         if event.content and event.content.role == "model" and event.content.parts:
             for part in event.content.parts:
                 if hasattr(part, "text") and part.text and part.text.strip():
-                    messages.append(ChatMessage(
-                        role="assistant", content=part.text.strip(),
-                        type="text", source="text",
-                    ))
+                    messages.append(
+                        ChatMessage(
+                            role="assistant",
+                            content=part.text.strip(),
+                            type="text",
+                            source="text",
+                        )
+                    )
 
         # Finished voice transcriptions
         if (
@@ -142,11 +154,14 @@ def _events_to_messages(events: list) -> list[ChatMessage]:
             and event.input_transcription.text
             and event.input_transcription.text.strip()
         ):
-            messages.append(ChatMessage(
-                role="user",
-                content=event.input_transcription.text.strip(),
-                type="text", source="voice",
-            ))
+            messages.append(
+                ChatMessage(
+                    role="user",
+                    content=event.input_transcription.text.strip(),
+                    type="text",
+                    source="voice",
+                )
+            )
 
         if (
             event.output_transcription
@@ -154,36 +169,43 @@ def _events_to_messages(events: list) -> list[ChatMessage]:
             and event.output_transcription.text
             and event.output_transcription.text.strip()
         ):
-            messages.append(ChatMessage(
-                role="assistant",
-                content=event.output_transcription.text.strip(),
-                type="text", source="voice",
-            ))
+            messages.append(
+                ChatMessage(
+                    role="assistant",
+                    content=event.output_transcription.text.strip(),
+                    type="text",
+                    source="voice",
+                )
+            )
 
         # Tool calls
         for fc in event.get_function_calls():
             if fc.name == "transfer_to_agent":
-                messages.append(ChatMessage(
-                    role="system",
-                    content=f"Transferring to {(fc.args or {}).get('agent_name', '')}",
-                    type="action",
-                    tool_name="transfer_to_agent",
-                    action_kind="agent_transfer",
-                    responded=True,
-                    success=True,
-                ))
+                messages.append(
+                    ChatMessage(
+                        role="system",
+                        content=f"Transferring to {(fc.args or {}).get('agent_name', '')}",
+                        type="action",
+                        tool_name="transfer_to_agent",
+                        action_kind="agent_transfer",
+                        responded=True,
+                        success=True,
+                    )
+                )
                 continue
 
             kind, label = _classify_tool(fc.name)
-            messages.append(ChatMessage(
-                role="system",
-                content=f"Using tool: {fc.name}",
-                type="action",
-                tool_name=fc.name,
-                arguments=dict(fc.args) if fc.args else {},
-                action_kind=kind,
-                source_label=label,
-            ))
+            messages.append(
+                ChatMessage(
+                    role="system",
+                    content=f"Using tool: {fc.name}",
+                    type="action",
+                    tool_name=fc.name,
+                    arguments=dict(fc.args) if fc.args else {},
+                    action_kind=kind,
+                    source_label=label,
+                )
+            )
 
         # Tool responses
         for fr in event.get_function_responses():
@@ -196,40 +218,46 @@ def _events_to_messages(events: list) -> list[ChatMessage]:
 
             # Extract response as dict if possible
             response_dict = None
-            if (fr.response and hasattr(fr.response, 'get')) or (fr.response and isinstance(fr.response, dict)):
+            if (fr.response and hasattr(fr.response, "get")) or (
+                fr.response and isinstance(fr.response, dict)
+            ):
                 response_dict = fr.response
 
             result_str = str(fr.response) if fr.response else f"Tool {fr.name} completed"
 
             # For image tools, emit an image message with URL so the UI can show the image
             if is_image_tool and response_dict:
-                image_url = response_dict.get('image_url') or response_dict.get('gcs_uri') or ''
+                image_url = response_dict.get("image_url") or response_dict.get("gcs_uri") or ""
                 # Only emit the image message, not the action (avoid duplicate)
-                messages.append(ChatMessage(
-                    role="assistant",
-                    content=result_str,
-                    type="image",
-                    tool_name=fr.name,
-                    description=response_dict.get('description', result_str),
-                    image_url=image_url,
-                    responded=True,
-                    success=True,
-                    action_kind=kind,
-                    source_label=label,
-                ))
+                messages.append(
+                    ChatMessage(
+                        role="assistant",
+                        content=result_str,
+                        type="image",
+                        tool_name=fr.name,
+                        description=response_dict.get("description", result_str),
+                        image_url=image_url,
+                        responded=True,
+                        success=True,
+                        action_kind=kind,
+                        source_label=label,
+                    )
+                )
             else:
                 # For non-image tools, emit action message
-                messages.append(ChatMessage(
-                    role="system",
-                    content=result_str,
-                    type="action",
-                    tool_name=fr.name,
-                    result=result_str,
-                    success=True,
-                    responded=True,
-                    action_kind=kind,
-                    source_label=label,
-                ))
+                messages.append(
+                    ChatMessage(
+                        role="system",
+                        content=result_str,
+                        type="action",
+                        tool_name=fr.name,
+                        result=result_str,
+                        success=True,
+                        responded=True,
+                        action_kind=kind,
+                        source_label=label,
+                    )
+                )
 
     return messages
 

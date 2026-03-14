@@ -114,9 +114,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     are rate-limited at the application level, not HTTP request level.
     """
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         # Skip WebSocket upgrades and health checks
         path = request.url.path
         if path.startswith("/ws/") or path == "/health":

@@ -38,7 +38,6 @@ def registry():
 
 
 class TestCatalog:
-
     def test_catalog_has_builtin_plugins(self, registry):
         catalog = registry.get_catalog()
         ids = [p.id for p in catalog]
@@ -78,7 +77,6 @@ class TestCatalog:
 
 
 class TestMCPStdio:
-
     @pytest.fixture()
     def mcp_manifest(self):
         return PluginManifest(
@@ -126,9 +124,7 @@ class TestMCPStdio:
 
         tools = await registry.get_tools("u1")
         echo = next(t for t in tools if t.name == "echo")
-        result = await echo.run_async(
-            args={"message": "pytest works!"}, tool_context=None
-        )
+        result = await echo.run_async(args={"message": "pytest works!"}, tool_context=None)
         assert "Echo: pytest works!" in str(result)
 
         await registry.shutdown()
@@ -186,7 +182,6 @@ class TestMCPStdio:
 
 
 class TestNativePlugin:
-
     @pytest.mark.asyncio
     async def test_connect_native_plugin(self, registry):
         success = await registry.connect_plugin("u1", "notification-sender")
@@ -204,7 +199,6 @@ class TestNativePlugin:
 
 
 class TestLazyLoading:
-
     def test_summaries_before_connect(self, registry):
         """E2B sandbox has pre-declared summaries even before connecting."""
         registry._user_enabled.setdefault("u1", {})["e2b-sandbox"] = True
@@ -239,7 +233,6 @@ class TestLazyLoading:
 
 
 class TestMCPManagerCompat:
-
     def test_mcp_manager_delegates_to_registry(self):
         from app.services.mcp_manager import get_mcp_manager
 
@@ -252,7 +245,6 @@ class TestMCPManagerCompat:
 
 
 class TestSingleton:
-
     def test_singleton_returns_same_instance(self):
         from app.services.plugin_registry import get_plugin_registry
 

@@ -74,10 +74,7 @@ class SessionService:
             .where(filter=firestore.FieldFilter("user_id", "==", user_id))
             .order_by("created_at", direction=firestore.Query.DESCENDING)
         )
-        return [
-            SessionListItem(id=snap.id, **snap.to_dict())
-            for snap in query.stream()
-        ]
+        return [SessionListItem(id=snap.id, **snap.to_dict()) for snap in query.stream()]
 
     # ── Update ────────────────────────────────────────────────────────
 
@@ -105,27 +102,35 @@ class SessionService:
     # ── Link to ADK session ───────────────────────────────────────────
 
     async def link_adk_session(
-        self, session_id: str, adk_session_id: str,
+        self,
+        session_id: str,
+        adk_session_id: str,
     ) -> None:
         """Store the ADK session ID on a Firestore session doc."""
-        self.db.collection(COLLECTION).document(session_id).update({
-            "adk_session_id": adk_session_id,
-            "updated_at": datetime.now(UTC),
-        })
+        self.db.collection(COLLECTION).document(session_id).update(
+            {
+                "adk_session_id": adk_session_id,
+                "updated_at": datetime.now(UTC),
+            }
+        )
 
     async def increment_message_count(self, session_id: str, count: int = 1) -> None:
         """Atomically increment message_count on a session doc."""
-        self.db.collection(COLLECTION).document(session_id).update({
-            "message_count": firestore.Increment(count),
-            "updated_at": datetime.now(UTC),
-        })
+        self.db.collection(COLLECTION).document(session_id).update(
+            {
+                "message_count": firestore.Increment(count),
+                "updated_at": datetime.now(UTC),
+            }
+        )
 
     async def update_message_count(self, session_id: str, count: int) -> None:
         """Set message_count to a specific value (to sync with actual message count)."""
-        self.db.collection(COLLECTION).document(session_id).update({
-            "message_count": count,
-            "updated_at": datetime.now(UTC),
-        })
+        self.db.collection(COLLECTION).document(session_id).update(
+            {
+                "message_count": count,
+                "updated_at": datetime.now(UTC),
+            }
+        )
 
     async def get_latest_session_for_user(self, user_id: str) -> SessionResponse | None:
         """Return the most recent session for a user, or None."""

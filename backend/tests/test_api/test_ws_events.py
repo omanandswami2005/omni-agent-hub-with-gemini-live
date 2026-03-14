@@ -206,7 +206,11 @@ class TestWsEventsEndpoint:
         app = _make_app()
         bus = EventBus()
 
-        with self._patch_auth(), patch("app.api.ws_events.get_event_bus", return_value=bus), TestClient(app) as tc:
+        with (
+            self._patch_auth(),
+            patch("app.api.ws_events.get_event_bus", return_value=bus),
+            TestClient(app) as tc,
+        ):
             with tc.websocket_connect("/ws/events") as ws:
                 ws.send_text(json.dumps({"type": "auth", "token": "valid"}))
                 ws.receive_text()  # auth_response

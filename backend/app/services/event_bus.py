@@ -43,7 +43,9 @@ class EventBus:
     def subscribe(self, user_id: str, queue: asyncio.Queue[str]) -> None:
         """Register a queue to receive events for *user_id*."""
         self._subscribers.setdefault(user_id, set()).add(queue)
-        logger.debug("event_bus_subscribe", user_id=user_id, total=len(self._subscribers.get(user_id, set())))
+        logger.debug(
+            "event_bus_subscribe", user_id=user_id, total=len(self._subscribers.get(user_id, set()))
+        )
 
     def unsubscribe(self, user_id: str, queue: asyncio.Queue[str]) -> None:
         """Remove a queue from *user_id*'s subscribers."""

@@ -47,11 +47,13 @@ async def list_images(
             url = f"https://storage.googleapis.com/{svc._bucket_name}/{path}"
             logger.warning("gallery_signed_url_fallback", path=path)
         filename = path.split("/")[-1] if "/" in path else path
-        items.append({
-            "url": url,
-            "filename": filename,
-            "gcs_path": path,
-        })
+        items.append(
+            {
+                "url": url,
+                "filename": filename,
+                "gcs_path": path,
+            }
+        )
 
     return {
         "images": items,

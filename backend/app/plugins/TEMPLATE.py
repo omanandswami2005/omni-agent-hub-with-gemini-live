@@ -46,16 +46,16 @@ from app.models.plugin import (
 # ---------------------------------------------------------------------------
 
 MANIFEST = PluginManifest(
-    id="my-plugin",                          # unique slug
-    name="My Plugin",                        # display name
-    description="Does something useful.",    # catalog description
+    id="my-plugin",  # unique slug
+    name="My Plugin",  # display name
+    description="Does something useful.",  # catalog description
     version="0.1.0",
     author="Your Name",
-    category=PluginCategory.OTHER,           # pick the best fit
+    category=PluginCategory.OTHER,  # pick the best fit
     kind=PluginKind.NATIVE,
-    icon="puzzle",                           # any icon name
-    module="app.plugins.TEMPLATE",           # dotted path to THIS file
-    factory="get_tools",                     # function below
+    icon="puzzle",  # any icon name
+    module="app.plugins.TEMPLATE",  # dotted path to THIS file
+    factory="get_tools",  # function below
     tools_summary=[
         ToolSummary(
             name="my_tool",

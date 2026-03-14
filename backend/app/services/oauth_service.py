@@ -29,9 +29,11 @@ logger = get_logger(__name__)
 
 # ── Token data ──────────────────────────────────────────────────────────
 
+
 @dataclass
 class OAuthTokens:
     """Stored OAuth 2.0 tokens for a user+plugin pair."""
+
     access_token: str
     token_type: str = "Bearer"
     refresh_token: str | None = None
@@ -42,6 +44,7 @@ class OAuthTokens:
 @dataclass
 class OAuthMetadata:
     """Discovered OAuth server metadata."""
+
     issuer: str = ""
     authorization_endpoint: str = ""
     token_endpoint: str = ""
@@ -52,6 +55,7 @@ class OAuthMetadata:
 @dataclass
 class ClientCredentials:
     """Dynamically registered client credentials."""
+
     client_id: str = ""
     client_secret: str | None = None
 
@@ -59,6 +63,7 @@ class ClientCredentials:
 @dataclass
 class PendingOAuthFlow:
     """Temporary state for an in-progress OAuth authorization."""
+
     plugin_id: str
     user_id: str
     code_verifier: str
@@ -69,6 +74,7 @@ class PendingOAuthFlow:
 
 
 # ── PKCE helpers ────────────────────────────────────────────────────────
+
 
 def _generate_code_verifier() -> str:
     """Generate a high-entropy PKCE code verifier (43-128 chars, URL-safe)."""
@@ -82,6 +88,7 @@ def _generate_code_challenge(verifier: str) -> str:
 
 
 # ── Service ─────────────────────────────────────────────────────────────
+
 
 class OAuthService:
     """Manages OAuth flows and token storage for MCP_OAUTH plugins."""
@@ -147,9 +154,7 @@ class OAuthService:
             authorization_endpoint=as_data.get("authorization_endpoint", ""),
             token_endpoint=as_data.get("token_endpoint", ""),
             registration_endpoint=as_data.get("registration_endpoint", ""),
-            code_challenge_methods_supported=as_data.get(
-                "code_challenge_methods_supported", []
-            ),
+            code_challenge_methods_supported=as_data.get("code_challenge_methods_supported", []),
         )
         if not metadata.authorization_endpoint or not metadata.token_endpoint:
             raise RuntimeError("Missing required OAuth endpoints in server metadata")
@@ -161,7 +166,10 @@ class OAuthService:
     # ── Dynamic Client Registration ──────────────────────────────
 
     async def register_client(
-        self, metadata: OAuthMetadata, client_name: str, redirect_uri: str,
+        self,
+        metadata: OAuthMetadata,
+        client_name: str,
+        redirect_uri: str,
     ) -> ClientCredentials:
         """RFC 7591 — Register this application with the OAuth server."""
         cache_key = (metadata.issuer, client_name)
@@ -319,7 +327,10 @@ class OAuthService:
         return not (tokens.expires_at and time.monotonic() > tokens.expires_at)
 
     async def refresh_token_if_needed(
-        self, user_id: str, plugin_id: str, mcp_server_url: str,
+        self,
+        user_id: str,
+        plugin_id: str,
+        mcp_server_url: str,
     ) -> str | None:
         """Refresh the access token if expired. Returns the (possibly new) access token."""
         key = (user_id, plugin_id)

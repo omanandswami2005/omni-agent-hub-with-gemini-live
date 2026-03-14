@@ -107,6 +107,7 @@ async def get_plugin_detail(plugin_id: str, user: CurrentUser):
 # OAuth flow for MCP_OAUTH plugins
 # ---------------------------------------------------------------------------
 
+
 @router.post("/{plugin_id}/oauth/start")
 async def start_oauth(plugin_id: str, user: CurrentUser):
     """Start OAuth authorization for an MCP_OAUTH plugin.
@@ -125,7 +126,7 @@ async def start_oauth(plugin_id: str, user: CurrentUser):
     oauth_cfg = manifest.oauth
     client_name = oauth_cfg.client_name if oauth_cfg else "Omni Hub"
     scopes = oauth_cfg.scopes if oauth_cfg else []
-    redirect_uri = (oauth_cfg.redirect_uri if oauth_cfg and oauth_cfg.redirect_uri else "")
+    redirect_uri = oauth_cfg.redirect_uri if oauth_cfg and oauth_cfg.redirect_uri else ""
 
     try:
         oauth = get_oauth_service()
@@ -168,11 +169,13 @@ async def oauth_callback(request: Request):
         registry = get_plugin_registry()
         await registry.connect_plugin(user_id, plugin_id)
 
-        return HTMLResponse(_oauth_result_page(
-            success=True,
-            message=f"Connected to {plugin_id}!",
-            plugin_id=plugin_id,
-        ))
+        return HTMLResponse(
+            _oauth_result_page(
+                success=True,
+                message=f"Connected to {plugin_id}!",
+                plugin_id=plugin_id,
+            )
+        )
     except Exception as exc:
         return HTMLResponse(_oauth_result_page(success=False, message=str(exc)))
 
@@ -195,6 +198,7 @@ async def disconnect_oauth(plugin_id: str, user: CurrentUser):
 # Google OAuth — per-user Google account connection for native plugins
 # ---------------------------------------------------------------------------
 
+
 @router.post("/{plugin_id}/google-oauth/start")
 async def start_google_oauth(plugin_id: str, user: CurrentUser):
     """Start Google OAuth 2.0 flow for a native plugin that needs per-user Google access."""
@@ -203,7 +207,9 @@ async def start_google_oauth(plugin_id: str, user: CurrentUser):
     if manifest is None:
         raise HTTPException(status_code=404, detail=f"Plugin '{plugin_id}' not found")
     if not manifest.google_oauth_scopes:
-        raise HTTPException(status_code=400, detail=f"Plugin '{plugin_id}' does not use Google OAuth")
+        raise HTTPException(
+            status_code=400, detail=f"Plugin '{plugin_id}' does not use Google OAuth"
+        )
 
     goauth = get_google_oauth_service()
     auth_url = goauth.start_flow(
@@ -235,11 +241,13 @@ async def google_oauth_callback(request: Request):
         registry = get_plugin_registry()
         await registry.connect_plugin(user_id, plugin_id)
 
-        return HTMLResponse(_oauth_result_page(
-            success=True,
-            message=f"Google account connected for {plugin_id}!",
-            plugin_id=plugin_id,
-        ))
+        return HTMLResponse(
+            _oauth_result_page(
+                success=True,
+                message=f"Google account connected for {plugin_id}!",
+                plugin_id=plugin_id,
+            )
+        )
     except Exception as exc:
         return HTMLResponse(_oauth_result_page(success=False, message=str(exc)))
 
@@ -252,14 +260,18 @@ async def disconnect_google_oauth(plugin_id: str, user: CurrentUser):
     if manifest is None:
         raise HTTPException(status_code=404, detail=f"Plugin '{plugin_id}' not found")
     if not manifest.google_oauth_scopes:
-        raise HTTPException(status_code=400, detail=f"Plugin '{plugin_id}' does not use Google OAuth")
+        raise HTTPException(
+            status_code=400, detail=f"Plugin '{plugin_id}' does not use Google OAuth"
+        )
 
     await registry.disconnect_plugin(user.uid, plugin_id)
     return {"plugin_id": plugin_id, "status": "disconnected"}
 
 
 def _oauth_result_page(
-    success: bool, message: str, plugin_id: str = "",
+    success: bool,
+    message: str,
+    plugin_id: str = "",
 ) -> str:
     """Generate a small HTML page that communicates the OAuth result to the parent window."""
     frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
@@ -294,6 +306,7 @@ _SAFE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9\-]{1,62}[a-z0-9]$")
 
 class RegisterMCPRequest(BaseModel):
     """Payload for registering a new MCP server in the catalog."""
+
     id: str = Field(..., description="Unique slug (lowercase, hyphens allowed)")
     name: str
     description: str = ""
@@ -323,7 +336,7 @@ async def register_mcp_server(body: RegisterMCPRequest, user: CurrentUser):
         raise HTTPException(
             status_code=400,
             detail="Invalid id: must be 3-64 lowercase alphanumeric chars or hyphens, "
-                   "starting and ending with alphanumeric.",
+            "starting and ending with alphanumeric.",
         )
 
     registry = get_plugin_registry()

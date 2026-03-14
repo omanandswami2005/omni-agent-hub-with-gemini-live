@@ -81,5 +81,7 @@ async def bootstrap(
         "personas": [p.model_dump() if hasattr(p, "model_dump") else p for p in personas_result],
         "mcp_catalog": [m.model_dump() if hasattr(m, "model_dump") else m for m in mcp_catalog],
         "mcp_enabled": mcp_enabled,
-        "plugin_catalog": [p.model_dump() if hasattr(p, "model_dump") else p for p in plugin_catalog],
+        "plugin_catalog": [
+            p.model_dump() if hasattr(p, "model_dump") else p for p in plugin_catalog
+        ],
     }

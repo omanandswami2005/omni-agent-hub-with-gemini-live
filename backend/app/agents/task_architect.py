@@ -265,9 +265,7 @@ class TaskArchitect:
             sub_agents = [self._create_sub_agent(t) for t in stage.tasks]
 
             if stage.stage_type == StageType.PARALLEL and len(sub_agents) > 1:
-                stage_agents.append(
-                    ParallelAgent(name=stage.name, sub_agents=sub_agents)
-                )
+                stage_agents.append(ParallelAgent(name=stage.name, sub_agents=sub_agents))
             elif stage.stage_type == StageType.LOOP:
                 stage_agents.append(
                     LoopAgent(
@@ -277,9 +275,7 @@ class TaskArchitect:
                     )
                 )
             elif stage.stage_type == StageType.SEQUENTIAL and len(sub_agents) > 1:
-                stage_agents.append(
-                    SequentialAgent(name=stage.name, sub_agents=sub_agents)
-                )
+                stage_agents.append(SequentialAgent(name=stage.name, sub_agents=sub_agents))
             elif sub_agents:
                 # Single agent — no wrapper needed
                 stage_agents.append(sub_agents[0])
@@ -318,13 +314,16 @@ class TaskArchitect:
         )
 
         session = await session_service.create_session(
-            app_name="omni-pipeline", user_id=self.user_id,
+            app_name="omni-pipeline",
+            user_id=self.user_id,
         )
 
         # Publish "pending" for every stage up-front
         for stage in blueprint.stages:
             await self.publish_stage_update(
-                blueprint.pipeline_id, stage.name, "pending",
+                blueprint.pipeline_id,
+                stage.name,
+                "pending",
             )
 
         from google.genai import types as genai_types
@@ -335,14 +334,19 @@ class TaskArchitect:
 
         if current_stage:
             await self.publish_stage_update(
-                blueprint.pipeline_id, current_stage.name, "running", 0.0,
+                blueprint.pipeline_id,
+                current_stage.name,
+                "running",
+                0.0,
             )
 
         content = genai_types.Content(
             role="user",
-            parts=[genai_types.Part.from_text(
-                f"Execute the following plan:\n{blueprint.task_description}"
-            )],
+            parts=[
+                genai_types.Part.from_text(
+                    f"Execute the following plan:\n{blueprint.task_description}"
+                )
+            ],
         )
 
         try:
@@ -367,18 +371,27 @@ class TaskArchitect:
                     # Mark current stage done, advance
                     if current_stage:
                         await self.publish_stage_update(
-                            blueprint.pipeline_id, current_stage.name, "completed", 1.0,
+                            blueprint.pipeline_id,
+                            current_stage.name,
+                            "completed",
+                            1.0,
                         )
                     stage_idx += 1
                     current_stage = blueprint.stages[stage_idx]
                     await self.publish_stage_update(
-                        blueprint.pipeline_id, current_stage.name, "running", 0.0,
+                        blueprint.pipeline_id,
+                        current_stage.name,
+                        "running",
+                        0.0,
                     )
 
             # Mark final stage complete
             if current_stage:
                 await self.publish_stage_update(
-                    blueprint.pipeline_id, current_stage.name, "completed", 1.0,
+                    blueprint.pipeline_id,
+                    current_stage.name,
+                    "completed",
+                    1.0,
                 )
 
         except Exception:
@@ -388,7 +401,10 @@ class TaskArchitect:
             )
             if current_stage:
                 await self.publish_stage_update(
-                    blueprint.pipeline_id, current_stage.name, "failed", 0.0,
+                    blueprint.pipeline_id,
+                    current_stage.name,
+                    "failed",
+                    0.0,
                 )
 
         summary = "\n".join(results) if results else "Pipeline completed with no text output."
@@ -401,11 +417,13 @@ class TaskArchitect:
 
     async def publish_blueprint(self, blueprint: PipelineBlueprint) -> None:
         """Send the blueprint to dashboard via event bus."""
-        event = json.dumps({
-            "type": "pipeline_created",
-            "pipeline": blueprint.to_dict(),
-            "timestamp": time.time(),
-        })
+        event = json.dumps(
+            {
+                "type": "pipeline_created",
+                "pipeline": blueprint.to_dict(),
+                "timestamp": time.time(),
+            }
+        )
         await self._event_bus.publish(self.user_id, event)
 
     async def publish_stage_update(
@@ -416,14 +434,16 @@ class TaskArchitect:
         progress: float = 0.0,
     ) -> None:
         """Push a progress event for a pipeline stage."""
-        event = json.dumps({
-            "type": "pipeline_progress",
-            "pipeline_id": pipeline_id,
-            "stage": stage_name,
-            "status": status,
-            "progress": round(progress, 2),
-            "timestamp": time.time(),
-        })
+        event = json.dumps(
+            {
+                "type": "pipeline_progress",
+                "pipeline_id": pipeline_id,
+                "stage": stage_name,
+                "status": status,
+                "progress": round(progress, 2),
+                "timestamp": time.time(),
+            }
+        )
         await self._event_bus.publish(self.user_id, event)
 
     # -- Internals ---------------------------------------------------------
@@ -434,6 +454,7 @@ class TaskArchitect:
 
         # T1 core tools per persona
         from app.agents.agent_factory import T1_TOOL_REGISTRY
+
         t1_caps = list(T1_TOOL_REGISTRY.keys())
         if t1_caps:
             lines.append("Core capabilities available to all personas: " + ", ".join(t1_caps))

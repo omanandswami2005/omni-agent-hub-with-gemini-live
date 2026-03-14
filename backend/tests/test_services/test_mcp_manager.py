@@ -112,4 +112,3 @@ class TestSingleton:
     def test_is_mcp_manager(self):
         mgr = get_mcp_manager()
         assert isinstance(mgr, MCPManager)
-

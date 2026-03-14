@@ -71,9 +71,7 @@ class TestManageFiles:
     @pytest.mark.asyncio
     @patch(_SEND, new_callable=AsyncMock, return_value={"delivered": True})
     async def test_write_action(self, mock_send):
-        result = await manage_files(
-            user_id="u1", action="write", path="/tmp/f.txt", content="data"
-        )
+        result = await manage_files(user_id="u1", action="write", path="/tmp/f.txt", content="data")
         assert result["delivered"] is True
 
     @pytest.mark.asyncio

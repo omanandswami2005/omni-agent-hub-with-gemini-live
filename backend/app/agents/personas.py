@@ -105,10 +105,7 @@ DEFAULT_PERSONAS: list[dict] = [
 
 def get_default_personas() -> list[PersonaResponse]:
     """Return the built-in personas as ``PersonaResponse`` models."""
-    return [
-        PersonaResponse(user_id="system", **cfg)
-        for cfg in DEFAULT_PERSONAS
-    ]
+    return [PersonaResponse(user_id="system", **cfg) for cfg in DEFAULT_PERSONAS]
 
 
 def get_default_persona_ids() -> set[str]:

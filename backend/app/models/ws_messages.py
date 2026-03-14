@@ -95,6 +95,7 @@ class MCPToggleMessage(BaseModel):
 
 class SessionSuggestionMessage(BaseModel):
     """Server suggests user to switch to another device for uninterrupted session."""
+
     type: Literal["session_suggestion"] = "session_suggestion"
     available_clients: list[str]  # e.g., ["desktop", "mobile"]
     message: str
@@ -103,6 +104,7 @@ class SessionSuggestionMessage(BaseModel):
 
 class JoinSessionMessage(BaseModel):
     """Client responds to session suggestion - join other session or continue new."""
+
     type: Literal["join_session"] = "join_session"
     join: bool  # True = join existing, False = start new
 
@@ -193,6 +195,7 @@ class AgentActivityMessage(BaseModel):
 
     This provides transparency into what the async agent is doing behind the scenes.
     """
+
     type: Literal["agent_activity"] = "agent_activity"
     activity_type: str  # "sub_agent_call", "reasoning", "mcp_call", "tool_call", "waiting"
     title: str  # Short description
@@ -285,19 +288,58 @@ class ToolResultMessage(BaseModel):
 # ── Discriminated Union ──────────────────────────────────────────────
 
 ClientMessage = Annotated[
-    AuthMessage | TextMessage | ImageMessage | PersonaSwitchMessage | MCPToggleMessage | ControlMessage | CapabilityUpdateMessage | ToolResultMessage,
+    AuthMessage
+    | TextMessage
+    | ImageMessage
+    | PersonaSwitchMessage
+    | MCPToggleMessage
+    | ControlMessage
+    | CapabilityUpdateMessage
+    | ToolResultMessage,
     Field(discriminator="type"),
 ]
 """Any JSON frame the **client** may send (excluding binary audio)."""
 
 ServerMessage = Annotated[
-    AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ImageResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage | ClientStatusUpdateMessage | ToolInvocationMessage,
+    AuthResponse
+    | AgentResponse
+    | TranscriptionMessage
+    | ToolCallMessage
+    | ToolResponseMessage
+    | ImageResponseMessage
+    | ErrorMessage
+    | StatusMessage
+    | PersonaChangedMessage
+    | ConnectedMessage
+    | CrossClientMessage
+    | ClientStatusUpdateMessage
+    | ToolInvocationMessage,
     Field(discriminator="type"),
 ]
 """Any JSON frame the **server** may send (excluding binary audio)."""
 
 WSMessage = Annotated[
-    AuthMessage | TextMessage | ImageMessage | PersonaSwitchMessage | MCPToggleMessage | ControlMessage | CapabilityUpdateMessage | ToolResultMessage | AuthResponse | AgentResponse | TranscriptionMessage | ToolCallMessage | ToolResponseMessage | ImageResponseMessage | ErrorMessage | StatusMessage | PersonaChangedMessage | ConnectedMessage | CrossClientMessage | ClientStatusUpdateMessage | ToolInvocationMessage,
+    AuthMessage
+    | TextMessage
+    | ImageMessage
+    | PersonaSwitchMessage
+    | MCPToggleMessage
+    | ControlMessage
+    | CapabilityUpdateMessage
+    | ToolResultMessage
+    | AuthResponse
+    | AgentResponse
+    | TranscriptionMessage
+    | ToolCallMessage
+    | ToolResponseMessage
+    | ImageResponseMessage
+    | ErrorMessage
+    | StatusMessage
+    | PersonaChangedMessage
+    | ConnectedMessage
+    | CrossClientMessage
+    | ClientStatusUpdateMessage
+    | ToolInvocationMessage,
     Field(discriminator="type"),
 ]
 """Parse any WS JSON frame: ``TypeAdapter(WSMessage).validate_json(raw)``."""

@@ -87,15 +87,30 @@ class TestPipelineBlueprint:
                     "name": "research",
                     "type": "parallel",
                     "tasks": [
-                        {"id": "t1", "description": "flights", "persona_id": "researcher", "instruction": "Find flights"},
-                        {"id": "t2", "description": "hotels", "persona_id": "researcher", "instruction": "Find hotels"},
+                        {
+                            "id": "t1",
+                            "description": "flights",
+                            "persona_id": "researcher",
+                            "instruction": "Find flights",
+                        },
+                        {
+                            "id": "t2",
+                            "description": "hotels",
+                            "persona_id": "researcher",
+                            "instruction": "Find hotels",
+                        },
                     ],
                 },
                 {
                     "name": "plan",
                     "type": "sequential",
                     "tasks": [
-                        {"id": "t3", "description": "itinerary", "persona_id": "assistant", "instruction": "Build itinerary"},
+                        {
+                            "id": "t3",
+                            "description": "itinerary",
+                            "persona_id": "assistant",
+                            "instruction": "Build itinerary",
+                        },
                     ],
                 },
             ]
@@ -128,25 +143,42 @@ class TestTaskArchitectAnalyse:
     @pytest.mark.asyncio
     async def test_analyse_returns_blueprint(self):
         mock_response = MagicMock()
-        mock_response.text = json.dumps({
-            "stages": [
-                {
-                    "name": "research",
-                    "type": "parallel",
-                    "tasks": [
-                        {"id": "t1", "description": "find data", "persona_id": "researcher", "instruction": "search"},
-                        {"id": "t2", "description": "get news", "persona_id": "researcher", "instruction": "news"},
-                    ],
-                },
-                {
-                    "name": "synthesis",
-                    "type": "single",
-                    "tasks": [
-                        {"id": "t3", "description": "summarise", "persona_id": "analyst", "instruction": "summarise"},
-                    ],
-                },
-            ]
-        })
+        mock_response.text = json.dumps(
+            {
+                "stages": [
+                    {
+                        "name": "research",
+                        "type": "parallel",
+                        "tasks": [
+                            {
+                                "id": "t1",
+                                "description": "find data",
+                                "persona_id": "researcher",
+                                "instruction": "search",
+                            },
+                            {
+                                "id": "t2",
+                                "description": "get news",
+                                "persona_id": "researcher",
+                                "instruction": "news",
+                            },
+                        ],
+                    },
+                    {
+                        "name": "synthesis",
+                        "type": "single",
+                        "tasks": [
+                            {
+                                "id": "t3",
+                                "description": "summarise",
+                                "persona_id": "analyst",
+                                "instruction": "summarise",
+                            },
+                        ],
+                    },
+                ]
+            }
+        )
         mock_client = MagicMock()
         mock_client.models.generate_content.return_value = mock_response
 
@@ -175,9 +207,24 @@ class TestTaskArchitectAnalyse:
 
     @pytest.mark.asyncio
     async def test_analyse_strips_code_fences(self):
-        raw = json.dumps({
-            "stages": [{"name": "s1", "type": "single", "tasks": [{"id": "t1", "description": "x", "persona_id": "coder", "instruction": "x"}]}]
-        })
+        raw = json.dumps(
+            {
+                "stages": [
+                    {
+                        "name": "s1",
+                        "type": "single",
+                        "tasks": [
+                            {
+                                "id": "t1",
+                                "description": "x",
+                                "persona_id": "coder",
+                                "instruction": "x",
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
         mock_response = MagicMock()
         mock_response.text = f"```json\n{raw}\n```"
         mock_client = MagicMock()
@@ -198,7 +245,10 @@ class TestTaskArchitectBuild:
                 TaskStage(
                     name="gather",
                     stage_type=StageType.PARALLEL,
-                    tasks=[SubTask(id="t1", description="a", persona_id="researcher"), SubTask(id="t2", description="b", persona_id="analyst")],
+                    tasks=[
+                        SubTask(id="t1", description="a", persona_id="researcher"),
+                        SubTask(id="t2", description="b", persona_id="analyst"),
+                    ],
                 ),
             ],
         )

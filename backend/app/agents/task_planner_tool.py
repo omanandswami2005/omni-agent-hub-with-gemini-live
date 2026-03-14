@@ -20,6 +20,7 @@ async def _build_tools_for_architect(user_id: str) -> dict[str, list]:
     try:
         from app.agents.personas import get_default_personas
         from app.services.tool_registry import get_tool_registry
+
         personas = get_default_personas()
         return await get_tool_registry().build_for_session(user_id, personas)
     except Exception:
@@ -70,4 +71,3 @@ async def plan_task(user_id: str, task: str) -> str:
 def get_task_planner_tool() -> FunctionTool:
     """Return the plan_task tool for the root agent."""
     return FunctionTool(plan_task)
-

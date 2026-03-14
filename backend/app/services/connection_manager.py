@@ -65,6 +65,7 @@ class ConnectionManager:
             from google.cloud import firestore
 
             from app.config import settings
+
             self._db = firestore.Client(project=settings.GOOGLE_CLOUD_PROJECT or None)
         return self._db
 
@@ -105,7 +106,9 @@ class ConnectionManager:
         # Write Firestore presence (best-effort, non-blocking)
         asyncio.create_task(self._set_presence(user_id, client_type, os_name, now))
 
-        await self._broadcast_client_status(user_id, event="connected", changed_client_type=client_type)
+        await self._broadcast_client_status(
+            user_id, event="connected", changed_client_type=client_type
+        )
 
     async def disconnect(
         self,
@@ -130,7 +133,9 @@ class ConnectionManager:
         # Remove Firestore presence (best-effort, non-blocking)
         asyncio.create_task(self._clear_presence(user_id, client_type))
 
-        await self._broadcast_client_status(user_id, event="disconnected", changed_client_type=client_type)
+        await self._broadcast_client_status(
+            user_id, event="disconnected", changed_client_type=client_type
+        )
 
     # ── Auxiliary sockets (receive broadcasts but aren't listed as clients) ──
 
@@ -157,21 +162,23 @@ class ConnectionManager:
     ) -> None:
         """Notify all connected clients of this user about the current client list."""
         clients = self.get_connected_clients(user_id)
-        payload = json.dumps({
-            "type": "client_status_update",
-            "event": event,
-            "client_type": str(changed_client_type),
-            "clients": [
-                {
-                    "client_type": str(c.client_type),
-                    "client_id": c.client_id,
-                    "connected_at": c.connected_at.isoformat() if c.connected_at else None,
-                    "os_name": c.os_name,
-                    "connected": True,
-                }
-                for c in clients
-            ],
-        })
+        payload = json.dumps(
+            {
+                "type": "client_status_update",
+                "event": event,
+                "client_type": str(changed_client_type),
+                "clients": [
+                    {
+                        "client_type": str(c.client_type),
+                        "client_id": c.client_id,
+                        "connected_at": c.connected_at.isoformat() if c.connected_at else None,
+                        "os_name": c.os_name,
+                        "connected": True,
+                    }
+                    for c in clients
+                ],
+            }
+        )
         await self.send_to_user(user_id, payload)
 
     # ── Messaging ─────────────────────────────────────────────────────
@@ -278,8 +285,7 @@ class ConnectionManager:
 
         if removed_tools:
             entry["local_tools"] = [
-                t for t in entry["local_tools"]
-                if t.get("name") not in set(removed_tools)
+                t for t in entry["local_tools"] if t.get("name") not in set(removed_tools)
             ]
 
         logger.info(
@@ -301,11 +307,7 @@ class ConnectionManager:
         """
         try:
             db = self._get_db()
-            docs = (
-                db.collection(_PRESENCE_COLLECTION)
-                .where("user_id", "==", user_id)
-                .stream()
-            )
+            docs = db.collection(_PRESENCE_COLLECTION).where("user_id", "==", user_id).stream()
             cutoff = datetime.now(UTC).timestamp() - _PRESENCE_STALE_SECONDS
             clients: list[ClientInfo] = []
             for doc in docs:
@@ -321,15 +323,21 @@ class ConnectionManager:
                     ct = ClientType.WEB
                 connected_at = d.get("connected_at")
                 if connected_at and hasattr(connected_at, "replace"):
-                    connected_at = connected_at.replace(tzinfo=UTC) if connected_at.tzinfo is None else connected_at
-                clients.append(ClientInfo(
-                    user_id=user_id,
-                    client_type=ct,
-                    client_id=str(ct),
-                    connected_at=connected_at or datetime.now(UTC),
-                    last_ping=datetime.now(UTC),
-                    os_name=d.get("os_name", "Unknown"),
-                ))
+                    connected_at = (
+                        connected_at.replace(tzinfo=UTC)
+                        if connected_at.tzinfo is None
+                        else connected_at
+                    )
+                clients.append(
+                    ClientInfo(
+                        user_id=user_id,
+                        client_type=ct,
+                        client_id=str(ct),
+                        connected_at=connected_at or datetime.now(UTC),
+                        last_ping=datetime.now(UTC),
+                        os_name=d.get("os_name", "Unknown"),
+                    )
+                )
             return clients
         except Exception:
             logger.warning("firestore_presence_read_failed", user_id=user_id, exc_info=True)
@@ -369,10 +377,7 @@ class ConnectionManager:
         Uses Firestore for cross-instance visibility.
         """
         all_clients = self.get_connected_clients(user_id)
-        return [
-            c.client_type for c in all_clients
-            if c.client_type != current_client_type
-        ]
+        return [c.client_type for c in all_clients if c.client_type != current_client_type]
 
     @property
     def total_connections(self) -> int:
@@ -384,7 +389,8 @@ class ConnectionManager:
         """Launch the background heartbeat reaper (call once at startup)."""
         if self._reaper_task is None or self._reaper_task.done():
             self._reaper_task = asyncio.create_task(
-                self._reap_loop(), name="ws-heartbeat-reaper",
+                self._reap_loop(),
+                name="ws-heartbeat-reaper",
             )
 
     def stop_reaper(self) -> None:
@@ -402,6 +408,7 @@ class ConnectionManager:
             # Also evict idle MCP toolsets while we're here
             try:
                 from app.services.mcp_manager import get_mcp_manager
+
                 await get_mcp_manager().evict_idle_toolsets()
             except Exception:
                 pass  # MCP manager may not be initialised yet
@@ -432,7 +439,9 @@ class ConnectionManager:
 
         total_reaped = len(dead) + len(dead_aux)
         if total_reaped:
-            logger.info("heartbeat_reap_complete", reaped=total_reaped, remaining=self.total_connections)
+            logger.info(
+                "heartbeat_reap_complete", reaped=total_reaped, remaining=self.total_connections
+            )
 
         # Refresh Firestore heartbeat for all live connections on this instance
         await self._refresh_presence_heartbeats()
@@ -446,14 +455,16 @@ class ConnectionManager:
         try:
             db = self._get_db()
             doc_id = self._presence_doc_id(user_id, client_type)
-            db.collection(_PRESENCE_COLLECTION).document(doc_id).set({
-                "user_id": user_id,
-                "client_type": client_type.value,
-                "os_name": os_name,
-                "connected_at": connected_at,
-                "last_heartbeat": datetime.now(UTC),
-                "instance_id": _INSTANCE_ID,
-            })
+            db.collection(_PRESENCE_COLLECTION).document(doc_id).set(
+                {
+                    "user_id": user_id,
+                    "client_type": client_type.value,
+                    "os_name": os_name,
+                    "connected_at": connected_at,
+                    "last_heartbeat": datetime.now(UTC),
+                    "instance_id": _INSTANCE_ID,
+                }
+            )
             logger.debug("presence_set", user_id=user_id, client_type=client_type.value)
         except Exception:
             logger.warning("presence_set_failed", user_id=user_id, exc_info=True)
@@ -492,6 +503,7 @@ class ConnectionManager:
             db = self._get_db()
             cutoff = datetime.now(UTC).timestamp() - _PRESENCE_STALE_SECONDS
             from google.cloud.firestore_v1.base_query import FieldFilter
+
             # Query for stale docs belonging to THIS instance only
             docs = (
                 db.collection(_PRESENCE_COLLECTION)

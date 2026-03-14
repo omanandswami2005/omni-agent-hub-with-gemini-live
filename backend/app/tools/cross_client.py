@@ -125,10 +125,7 @@ async def list_connected_clients(user_id: str) -> dict:
     mgr = get_connection_manager()
     clients = mgr.get_connected_clients(user_id)
     return {
-        "clients": [
-            {"client_type": c.client_type, "client_id": c.client_id}
-            for c in clients
-        ],
+        "clients": [{"client_type": c.client_type, "client_id": c.client_id} for c in clients],
     }
 
 
@@ -158,11 +155,13 @@ async def _send_action(
             "error": f"{client_type} client is not connected",
         }
 
-    message = json.dumps({
-        "type": "cross_client_action",
-        "action": action,
-        "payload": _safe_parse_json(payload) if isinstance(payload, str) else payload,
-    })
+    message = json.dumps(
+        {
+            "type": "cross_client_action",
+            "action": action,
+            "payload": _safe_parse_json(payload) if isinstance(payload, str) else payload,
+        }
+    )
 
     await mgr.send_to_client(user_id, client_type, message)
     logger.info(

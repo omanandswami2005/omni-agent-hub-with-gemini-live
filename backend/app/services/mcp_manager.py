@@ -35,18 +35,20 @@ def _build_catalog() -> list[MCPConfig]:
         transport = TransportType.STDIO
         if m.kind in ("mcp_http", "mcp_oauth"):
             transport = TransportType.STREAMABLE_HTTP
-        result.append(MCPConfig(
-            id=m.id,
-            name=m.name,
-            description=m.description,
-            category=_safe_category(m.category),
-            transport=transport,
-            command=m.command,
-            args=m.args,
-            url=m.url,
-            env=m.env,
-            icon=m.icon,
-        ))
+        result.append(
+            MCPConfig(
+                id=m.id,
+                name=m.name,
+                description=m.description,
+                category=_safe_category(m.category),
+                transport=transport,
+                command=m.command,
+                args=m.args,
+                url=m.url,
+                env=m.env,
+                icon=m.icon,
+            )
+        )
     return result
 
 
@@ -182,4 +184,3 @@ def get_mcp_manager() -> MCPManager:
     if _manager is None:
         _manager = MCPManager()
     return _manager
-
