@@ -70,6 +70,26 @@ export function useAudioPlayback() {
     }
   }, []);
 
+  // Stop playback immediately on interruption (agentState → 'listening')
+  useEffect(() => {
+    let prev = useChatStore.getState().agentState;
+    const unsub = useChatStore.subscribe((state) => {
+      if (state.agentState === 'listening' && prev !== 'listening') {
+        // Agent was interrupted — kill all scheduled audio instantly
+        if (ctxRef.current && ctxRef.current.state !== 'closed') {
+          ctxRef.current.close();
+          ctxRef.current = null;
+        }
+        scheduledEnd.current = 0;
+        setIsPlaying(false);
+        playingRef.current = false;
+        setVolume(0);
+      }
+      prev = state.agentState;
+    });
+    return unsub;
+  }, []);
+
   // Process audio queue from chatStore
   useEffect(() => {
     const unsub = useChatStore.subscribe((state) => {
