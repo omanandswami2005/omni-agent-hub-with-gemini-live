@@ -11,7 +11,13 @@ import TranscriptLine from '@/components/chat/TranscriptLine';
 import TypingIndicator from '@/components/chat/TypingIndicator';
 import { Mic } from 'lucide-react';
 
-export default function ChatPanel({ onSend, isRecording, captureVolume, playbackVolume, isChatConnected }) {
+export default function ChatPanel({
+  onSend,
+  isRecording,
+  captureVolume,
+  playbackVolume,
+  isChatConnected,
+}) {
   const messages = useChatStore((s) => s.messages);
   const agentState = useChatStore((s) => s.agentState);
   const transcript = useChatStore((s) => s.transcript);
@@ -24,10 +30,23 @@ export default function ChatPanel({ onSend, isRecording, captureVolume, playback
     }
   }, [messages, transcript]);
 
+  // Listen for tool cancellation custom events
+  useEffect(() => {
+    const handleCancel = (e) => {
+      if (e.detail?.tool_name && onSend) {
+        onSend(
+          `[System]: User cancelled the execution of the tool ${e.detail.tool_name}. Stop waiting and proceed.`,
+        );
+      }
+    };
+    window.addEventListener('cancel_tool', handleCancel);
+    return () => window.removeEventListener('cancel_tool', handleCancel);
+  }, [onSend]);
+
   return (
-    <div className="flex h-full flex-col rounded-xl border border-border/40 bg-background/50 backdrop-blur-sm">
+    <div className="border-border/40 bg-background/50 flex h-full flex-col rounded-xl border backdrop-blur-sm">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-border/40 px-4 py-3">
+      <div className="border-border/40 flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-sm font-semibold">Conversation</h2>
         {isRecording && (
           <div className="flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 text-xs text-red-500">
@@ -40,12 +59,12 @@ export default function ChatPanel({ onSend, isRecording, captureVolume, playback
       {/* Message list */}
       <div ref={listRef} className="flex-1 space-y-1 overflow-y-auto p-4">
         {messages.length === 0 && (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-            <div className="rounded-full bg-muted/50 p-4">
+          <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2">
+            <div className="bg-muted/50 rounded-full p-4">
               <Mic size={24} />
             </div>
             <p className="text-sm">Start speaking or type a message</p>
-            <p className="text-xs text-muted-foreground/70">Your conversation will appear here</p>
+            <p className="text-muted-foreground/70 text-xs">Your conversation will appear here</p>
           </div>
         )}
         {messages.map((msg) => (
@@ -56,7 +75,7 @@ export default function ChatPanel({ onSend, isRecording, captureVolume, playback
 
       {/* Live transcript overlay */}
       {(transcript.input || transcript.output) && (
-        <div className="border-t border-border/30 bg-muted/20 px-4 py-2 space-y-1">
+        <div className="border-border/30 bg-muted/20 space-y-1 border-t px-4 py-2">
           {transcript.input && (
             <TranscriptLine text={transcript.input} isFinal={false} direction="input" />
           )}
@@ -67,8 +86,12 @@ export default function ChatPanel({ onSend, isRecording, captureVolume, playback
       )}
 
       {/* Text input */}
-      <div className="border-t border-border/40 p-3">
-        <ChatInput onSend={onSend} disabled={agentState === 'speaking'} disconnected={!isChatConnected} />
+      <div className="border-border/40 border-t p-3">
+        <ChatInput
+          onSend={onSend}
+          disabled={agentState === 'speaking'}
+          disconnected={!isChatConnected}
+        />
       </div>
     </div>
   );
