@@ -16,6 +16,7 @@ import CommandPalette from '@/components/layout/CommandPalette';
 import { VoiceProvider, useVoice } from '@/hooks/useVoiceProvider';
 import { useBootstrap } from '@/hooks/useBootstrap';
 import { useEventSocket } from '@/hooks/useEventSocket';
+import { useChatWebSocket } from '@/hooks/useChatWebSocket';
 import { useIsMobile } from '@/hooks/useMediaQuery';
 
 export function AppShell() {
@@ -32,6 +33,7 @@ function ShellLayout() {
   const voice = useVoice();
   useBootstrap();
   useEventSocket();
+  useChatWebSocket();
 
   return (
     <div className="flex h-screen bg-background text-foreground">
@@ -74,6 +76,7 @@ function ShellLayout() {
         isVideoActive={voice.isVideoActive}
         captureVolume={voice.captureVolume}
         playbackVolume={voice.playbackVolume}
+        micBlocked={voice.micBlocked}
         onToggleRecording={voice.toggleRecording}
         onToggleMute={voice.toggleMute}
         onToggleScreen={voice.toggleScreen}

@@ -118,7 +118,7 @@ export default function MessageBubble({ message }) {
 
 function ImageBubble({ message }) {
   const {
-    image_base64, mime_type = 'image/png', description,
+    image_base64, image_url = '', mime_type = 'image/png', description,
     images = [], text, parts = [],
   } = message;
 
@@ -140,10 +140,10 @@ function ImageBubble({ message }) {
               >
                 {part.content}
               </div>
-            ) : part.type === 'image' && part.base64 ? (
+            ) : part.type === 'image' && (part.base64 || (part.image_url && !part.image_url.startsWith('gs://'))) ? (
               <div key={i} className="overflow-hidden rounded-xl border border-border/40 bg-muted/20">
                 <img
-                  src={`data:${part.mime_type || 'image/png'};base64,${part.base64}`}
+                  src={part.base64 ? `data:${part.mime_type || 'image/png'};base64,${part.base64}` : part.image_url}
                   alt="Generated illustration"
                   className="max-h-96 w-full object-contain"
                 />
@@ -159,10 +159,14 @@ function ImageBubble({ message }) {
   const allImages = [];
   if (image_base64) {
     allImages.push({ src: `data:${mime_type};base64,${image_base64}`, caption: description });
+  } else if (image_url && !image_url.startsWith('gs://')) {
+    allImages.push({ src: image_url, caption: description });
   }
   for (const img of images) {
     if (img.base64) {
       allImages.push({ src: `data:${img.mime_type || 'image/png'};base64,${img.base64}`, caption: '' });
+    } else if (img.url && !img.url.startsWith('gs://')) {
+      allImages.push({ src: img.url, caption: '' });
     }
   }
 

@@ -240,6 +240,25 @@ class DesktopWSClient:
             clients = msg.get("clients", [])
             logger.info("Client status update: %d clients online", len(clients))
 
+        elif msg_type == "session_suggestion":
+            session_id = msg.get("session_id", "")
+            available = msg.get("available_clients", [])
+            message = msg.get("message", "")
+            logger.info(
+                "Session suggestion: %s (active on: %s) — session: %s",
+                message,
+                ", ".join(available),
+                session_id,
+            )
+            # Invoke registered callback if the host app set one
+            handler = self._handlers.get("session_suggestion")
+            if handler:
+                asyncio.create_task(handler(
+                    session_id=session_id,
+                    available_clients=available,
+                    message=message,
+                ))
+
         elif msg_type == "auth_response":
             if msg.get("status") == "ok":
                 logger.info("Authenticated as %s", msg.get("user_id"))

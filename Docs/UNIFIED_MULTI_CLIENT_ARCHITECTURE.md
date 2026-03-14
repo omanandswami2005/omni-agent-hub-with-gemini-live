@@ -533,7 +533,11 @@ The existing `ConnectionManager` already supports:
 | `persona_changed` | Persona switch confirmed | `persona_id` |
 | `error` | Error | `message`, `code` |
 | `ping` | Heartbeat | — |
+| `session_suggestion` | Another device is active | `session_id`, `available_clients[]`, `message`; sent during `/ws/live` auth if other clients are online, AND broadcast via EventBus to `/ws/events` when a client connects |
+| `client_status_update` | Client connects/disconnects | `event` (joined/left/snapshot), `clients[]`; delivered only via `/ws/events` |
 | Binary frame | PCM-24 audio | Raw bytes (24kHz 16-bit) |
+
+> **EventBus deduplication rule**: `session_suggestion` and `client_status_update` are infrastructure events. They are delivered exclusively through `/ws/events`. The `_relay_cross_events` helper on `/ws/live` and `/ws/chat` skips these types to prevent triple delivery to a multi-socket dashboard client.
 
 ---
 
@@ -776,23 +780,44 @@ Systematic audit of all backend services for hackathon demo stability and multi-
 | 12 | **Missing auth TODO** — Plugin toggle has no per-user ownership check | `plugins.py` | Added `.. todo::` docstring noting multi-tenant auth needed |
 | 13 | **Template auto-load** — `TEMPLATE.py` would be auto-discovered as a real plugin | `plugin_registry.py` | Added `TEMPLATE.py` to the exclusion list in `_discover_plugin_modules()` |
 
+### 15.4 Smart Session & Cross-Client Fixes (March 2026)
+
+| # | Issue | File | Fix |
+|---|---|---|---|
+| 14 | **Duplicate `down_task`** — `asyncio.create_task(_downstream(...))` was called twice; first was orphaned, causing a second ADK runner to execute | `ws_live.py` | Removed the unconditional first creation; `down_task` is only created inside `if session_id:` |
+| 15 | **Missing `available_clients` in broadcast** — EventBus `session_suggestion` payload only had `session_id` and a generic message; dashboard banner couldn't show device names | `ws_live.py` | Added `available_clients: [str(client_type)]` and dynamic message to the published payload |
+| 16 | **Triple `session_suggestion` delivery** — Dashboard has 3 WS sockets open (`/ws/live`, `/ws/chat`, `/ws/events`); `_relay_cross_events` forwarded all EventBus messages including infrastructure types, causing `setSuggestion()` to fire 3× | `ws_live.py` | `_relay_cross_events` now skips `session_suggestion` and `client_status_update` — these are only delivered via `/ws/events` |
+| 17 | **`useEventSocket` only routed to `pipelineStore`** — `client_status_update` and `session_suggestion` were discarded | `useEventSocket.js` | Added routing: `client_status_update` → `clientStore.setClients()`, `session_suggestion` → `sessionSuggestionStore.setSuggestion()` + `sessionStore.ensureSession/setActiveSession()` |
+| 18 | **`ensureSession` called after `setActiveSession`** — could leave an orphaned `activeSessionId` if `ensureSession` fails | `useEventSocket.js` | Reversed order: `ensureSession()` first, then `setActiveSession()` |
+| 19 | **`titleRefreshed` ref declared after `reconnect` callback** — hook order inconsistency (ref initialized at wrong point in hook body) | `useChatWebSocket.js` | Moved `titleRefreshed = useRef(false)` before the `reconnect` callback; `reconnect()` now resets the ref so auto-title fires once per new session |
+| 20 | **`_generate_title` unsafe `response.text` access** — would throw `AttributeError` if Gemini returns `None` response | `session_service.py` | Changed to `getattr(response, "text", None) or ""` |
+
 ### Key Files
 
 | File | Purpose |
 |---|---|
 | `app/models/plugin.py` | Plugin manifest & state Pydantic schemas |
 | `app/models/client.py` | ClientType enum (11 types) + ClientInfo |
-| `app/models/ws_messages.py` | WS message schemas incl. T3 reverse-RPC messages |
+| `app/models/ws_messages.py` | WS message schemas incl. T3 reverse-RPC messages + `SessionSuggestionMessage` |
 | `app/services/plugin_registry.py` | Central plugin lifecycle manager (singleton) |
 | `app/services/tool_registry.py` | T1+T2+T3 tool orchestrator + T3 proxy factory |
 | `app/services/connection_manager.py` | WS registry with capability storage |
+| `app/services/session_service.py` | Firestore session CRUD + `generate_title_from_message()` (Gemini auto-title) |
 | `app/services/mcp_manager.py` | Backward-compatible wrapper → PluginRegistry |
 | `app/api/plugins.py` | REST API for plugin catalog, toggle, schemas |
-| `app/api/ws_live.py` | WS endpoints with extended auth + T3 handling |
+| `app/api/ws_live.py` | WS endpoints with extended auth + T3 handling; EventBus `session_suggestion` broadcast; `_relay_cross_events` (infra-event deduplication) |
+| `app/api/ws_events.py` | Read-only `/ws/events` — delivers `session_suggestion` and `client_status_update` to dashboard |
 | `app/plugins/__init__.py` | Auto-discovery package |
 | `app/plugins/notification_sender.py` | Example native plugin |
 | `scripts/local_mcp_server.py` | Test MCP server (FastMCP, stdio) |
 | `cli/omni_cli.py` | CLI client — text-only agent in terminal |
+| `desktop-client/src/ws_client.py` | Desktop WS client — T3 + session_suggestion handling |
+| `chrome-extension/background.js` | Chrome MV3 service worker — forwards session_suggestion to popup |
+| `chrome-extension/popup/popup.js` | Popup UI — renders session suggestion banner |
+| `dashboard/src/hooks/useEventSocket.js` | `/ws/events` hook — routes `client_status_update` + `session_suggestion` |
+| `dashboard/src/hooks/useChatWebSocket.js` | `/ws/chat` hook — text chat + auto-title refresh |
+| `dashboard/src/components/layout/Sidebar.jsx` | Sidebar — live client activity dots per connected client |
+| `dashboard/src/pages/DashboardPage.jsx` | Dashboard — voice persona switcher dropdown + session suggestion banner |
 | `tests/test_services/test_plugin_registry.py` | 16 pytest tests — plugin registry |
 | `tests/test_services/test_tool_registry.py` | 38 pytest tests — capabilities, T3, ToolRegistry, bug-fix verification |
 | `app/plugins/TEMPLATE.py` | Plugin developer template (excluded from auto-discovery) |

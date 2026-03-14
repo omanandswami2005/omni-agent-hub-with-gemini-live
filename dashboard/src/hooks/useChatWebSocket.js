@@ -11,8 +11,10 @@ import { toast } from 'sonner';
 import { auth } from '@/lib/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { useChatStore } from '@/stores/chatStore';
+import { getClientType } from '@/lib/constants';
 import { useClientStore } from '@/stores/clientStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import { useSessionSuggestionStore } from '@/stores/sessionSuggestionStore';
 import { parseServerMessage, reconnectDelay } from '@/lib/ws';
 
 const CHAT_WS_URL =
@@ -58,6 +60,7 @@ export function useChatWebSocket() {
                 JSON.stringify({
                     type: 'auth',
                     token,
+                    client_type: getClientType(),
                     user_agent: navigator.userAgent,
                     ...(activeId ? { session_id: activeId } : {}),
                 }),
@@ -86,15 +89,9 @@ export function useChatWebSocket() {
                     });
                     break;
                 case 'transcription':
-                    // Forward voice transcriptions from other devices into chat
-                    if (fromOtherDevice && msg.text) {
-                        store.addMessage({
-                            role: msg.direction === 'input' ? 'user' : 'assistant',
-                            content: msg.text,
-                            content_type: 'text',
-                            cross_client: true,
-                            is_transcription: true,
-                        });
+                    if (fromOtherDevice) {
+                        // Accumulate in crossTranscript overlay; only commit to messages on finish
+                        store.updateCrossClientTranscript?.(msg);
                     } else {
                         store.updateTranscript?.(msg);
                     }
@@ -156,7 +153,22 @@ export function useChatWebSocket() {
                     useClientStore.getState().setClients(msg.clients);
                     break;
                 case 'session_suggestion': {
-                    // If the server included a session_id, switch to it
+                    // Normalize snake_case → camelCase for the banner
+                    const suggestion = {
+                        ...msg,
+                        availableClients: msg.available_clients || msg.availableClients || [],
+                    };
+                    const suggStore = useSessionSuggestionStore.getState();
+                    // Suppress banner when the suggestion is about our own device type
+                    const myType = getClientType();
+                    const isSelfBroadcast =
+                        suggestion.availableClients.length === 1 &&
+                        suggestion.availableClients[0] === myType;
+                    // Show the banner unless the user has opted into silent auto-join
+                    if (!suggStore.autoJoin && !isSelfBroadcast) {
+                        suggStore.setSuggestion(suggestion);
+                    }
+                    // Switch to the suggested session for context continuity
                     if (msg.session_id) {
                         const ss = useSessionStore.getState();
                         ss.setActiveSession(msg.session_id);
@@ -205,8 +217,11 @@ export function useChatWebSocket() {
         setIsConnected(false);
     }, []);
 
+    const titleRefreshed = useRef(false);
+
     // Reconnect when session changes (user navigated to a different session)
     const reconnect = useCallback(() => {
+        titleRefreshed.current = false;
         if (wsRef.current) {
             wsRef.current.close();
             wsRef.current = null;
@@ -237,6 +252,11 @@ export function useChatWebSocket() {
 
         if (wsRef.current?.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify({ type: 'text', content: text }));
+            // Auto-refresh sessions list after first message so auto-generated title shows
+            if (!titleRefreshed.current) {
+                titleRefreshed.current = true;
+                setTimeout(() => useSessionStore.getState().loadSessions(), 4000);
+            }
         } else {
             // WS not connected — inform the user instead of silently dropping
             useChatStore.getState().addMessage({

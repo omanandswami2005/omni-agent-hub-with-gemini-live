@@ -26,6 +26,7 @@ import { useUiStore } from '@/stores/uiStore';
 import { usePersonaStore } from '@/stores/personaStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useChatStore } from '@/stores/chatStore';
+import { useClientStore } from '@/stores/clientStore';
 import { useVoice } from '@/hooks/useVoiceProvider';
 import KeyboardShortcut from '@/components/shared/KeyboardShortcut';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -210,6 +211,7 @@ export default function Sidebar() {
   const [sessionsExpanded, setSessionsExpanded] = useState(false);
   const clearMessages = useChatStore((s) => s.clearMessages);
   const voice = useVoice();
+  const connectedClients = useClientStore((s) => s.clients);
 
   const handleNewChat = () => {
     clearMessages();
@@ -299,6 +301,17 @@ export default function Sidebar() {
             >
               <Icon size={18} />
               {sidebarOpen && <span className="flex-1">{label}</span>}
+              {/* Live client dots for Clients nav item */}
+              {to === '/clients' && connectedClients.length > 0 && (
+                <span className="flex items-center gap-0.5">
+                  {connectedClients.slice(0, 3).map((c, i) => (
+                    <span key={c.client_id || i} className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                  ))}
+                  {connectedClients.length > 3 && (
+                    <span className="text-[9px] text-muted-foreground">+{connectedClients.length - 3}</span>
+                  )}
+                </span>
+              )}
             </NavLink>
           );
         })}

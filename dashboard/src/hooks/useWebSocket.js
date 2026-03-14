@@ -7,6 +7,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { toast } from 'sonner';
 import { createLiveConnection, sendBinaryAudio, sendJsonMessage, parseServerMessage, reconnectDelay } from '@/lib/ws';
 import { auth } from '@/lib/firebase';
+import { getClientType } from '@/lib/constants';
 import { useAuthStore } from '@/stores/authStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useClientStore } from '@/stores/clientStore';
@@ -20,6 +21,10 @@ export function useWebSocket() {
   const reconnectTimer = useRef(null);
   const intentionalClose = useRef(false);
   const connectGenRef = useRef(0);
+  // True once the server has granted the mic floor to this client.
+  // sendAudio drops frames until this is true, preventing audio from reaching
+  // ADK before the explicit mic_acquire handshake completes.
+  const micGrantedRef = useRef(false);
   const [isConnected, setIsConnected] = useState(false);
   // Firestore session ID returned by the server after auth
   const [serverSessionId, setServerSessionId] = useState(null);
@@ -28,8 +33,12 @@ export function useWebSocket() {
     // Bump generation so any older in-flight connect() bails after its await
     const gen = ++connectGenRef.current;
 
-    // Close any existing connection synchronously (before the await gap)
+    // Close any existing connection synchronously (before the await gap).
+    // Null out onclose FIRST so the backoff-reconnect handler never fires for
+    // this intentional tear-down (the callback is always async — clearing the
+    // ref alone is not enough to prevent it from firing).
     if (wsRef.current) {
+      wsRef.current.onclose = null;
       wsRef.current.close();
       wsRef.current = null;
     }
@@ -54,6 +63,7 @@ export function useWebSocket() {
 
     ws.onopen = () => {
       attemptRef.current = 0;
+      micGrantedRef.current = false; // reset on every (re)connect — must re-acquire
       // Send auth handshake as first frame (token NOT in URL for security)
       // Include platform/OS info so the server can display it in the clients panel
       const activeId = useSessionStore.getState().activeSessionId;
@@ -73,6 +83,7 @@ export function useWebSocket() {
       sendJsonMessage(ws, {
         type: 'auth',
         token: freshToken,
+        client_type: getClientType(),
         user_agent: navigator.userAgent,
         ...(sessionIdToSend !== undefined ? { session_id: sessionIdToSend } : {}),
         ...(activePersona?.id ? { persona_id: activePersona.id } : {}),
@@ -84,17 +95,25 @@ export function useWebSocket() {
       const msg = parseServerMessage(event);
       const fromOtherDevice = msg.cross_client === true;
 
+      // Cross-client events (from other devices) are rendered exclusively by
+      // useChatWebSocket (/ws/chat), which has its own EventBus relay.
+      // Handling them here too would cause every message to appear twice.
+      // Only keep handling for audio, status, and auth which are live-specific.
+      if (fromOtherDevice) {
+        switch (msg.type) {
+          case 'status':
+            // Let the other device's status not affect our own agent state
+            break;
+          case 'client_status_update':
+            useClientStore.getState().setClients(msg.clients);
+            break;
+          default:
+            break;
+        }
+        return;
+      }
+
       switch (msg.type) {
-        case 'user_message':
-          if (fromOtherDevice) {
-            useChatStore.getState().addMessage({
-              role: 'user',
-              content: msg.content,
-              cross_client: true,
-              timestamp: new Date().toISOString(),
-            });
-          }
-          break;
         case 'audio':
           useChatStore.getState().enqueueAudio(msg.data);
           break;
@@ -105,18 +124,7 @@ export function useWebSocket() {
           });
           break;
         case 'transcription':
-          if (fromOtherDevice && msg.text) {
-            useChatStore.getState().addMessage({
-              role: msg.direction === 'input' ? 'user' : 'assistant',
-              content: msg.text,
-              content_type: 'text',
-              cross_client: true,
-              is_transcription: true,
-              timestamp: new Date().toISOString(),
-            });
-          } else {
-            useChatStore.getState().updateTranscript(msg);
-          }
+          useChatStore.getState().updateTranscript(msg);
           break;
         case 'response':
           useChatStore.getState().addMessage({
@@ -126,17 +134,14 @@ export function useWebSocket() {
             genui_type: msg.genui?.type || msg.genui_type,
             genui_data: msg.genui?.data || msg.genui_data,
             persona: msg.persona,
-            ...(fromOtherDevice && { cross_client: true }),
           });
           break;
         case 'status':
-          if (!fromOtherDevice) {
-            useChatStore.getState().setAgentState(msg.state);
-            // On interruption, clear audio queue and cancel any active tools
-            if (msg.detail && msg.detail.toLowerCase().includes('interrupt')) {
-              useChatStore.getState().clearAudioQueue?.();
-              useChatStore.getState().cancelAllActions?.();
-            }
+          useChatStore.getState().setAgentState(msg.state);
+          // On interruption, clear audio queue and cancel any active tools
+          if (msg.detail && msg.detail.toLowerCase().includes('interrupt')) {
+            useChatStore.getState().clearAudioQueue?.();
+            useChatStore.getState().cancelAllActions?.();
           }
           break;
         case 'tool_call':
@@ -149,7 +154,6 @@ export function useWebSocket() {
             status: msg.status,
             action_kind: msg.action_kind || 'tool',
             source_label: msg.source_label || '',
-            ...(fromOtherDevice && { cross_client: true }),
           });
           break;
         case 'tool_response':
@@ -188,7 +192,6 @@ export function useWebSocket() {
             text: msg.text,
             parts: msg.parts,
             timestamp: new Date().toISOString(),
-            ...(fromOtherDevice && { cross_client: true }),
           });
           break;
         case 'auth_response':
@@ -205,6 +208,25 @@ export function useWebSocket() {
         case 'client_status_update':
           useClientStore.getState().setClients(msg.clients);
           break;
+        case 'mic_floor':
+          if (msg.event === 'granted') {
+            // Server granted us the mic floor — start forwarding audio frames
+            micGrantedRef.current = true;
+            useClientStore.getState().setMicFloorHolder(msg.holder || null);
+          } else if (msg.event === 'denied') {
+            // Server denied our acquire request — another device holds the floor
+            micGrantedRef.current = false;
+            useClientStore.getState().setMicFloorHolder(msg.holder || null);
+          } else if (msg.event === 'acquired' || msg.event === 'released') {
+            useClientStore.getState().setMicFloorHolder(
+              msg.event === 'acquired' ? (msg.holder || null) : null
+            );
+          } else if (msg.event === 'busy') {
+            // Fallback path: server rejected a raw audio frame (no mic_acquire sent).
+            micGrantedRef.current = false;
+            useClientStore.getState().setMicFloorHolder(msg.holder || null);
+          }
+          break;
         case 'session_suggestion': {
           const sss = useSessionSuggestionStore.getState();
           // If the server included a session_id, switch to it for continuity
@@ -217,6 +239,7 @@ export function useWebSocket() {
               // Delay reconnect slightly so store has time to update
               setTimeout(() => {
                 if (wsRef.current) {
+                  wsRef.current.onclose = null;
                   wsRef.current.close();
                   wsRef.current = null;
                 }
@@ -282,6 +305,7 @@ export function useWebSocket() {
   // Reconnect (close + re-open) — used when switching sessions
   const reconnect = useCallback(() => {
     if (wsRef.current) {
+      wsRef.current.onclose = null;
       wsRef.current.close();
       wsRef.current = null;
     }
@@ -327,6 +351,10 @@ export function useWebSocket() {
   }, []);
 
   const sendAudio = useCallback((pcm16Buffer) => {
+    // Only forward audio frames after the server has granted the mic floor.
+    // This prevents frames from reaching ADK before the mic_acquire handshake
+    // completes (or when another device holds the floor).
+    if (!micGrantedRef.current) return;
     sendBinaryAudio(wsRef.current, pcm16Buffer);
   }, []);
 
@@ -338,5 +366,18 @@ export function useWebSocket() {
     sendJsonMessage(wsRef.current, { type: 'control', action, ...payload });
   }, []);
 
-  return { sendText, sendAudio, sendImage, sendControl, isConnected, disconnect, reconnect, serverSessionId };
+  // Send explicit mic floor acquire request before streaming audio.
+  // The server will respond with mic_floor:{event:"granted"} or {event:"denied"}.
+  const acquireMic = useCallback(() => {
+    micGrantedRef.current = false; // wait for server grant
+    sendJsonMessage(wsRef.current, { type: 'mic_acquire' });
+  }, []);
+
+  // Send explicit mic floor release when recording stops.
+  const releaseMic = useCallback(() => {
+    micGrantedRef.current = false;
+    sendJsonMessage(wsRef.current, { type: 'mic_release' });
+  }, []);
+
+  return { sendText, sendAudio, sendImage, sendControl, acquireMic, releaseMic, isConnected, disconnect, reconnect, serverSessionId };
 }

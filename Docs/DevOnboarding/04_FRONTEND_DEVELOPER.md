@@ -20,6 +20,63 @@ Make sure the backend is running on `http://localhost:8000`.
 
 ---
 
+## Key Frontend Features
+
+### Mic Floor Lock (Multi-Device)
+
+Prevents two devices from streaming audio to the same ADK session simultaneously.
+
+**Protocol flow** (implemented in `useWebSocket.js` + `useVoiceProvider.jsx`):
+1. User clicks Start → `acquireMic()` sends `{type: "mic_acquire"}` to the server
+2. `micGrantedRef` is set to `false` — `sendAudio()` silently drops all frames until granted
+3. Server responds with `mic_floor:{event:"granted"}` → `micGrantedRef = true`, audio starts flowing
+4. If denied → `mic_floor:{event:"denied"}`, recording auto-stops, toast shown
+5. On stop → `releaseMic()` sends `{type: "mic_release"}` to the server
+6. Server broadcasts `acquired`/`released` events to all other devices → UI updates
+
+**Key files**:
+- `src/hooks/useWebSocket.js` — `acquireMic`, `releaseMic`, `micGrantedRef` guard in `sendAudio`
+- `src/hooks/useVoiceProvider.jsx` — `micBlocked` derived state, `stopRecordingAndRelease` wrapper
+- `src/stores/clientStore.js` — `micFloorHolder` state, `setMicFloorHolder` action
+- `src/components/chat/FloatingVoiceBubble.jsx` — Start button disabled + amber tint when `micBlocked`
+
+**Stale-lock protection**: If the holder stops sending audio for 30 seconds without releasing (e.g. tab crash), the server auto-expires the lock so the next `mic_acquire` always succeeds.
+
+---
+
+### Image Persistence Across Reloads
+
+Images generated during a session survive page reloads via signed GCS URLs.
+
+**How it works**:
+- `generate_image` / `generate_rich_image` tools return a `gcs_uri` (`gs://...`) alongside the base64 preview
+- Backend `sessions.py` (`_events_to_messages`) converts `gs://` URIs to signed HTTPS URLs (60-min TTL) when serving session history
+- `ImageBubble` renders from `image_url` when `image_base64` is absent (history load path)
+- `DashboardPage` passes `images: m.images` and `parts: m.parts` when replaying history messages
+
+**Rendering priority** (in `MessageBubble.jsx → ImageBubble`):
+1. `image_base64` — live session (base64 ephemeral, fastest)
+2. `image_url` — history reload (signed HTTPS URL)
+3. `images[].url` / `parts[].image_url` — multi-image / rich interleaved mode
+
+---
+
+### Cross-Client Message Rendering
+
+When multiple devices are connected, the EventBus fans out every agent response to all of them. Without deduplication, a message would appear twice on the device that triggered it.
+
+**Split-socket deduplication**:
+- `/ws/live` (`useWebSocket.js`) handles: audio, own-device text/images, auth, mic_floor, status
+- `/ws/chat` (`useChatWebSocket.js`) handles: ALL cross-client events (`cross_client: true`)
+- Events tagged with the same `_origin_client_type` as the receiving client are dropped by the relay
+
+**Streaming transcription from other devices**:
+- Partial chunks accumulate in `chatStore.crossTranscript` overlay (not individual bubbles)
+- `finished: true` commits a single message with `cross_client: true, source: "voice"`
+- `ChatPanel` shows a separate live overlay above the message list for the other device's transcript
+
+---
+
 ## Environment Variables
 
 Create `dashboard/.env` from `.env.example`:
@@ -71,7 +128,7 @@ dashboard/src/
 │   ├── authStore.js           # User auth state + Firebase token
 │   ├── chatStore.js           # Messages, agent state, tools
 │   ├── agentActivityStore.js  # Agent reasoning/activity feed
-│   ├── clientStore.js         # Connected clients list
+│   ├── clientStore.js         # Connected clients list + micFloorHolder
 │   ├── mcpStore.js            # Plugin catalog + enabled state
 │   ├── personaStore.js        # Active persona, persona list
 │   ├── sessionStore.js        # Session history

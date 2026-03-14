@@ -61,4 +61,15 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'AGENT_RESPONSE') {
     addTranscriptLine('Omni', message.text);
   }
+  if (message.type === 'SESSION_SUGGESTION') {
+    const devices = (message.available_clients || []).join(', ') || 'another device';
+    const banner = document.createElement('div');
+    banner.className = 'session-banner';
+    banner.innerHTML = `<span>Active session on <b>${devices}</b></span><button id="dismiss-banner">\u00d7</button>`;
+    banner.style.cssText = 'background:#2563eb;color:#fff;padding:8px 12px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:12px;';
+    const existing = document.querySelector('.session-banner');
+    if (existing) existing.remove();
+    transcript.parentNode.insertBefore(banner, transcript);
+    document.getElementById('dismiss-banner')?.addEventListener('click', () => banner.remove());
+  }
 });

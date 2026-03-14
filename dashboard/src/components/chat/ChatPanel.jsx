@@ -21,6 +21,7 @@ export default function ChatPanel({
   const messages = useChatStore((s) => s.messages);
   const agentState = useChatStore((s) => s.agentState);
   const transcript = useChatStore((s) => s.transcript);
+  const crossTranscript = useChatStore((s) => s.crossTranscript);
   const listRef = useRef(null);
 
   // Auto-scroll to bottom on new messages
@@ -28,7 +29,7 @@ export default function ChatPanel({
     if (listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
-  }, [messages, transcript]);
+  }, [messages, transcript, crossTranscript]);
 
   // Listen for tool cancellation custom events
   useEffect(() => {
@@ -73,7 +74,7 @@ export default function ChatPanel({
         {agentState === 'processing' && <TypingIndicator />}
       </div>
 
-      {/* Live transcript overlay */}
+      {/* Live transcript overlay — own device */}
       {(transcript.input || transcript.output) && (
         <div className="border-border/30 bg-muted/20 space-y-1 border-t px-4 py-2">
           {transcript.input && (
@@ -81,6 +82,18 @@ export default function ChatPanel({
           )}
           {transcript.output && (
             <TranscriptLine text={transcript.output} isFinal direction="output" />
+          )}
+        </div>
+      )}
+      {/* Live transcript overlay — other device */}
+      {(crossTranscript.input || crossTranscript.output) && (
+        <div className="border-border/30 bg-muted/10 space-y-1 border-t px-4 py-2">
+          <p className="text-muted-foreground/50 mb-1 text-[10px] uppercase tracking-wide">other device</p>
+          {crossTranscript.input && (
+            <TranscriptLine text={crossTranscript.input} isFinal={false} direction="input" />
+          )}
+          {crossTranscript.output && (
+            <TranscriptLine text={crossTranscript.output} isFinal direction="output" />
           )}
         </div>
       )}

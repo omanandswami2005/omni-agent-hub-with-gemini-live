@@ -19,12 +19,15 @@ import { useAudioPlayback } from '@/hooks/useAudioPlayback';
 import { useVideoCapture } from '@/hooks/useVideoCapture';
 import { useKeyboard } from '@/hooks/useKeyboard';
 import { useChatStore } from '@/stores/chatStore';
+import { useClientStore } from '@/stores/clientStore';
+import { getClientType } from '@/lib/constants';
+import { toast } from 'sonner';
 
 const VoiceContext = createContext(null);
 
 export function VoiceProvider({ children }) {
     // Single unified WebSocket for both audio and text
-    const { sendText, sendAudio, sendImage, sendControl, isConnected, disconnect, reconnect, serverSessionId } = useWebSocket();
+    const { sendText, sendAudio, sendImage, sendControl, acquireMic, releaseMic, isConnected, disconnect, reconnect, serverSessionId } = useWebSocket();
 
     const { startRecording, stopRecording, isRecording, volume: captureVolume, permissionError: micError, clearError: clearMicError, setMuted } = useAudioCapture({
         onAudioData: sendAudio,
@@ -59,25 +62,47 @@ export function VoiceProvider({ children }) {
             stopCapture();
             // Stop any ongoing recording when connection drops
             if (isRecording) {
-                stopRecording();
+                stopRecordingAndRelease();
             }
             // Stop playback when disconnected
             stopPlayback();
         }
         prevConnectedRef.current = isConnected;
-    }, [isConnected, stopCapture, stopRecording, stopPlayback, isRecording]);
+    }, [isConnected, stopCapture, stopRecordingAndRelease, stopPlayback, isRecording]);
+
+    // Mic floor: auto-stop recording when another device acquires the mic floor
+    const micFloorHolder = useClientStore((s) => s.micFloorHolder);
+    const myClientType = getClientType();
+    // True when another device currently holds the mic floor — block recording start
+    const micBlocked = !!(micFloorHolder && micFloorHolder !== myClientType);
+
+    // Wrapper that also sends mic_release to the server when stopping.
+    // Use this instead of bare stopRecording() everywhere inside VoiceProvider.
+    const stopRecordingAndRelease = useCallback(() => {
+        stopRecording();
+        releaseMic();
+    }, [stopRecording, releaseMic]);
+
+    useEffect(() => {
+        if (micBlocked && isRecording) {
+            stopRecordingAndRelease();
+            toast.warning(`Mic in use by ${micFloorHolder}. Stopped recording.`, { duration: 4000 });
+        }
+    }, [micBlocked, micFloorHolder, isRecording, stopRecordingAndRelease]);
 
     // ── Toggles ──────────────────────────────────────────────────────
 
     const toggleRecording = useCallback(() => {
         if (!isConnected && !isRecording) return; // Can't start if live WS disconnected
         if (isRecording) {
-            stopRecording();
+            stopRecordingAndRelease();
         } else {
+            if (micBlocked) return; // Another device holds the floor — refuse silently
             stopPlayback();
-            startRecording();
+            acquireMic();        // Tell server we want the floor BEFORE audio starts
+            startRecording();    // Worklet frames are held until server grants the floor
         }
-    }, [isRecording, isConnected, startRecording, stopRecording, stopPlayback]);
+    }, [isRecording, isConnected, micBlocked, acquireMic, startRecording, stopRecordingAndRelease, stopPlayback]);
 
     const toggleMute = useCallback(() => {
         const next = !isMuted;
@@ -97,9 +122,9 @@ export function VoiceProvider({ children }) {
             stopPlayback();
             useChatStore.getState().clearAudioQueue?.();
             // Also stop recording if active
-            if (isRecording) stopRecording();
+            if (isRecording) stopRecordingAndRelease();
         }
-    }, [voiceEnabled, sendControl, stopPlayback, isRecording, stopRecording]);
+    }, [voiceEnabled, sendControl, stopPlayback, isRecording, stopRecordingAndRelease]);
 
     const toggleScreen = useCallback(async () => {
         if (!isConnected && !isScreenSharing) return; // Can't start if live WS disconnected
@@ -135,12 +160,12 @@ export function VoiceProvider({ children }) {
 
     // Stop all media (voice + video) – used by Escape shortcut
     const stopAll = useCallback(() => {
-        if (isRecording) stopRecording();
+        if (isRecording) stopRecordingAndRelease();
         if (isVideoActive) {
             stopCapture();
             sendControl(isScreenSharing ? 'screen_share_stop' : 'camera_stop');
         }
-    }, [isRecording, isVideoActive, isScreenSharing, stopRecording, stopCapture, sendControl]);
+    }, [isRecording, isVideoActive, isScreenSharing, stopRecordingAndRelease, stopCapture, sendControl]);
 
     // Global keyboard shortcuts
     useKeyboard({
@@ -172,6 +197,7 @@ export function VoiceProvider({ children }) {
             voiceEnabled,
             captureVolume,
             playbackVolume,
+            micBlocked,
             // Video state
             isScreenSharing,
             isCameraOn,
@@ -194,7 +220,7 @@ export function VoiceProvider({ children }) {
         [
             sendText, sendAudio, sendImage, sendControl, isConnected, disconnect,
             reconnect, serverSessionId,
-            isRecording, isMuted, voiceEnabled, captureVolume, playbackVolume,
+            isRecording, isMuted, voiceEnabled, captureVolume, playbackVolume, micBlocked,
             isScreenSharing, isCameraOn, isVideoActive, videoSource, getPreviewStream,
             permissionError, clearPermissionError,
             toggleRecording, toggleMute, toggleVoice, toggleScreen, toggleCamera,

@@ -92,7 +92,7 @@ async def list_messages(
     if session is None or not session.events:
         return []
 
-    messages = _events_to_messages(session.events)
+    messages = await _events_to_messages(session.events)
 
     # Update message_count in Firestore to stay in sync with actual message count
     if messages:
@@ -104,7 +104,29 @@ async def list_messages(
     return messages
 
 
-def _events_to_messages(events: list) -> list[ChatMessage]:
+async def _gcs_uri_to_https(gcs_uri: str) -> str:
+    """Convert a gs://bucket/path URI to a browseable HTTPS URL.
+
+    Tries to generate a signed URL first; falls back to the public HTTPS URL.
+    Returns the original string unchanged if it is not a gs:// URI.
+    """
+    if not gcs_uri or not gcs_uri.startswith("gs://"):
+        return gcs_uri  # already an HTTPS URL or empty
+    import asyncio as _asyncio
+    from app.services.storage_service import get_storage_service
+    # gs://bucket-name/path/to/file  →  path/to/file
+    parts = gcs_uri[5:].split("/", 1)  # strip "gs://"
+    bucket = parts[0]
+    path = parts[1] if len(parts) > 1 else ""
+    svc = get_storage_service()
+    try:
+        return await _asyncio.to_thread(svc.generate_signed_url, path, expiry_minutes=60)
+    except Exception:
+        # Fallback: public HTTPS URL (works if bucket/object is public)
+        return f"https://storage.googleapis.com/{bucket}/{path}"
+
+
+async def _events_to_messages(events: list) -> list[ChatMessage]:
     """Convert ADK session events into a flat list of chat messages.
 
     Extracts:
@@ -227,22 +249,49 @@ def _events_to_messages(events: list) -> list[ChatMessage]:
 
             # For image tools, emit an image message with URL so the UI can show the image
             if is_image_tool and response_dict:
-                image_url = response_dict.get("image_url") or response_dict.get("gcs_uri") or ""
-                # Only emit the image message, not the action (avoid duplicate)
-                messages.append(
-                    ChatMessage(
-                        role="assistant",
-                        content=result_str,
-                        type="image",
-                        tool_name=fr.name,
-                        description=response_dict.get("description", result_str),
-                        image_url=image_url,
-                        responded=True,
-                        success=True,
-                        action_kind=kind,
-                        source_label=label,
+                # generate_image: {"image_url": "gs://...", "description": "...", "mime_type": "..."}
+                # generate_rich_image: {"text_summary": "...", "image_parts": [{"gcs_uri": ..., "mime_type": ...}]}
+                if fr.name == "generate_rich_image":
+                    text_summary = response_dict.get("text_summary", result_str)
+                    raw_image_parts = response_dict.get("image_parts", [])
+                    # Convert gcs_uris to HTTPS URLs
+                    parts = [{"type": "text", "content": text_summary}] if text_summary else []
+                    for ip in raw_image_parts:
+                        url = await _gcs_uri_to_https(ip.get("gcs_uri", ""))
+                        if url:
+                            parts.append({"type": "image", "image_url": url, "mime_type": ip.get("mime_type", "image/png")})
+                    messages.append(
+                        ChatMessage(
+                            role="assistant",
+                            content=text_summary,
+                            type="image",
+                            tool_name=fr.name,
+                            description=text_summary,
+                            parts=parts,
+                            responded=True,
+                            success=True,
+                            action_kind=kind,
+                            source_label=label,
+                        )
                     )
-                )
+                else:
+                    # generate_image
+                    raw_url = response_dict.get("image_url") or response_dict.get("gcs_uri") or ""
+                    image_url = await _gcs_uri_to_https(raw_url)
+                    messages.append(
+                        ChatMessage(
+                            role="assistant",
+                            content=result_str,
+                            type="image",
+                            tool_name=fr.name,
+                            description=response_dict.get("description", result_str),
+                            image_url=image_url,
+                            responded=True,
+                            success=True,
+                            action_kind=kind,
+                            source_label=label,
+                        )
+                    )
             else:
                 # For non-image tools, emit action message
                 messages.append(

@@ -63,6 +63,9 @@ from app.services.event_bus import EventBus, get_event_bus
 # _process_event() call so _publish() can stamp the origin connection.
 # Subscribers (e.g. the ws_chat relay task) use this to drop their own echoes.
 _conn_tag_var: contextvars.ContextVar[str] = contextvars.ContextVar("conn_tag", default="")
+# Per-task context variable: set to the client_type string in _process_event()
+# so _publish() can embed _origin_client_type in every EventBus event.
+_client_type_var: contextvars.ContextVar[str] = contextvars.ContextVar("client_type", default="")
 from app.services.mcp_manager import get_mcp_manager
 from app.services.memory_service import get_memory_service
 from app.utils.logging import get_logger
@@ -513,12 +516,43 @@ async def _upstream(
     - **JSON text frames** → control messages → ``send_content``
     """
     _upstream_client_type = client_type or ClientType.WEB
+    _title_generated = False
+    _holds_mic_floor = False  # True once this connection has acquired the floor
+    _busy_notified = False    # Limit busy notifications to once per "episode"
     from google.genai import types
 
     try:
         while True:
             msg = await websocket.receive()
             if msg.get("bytes"):
+                mgr = get_connection_manager()
+                if not _holds_mic_floor:
+                    # Fallback auto-acquire: for clients that don't send mic_acquire first.
+                    if mgr.try_acquire_mic_floor(user_id, _upstream_client_type):
+                        _holds_mic_floor = True
+                        _busy_notified = False
+                        floor_msg = json.dumps({
+                            "type": "mic_floor",
+                            "event": "acquired",
+                            "holder": str(_upstream_client_type),
+                        })
+                        asyncio.create_task(mgr.send_to_user(user_id, floor_msg))
+                    else:
+                        # Another device holds the floor — notify once then drop silently
+                        if not _busy_notified:
+                            _busy_notified = True
+                            holder = mgr.get_mic_floor_holder(user_id)
+                            busy_msg = json.dumps({
+                                "type": "mic_floor",
+                                "event": "busy",
+                                "holder": str(holder) if holder else "unknown",
+                            })
+                            with contextlib.suppress(Exception):
+                                await websocket.send_text(busy_msg)
+                        continue  # drop this audio frame
+                else:
+                    # Keep the stale-lock watchdog alive on every frame
+                    mgr.touch_mic_floor(user_id, _upstream_client_type)
                 audio_blob = types.Blob(
                     mime_type=AUDIO_INPUT_MIME,
                     data=msg["bytes"],
@@ -549,6 +583,13 @@ async def _upstream(
                     # Increment message count (best-effort, non-blocking)
                     if firestore_session_id:
                         asyncio.create_task(_increment_msg_count(firestore_session_id))
+                    # Auto-generate session title from first text message
+                    if not _title_generated and firestore_session_id and content_str.strip():
+                        _title_generated = True
+                        from app.services.session_service import get_session_service as _get_fs_svc
+                        asyncio.create_task(
+                            _get_fs_svc().generate_title_from_message(firestore_session_id, content_str)
+                        )
                 elif msg_type == "image":
                     import base64
 
@@ -612,6 +653,53 @@ async def _upstream(
                         logger.info(
                             "voice_toggle", user_id=user_id, enabled=data.get("voice_enabled", True)
                         )
+                elif msg_type == "mic_acquire":
+                    # Explicit mic floor request — client sends this before streaming audio.
+                    # Preferred over the fallback auto-acquire on first binary frame because it
+                    # happens synchronously in JS before the AudioWorklet starts sending data.
+                    mgr = get_connection_manager()
+                    if mgr.try_acquire_mic_floor(user_id, _upstream_client_type):
+                        _holds_mic_floor = True
+                        _busy_notified = False
+                        # Unicast "granted" to this client
+                        granted_msg = json.dumps({
+                            "type": "mic_floor",
+                            "event": "granted",
+                            "holder": str(_upstream_client_type),
+                        })
+                        with contextlib.suppress(Exception):
+                            await websocket.send_text(granted_msg)
+                        # Broadcast "acquired" to ALL clients (including self) for UI state sync
+                        floor_msg = json.dumps({
+                            "type": "mic_floor",
+                            "event": "acquired",
+                            "holder": str(_upstream_client_type),
+                        })
+                        asyncio.create_task(mgr.send_to_user(user_id, floor_msg))
+                        logger.info("mic_acquire_granted", user_id=user_id, client_type=_upstream_client_type)
+                    else:
+                        holder = mgr.get_mic_floor_holder(user_id)
+                        denied_msg = json.dumps({
+                            "type": "mic_floor",
+                            "event": "denied",
+                            "holder": str(holder) if holder else "unknown",
+                        })
+                        with contextlib.suppress(Exception):
+                            await websocket.send_text(denied_msg)
+                        logger.info("mic_acquire_denied", user_id=user_id, holder=holder)
+                elif msg_type == "mic_release":
+                    # Explicit release — client sends when recording stops.
+                    mgr = get_connection_manager()
+                    released = mgr.release_mic_floor(user_id, _upstream_client_type)
+                    if released:
+                        _holds_mic_floor = False
+                        floor_msg = json.dumps({
+                            "type": "mic_floor",
+                            "event": "released",
+                            "holder": str(_upstream_client_type),
+                        })
+                        asyncio.create_task(mgr.send_to_user(user_id, floor_msg))
+                        logger.info("mic_release_explicit", user_id=user_id, client_type=_upstream_client_type)
                 # Other control messages (persona_switch)
                 # are handled at the API layer, not pushed to ADK
     except (WebSocketDisconnect, RuntimeError):
@@ -621,6 +709,18 @@ async def _upstream(
         logger.exception("ws_upstream_error", user_id=user_id)
     finally:
         queue.close()  # Signal run_live() to stop gracefully
+        # Release mic floor if this connection held it, and notify other clients
+        if _holds_mic_floor:
+            mgr = get_connection_manager()
+            released = mgr.release_mic_floor(user_id, _upstream_client_type)
+            if released:
+                import json as _json
+                floor_msg = _json.dumps({
+                    "type": "mic_floor",
+                    "event": "released",
+                    "holder": str(_upstream_client_type),
+                })
+                asyncio.create_task(mgr.send_to_user(user_id, floor_msg))
 
 
 # ── Downstream (ADK → client) ────────────────────────────────────────
@@ -633,6 +733,7 @@ async def _downstream(
     session_id: str,
     queue: LiveRequestQueue,
     run_config: RunConfig,
+    client_type: str = "",
 ) -> None:
     """Stream events from ``run_live()`` back to the client.
 
@@ -657,7 +758,7 @@ async def _downstream(
             if first_event:
                 logger.info("live_connection_established", user_id=user_id, session_id=session_id)
                 first_event = False
-            await _process_event(websocket, event, bus, user_id, conn_tag=str(id(websocket)))
+            await _process_event(websocket, event, bus, user_id, conn_tag=str(id(websocket)), client_type=client_type)
     except (WebSocketDisconnect, RuntimeError):
         logger.info("ws_downstream_disconnected", user_id=user_id)
     except Exception as exc:
@@ -771,14 +872,16 @@ async def _process_event(
     bus: EventBus | None = None,
     user_id: str = "",
     conn_tag: str = "",
+    client_type: str = "",
 ) -> None:
     """Translate a single ADK Event into WebSocket frames.
 
     Non-audio JSON messages are also published to *bus* so that
     connected dashboard clients receive real-time updates.
     """
-    # Stamp the current task's context so _publish() can embed the origin tag.
+    # Stamp context vars so _publish() can embed the origin tag + client type.
     _conn_tag_var.set(conn_tag)
+    _client_type_var.set(client_type)
     # ── Audio output ──────────────────────────────────────────────
     if event.content and event.content.parts:
         for part in event.content.parts:
@@ -900,15 +1003,18 @@ async def _process_event(
 async def _publish(bus: EventBus | None, user_id: str, json_str: str) -> None:
     """Publish to the event bus if available.
 
-    Embeds ``_origin_conn`` into the JSON when the current task's context
-    has a connection tag set (see ``_conn_tag_var``).  Relay subscribers
-    use this field to skip echoes of their own events.
+    Embeds ``_origin_conn`` and ``_origin_client_type`` into the JSON so that
+    relay subscribers can drop their own echoes and same-device duplicates.
     """
     if bus and user_id:
         conn_tag = _conn_tag_var.get()
-        if conn_tag:
+        ct = _client_type_var.get()
+        if conn_tag or ct:
             d = json.loads(json_str)
-            d["_origin_conn"] = conn_tag
+            if conn_tag:
+                d["_origin_conn"] = conn_tag
+            if ct:
+                d["_origin_client_type"] = ct
             json_str = json.dumps(d)
         await bus.publish(user_id, json_str)
 
@@ -917,18 +1023,35 @@ async def _relay_cross_events(
     websocket: WebSocket,
     queue: asyncio.Queue[str],
     own_conn_tag: str,
+    own_client_type: str = "",
 ) -> None:
     """Forward EventBus events that did NOT originate from this connection.
 
     Used by ``ws_chat`` so that voice-session events from ``ws_live`` (e.g.
     a mobile caller) appear in the desktop chat panel in real-time.
+
+    Infrastructure events (``session_suggestion``, ``client_status_update``)
+    are skipped here because they are already delivered by ``/ws/events``.
+
+    Events that originated from the SAME client_type (same device) are also
+    skipped to prevent same-device duplication when both /ws/live and /ws/chat
+    are open simultaneously — /ws/live already renders them directly.
     """
+    _INFRA_TYPES = {"session_suggestion", "client_status_update"}
     try:
         while True:
             json_str = await queue.get()
             d = json.loads(json_str)
             if d.pop("_origin_conn", None) == own_conn_tag:
                 # Own echo — already sent directly via websocket.send_text()
+                continue
+            if d.get("type") in _INFRA_TYPES:
+                # Handled by /ws/events — don't duplicate on live/chat sockets
+                continue
+            origin_ct = d.pop("_origin_client_type", "")
+            if own_client_type and origin_ct and origin_ct == own_client_type:
+                # Same device type — /ws/live already rendered this directly;
+                # skip to prevent duplication in the parallel /ws/chat relay.
                 continue
             d["cross_client"] = True
             with contextlib.suppress(Exception):
@@ -1200,7 +1323,7 @@ async def ws_live(websocket: WebSocket) -> None:
     cross_queue = bus.create_queue()
     bus.subscribe(user.uid, cross_queue)
     relay_task = asyncio.create_task(
-        _relay_cross_events(websocket, cross_queue, own_conn_tag),
+        _relay_cross_events(websocket, cross_queue, own_conn_tag, own_client_type=str(client_type)),
         name=f"live_relay_{own_conn_tag}",
     )
 
@@ -1209,7 +1332,8 @@ async def ws_live(websocket: WebSocket) -> None:
         session_msg = {
             "type": "session_suggestion",
             "session_id": firestore_session_id,
-            "message": "Session active on another device.",
+            "available_clients": [str(client_type)],
+            "message": f"Session active on {client_type}.",
             "_origin_conn": own_conn_tag,
         }
         asyncio.create_task(bus.publish(user.uid, json.dumps(session_msg)))
@@ -1228,15 +1352,10 @@ async def ws_live(websocket: WebSocket) -> None:
             _upstream(websocket, queue, user.uid, client_type, firestore_session_id, own_conn_tag),
             name="upstream",
         )
-        down_task = asyncio.create_task(
-            _downstream(websocket, runner, user.uid, session_id, queue, run_config),
-            name="downstream",
-        )
         # Only start downstream (agent runner) if we have a valid session_id
-        # In stateless mode (no session), skip the agent runner
         if session_id:
             down_task = asyncio.create_task(
-                _downstream(websocket, runner, user.uid, session_id, queue, run_config),
+                _downstream(websocket, runner, user.uid, session_id, queue, run_config, client_type=str(client_type)),
                 name="downstream",
             )
             tasks = {up_task, down_task}
@@ -1244,7 +1363,7 @@ async def ws_live(websocket: WebSocket) -> None:
             tasks = {up_task}
         # When either task finishes (disconnect or error), cancel the other
         done, pending = await asyncio.wait(
-            {up_task, down_task},
+            tasks,
             return_when=asyncio.FIRST_COMPLETED,
         )
         for task in pending:
@@ -1422,12 +1541,13 @@ async def ws_chat(websocket: WebSocket) -> None:
     cross_queue = bus.create_queue()
     bus.subscribe(user.uid, cross_queue)
     relay_task = asyncio.create_task(
-        _relay_cross_events(websocket, cross_queue, own_conn_tag),
+        _relay_cross_events(websocket, cross_queue, own_conn_tag, own_client_type=str(client_type)),
         name=f"chat_relay_{own_conn_tag}",
     )
 
     logger.info("ws_chat_connected", user_id=user.uid, session_id=session_id)
 
+    _first_message_in_chat = True
     try:
         while True:
             raw = await websocket.receive_text()
@@ -1439,10 +1559,18 @@ async def ws_chat(websocket: WebSocket) -> None:
             if data.get("type") != "text" or not data.get("content", "").strip():
                 continue
 
+            user_text = data["content"]
             content = types.Content(
-                parts=[types.Part(text=data["content"])],
+                parts=[types.Part(text=user_text)],
                 role="user",
             )
+
+            # Auto-generate session title from first user message (non-blocking)
+            if _first_message_in_chat and firestore_session_id:
+                _first_message_in_chat = False
+                asyncio.create_task(
+                    _fs_svc.generate_title_from_message(firestore_session_id, user_text)
+                )
 
             # Status: thinking
             thinking_msg = StatusMessage(state=AgentState.PROCESSING)
@@ -1454,7 +1582,7 @@ async def ws_chat(websocket: WebSocket) -> None:
                     session_id=session_id,
                     new_message=content,
                 ):
-                    await _process_event(websocket, event, bus, user.uid, conn_tag=own_conn_tag)
+                    await _process_event(websocket, event, bus, user.uid, conn_tag=own_conn_tag, client_type=str(client_type))
                 # run_async events don't carry turn_complete, so send IDLE explicitly
                 idle_msg = StatusMessage(state=AgentState.IDLE)
                 await websocket.send_text(idle_msg.model_dump_json())

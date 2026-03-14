@@ -31,6 +31,19 @@ export const CLIENT_TYPES = {
   ESP32: 'esp32_device',
 };
 
+/**
+ * Returns the correct client_type string to send in the WS auth handshake.
+ * Mobile browsers (phone/tablet) send "mobile" so they occupy a separate
+ * slot in ConnectionManager from desktop browsers which send "web".
+ */
+export function getClientType() {
+  const ua = navigator.userAgent;
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|mobile|CriOS/i.test(ua);
+  // Also treat narrow-screen as mobile (PWA installed on phone)
+  const isNarrow = window.screen.width <= 768;
+  return isMobile || isNarrow ? 'mobile' : 'web';
+}
+
 export const ROUTES = {
   HOME: '/',
   PERSONAS: '/personas',

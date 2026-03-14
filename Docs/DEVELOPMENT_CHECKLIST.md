@@ -473,8 +473,8 @@ After implementing, verify:
 
 - [ ] **20.1** — Implement `dashboard/src/App.jsx` with React Router v7: routes for `/` (Dashboard), `/personas`, `/mcp-store`, `/sessions`, `/clients`, `/settings`, `*` (404)
 - [ ] **20.2** — Implement `dashboard/src/components/layout/AppShell.jsx` — main layout: Sidebar (256px / 64px collapsed) + TopBar (56px) + main content area
-- [ ] **20.3** — Implement `dashboard/src/components/layout/Sidebar.jsx` — navigation links with Lucide icons, collapse/expand toggle, active route highlighting, keyboard shortcut hints
-- [ ] **20.4** — Implement `dashboard/src/components/layout/TopBar.jsx` — app title, UserMenu, ThemeToggle, connected client count badge
+- [x] **20.3** — Implement `dashboard/src/components/layout/Sidebar.jsx` — navigation links with Lucide icons, collapse/expand toggle, active route highlighting, keyboard shortcut hints; includes **live client activity dots** next to Clients nav item (green `●` per connected client, up to 3 + overflow count)
+- [x] **20.4** — Implement `dashboard/src/components/layout/TopBar.jsx` — app title, UserMenu, ThemeToggle, connected client count badge
 - [ ] **20.5** — Implement `dashboard/src/components/layout/MobileNav.jsx` — bottom navigation bar for mobile (< 768px), voice orb center, quick-access buttons
 - [ ] **20.6** — Implement `dashboard/src/stores/uiStore.js` — Zustand store: `sidebarOpen`, `commandPaletteOpen`, `activeModals`, `toggleSidebar()`, `openModal()`, `closeModal()`
 - [ ] **20.7** — Write test: verify AppShell renders Sidebar + TopBar, route changes show correct page
@@ -511,13 +511,15 @@ After implementing, verify:
   - `sendBinary(ws, audioBuffer)` — send binary audio frame
   - `parseMessage(event)` — parse incoming message (binary = audio, text = JSON)
   - Reconnection with exponential backoff (1s → 2s → 4s → max 30s)
-- [ ] **22.2** — Implement `dashboard/src/hooks/useWebSocket.js` — React hook:
+- [x] **22.2** — Implement `dashboard/src/hooks/useWebSocket.js` — React hook:
   - Connects to `ws://host/ws/live` on mount with auth token
   - Handles auth handshake (send auth message, wait for auth_response)
   - Exposes: `sendMessage(msg)`, `sendAudio(buffer)`, `isConnected`, `connectionState`
   - Dispatches received messages to appropriate Zustand stores (chatStore for responses, clientStore for status, etc.)
   - Auto-reconnect on disconnect
   - Cleanup on unmount
+- [x] **22.2b** — Implement `dashboard/src/hooks/useChatWebSocket.js` — text-only `/ws/chat` hook for ADK runner (independent of audio live session); same message protocol; includes `sendText()` with optimistic UI and auto-title refresh
+- [x] **22.2c** — Implement `dashboard/src/hooks/useEventSocket.js` — read-only `/ws/events` hook for dashboard push notifications (pipeline events, `client_status_update`, `session_suggestion`); routes events to pipelineStore, clientStore, sessionSuggestionStore
 - [ ] **22.3** — Write test: verify WebSocket hook connects, authenticates, and dispatches messages to stores
 
 **Dependencies**: Task 19, Task 21
@@ -602,12 +604,14 @@ After implementing, verify:
 
 ### Task 26: Dashboard Main Page Assembly
 
-- [ ] **26.1** — Implement `dashboard/src/pages/DashboardPage.jsx` — assemble: ChatPanel (left 60%) + GenUI panel (right 40%) + VoiceOrb overlay
+- [x] **26.1** — Implement `dashboard/src/pages/DashboardPage.jsx` — assemble: ChatPanel (left 60%) + GenUI panel (right 40%) + VoiceOrb overlay
   - Responsive: mobile = full-width chat, GenUI in modal overlay
-  - Connect all hooks: useWebSocket, useAudioCapture, useAudioPlayback
+  - Connect all hooks: useWebSocket, useAudioCapture, useAudioPlayback, useChatWebSocket
   - Wire chatStore: incoming messages → MessageBubble list
   - Wire GenUI: incoming genui responses → GenUIRenderer
   - Wire audio: capture → sendBinary, received audio → enqueueAudio
+  - **Voice persona switcher** dropdown in overview sidebar — switch active persona live, auto-reconnects WS
+  - **Session suggestion banner** renders when another device has an active session
 - [ ] **26.2** — Implement `dashboard/src/hooks/useKeyboard.js` — global keyboard shortcuts:
   - `Ctrl+K` / `Cmd+K`: command palette
   - `Space` (when not in input): toggle recording
@@ -666,7 +670,7 @@ After implementing, verify:
 
 ### Task 29: Sessions Page & Components
 
-- [ ] **29.1** — Implement `dashboard/src/stores/sessionStore.js` — Zustand store: `sessions[]`, `currentSessionId`, `isLoading`, `loadSessions()`, `createSession()`, `switchSession()`, `deleteSession()`
+- [x] **29.1** — Implement `dashboard/src/stores/sessionStore.js` — Zustand store: `sessions[]`, `currentSessionId`, `isLoading`, `loadSessions()`, `createSession()`, `switchSession()`, `deleteSession()`, `ensureSession()`, `setActiveSession()`, `setWantsNewSession()`; **session title auto-generation**: backend generates ≤6-word title from first user message via Gemini, frontend refreshes session list 4s after first send
 - [ ] **29.2** — Implement `dashboard/src/components/session/SessionList.jsx` — sidebar list: date groups, title snippet, last message time, delete/export hover actions
 - [ ] **29.3** — Implement `dashboard/src/components/session/SessionItem.jsx` — individual session entry with active highlight
 - [ ] **29.4** — Implement `dashboard/src/components/session/SessionSearch.jsx` — full-text search across conversation history

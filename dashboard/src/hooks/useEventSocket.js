@@ -10,6 +10,10 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { auth } from '@/lib/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { usePipelineStore } from '@/stores/pipelineStore';
+import { useClientStore } from '@/stores/clientStore';
+import { useSessionSuggestionStore } from '@/stores/sessionSuggestionStore';
+import { useSessionStore } from '@/stores/sessionStore';
+import { getClientType } from '@/lib/constants';
 
 /**
  * Derive the /ws/events URL from VITE_WS_URL or current host,
@@ -60,6 +64,33 @@ export function useEventSocket() {
 
                 // Route pipeline events
                 usePipelineStore.getState().handleEvent(msg);
+
+                // Route client status events
+                if (msg.type === 'client_status_update' && msg.clients) {
+                    useClientStore.getState().setClients(msg.clients);
+                }
+
+                // Route session suggestion events
+                if (msg.type === 'session_suggestion') {
+                    const suggStore = useSessionSuggestionStore.getState();
+                    if (msg.session_id) {
+                        const ss = useSessionStore.getState();
+                        ss.ensureSession(msg.session_id);
+                        ss.setActiveSession(msg.session_id);
+                    }
+                    // Suppress banner when this broadcast is about our own device type
+                    // (e.g. mobile receiving the EventBus echo that it just connected)
+                    const myType = getClientType();
+                    const isSelfBroadcast =
+                        (msg.available_clients || []).length === 1 &&
+                        msg.available_clients[0] === myType;
+                    if (!suggStore.autoJoin && !isSelfBroadcast) {
+                        suggStore.setSuggestion({
+                            ...msg,
+                            availableClients: msg.available_clients || [],
+                        });
+                    }
+                }
             } catch {
                 // ignore non-JSON
             }

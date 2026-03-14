@@ -396,8 +396,30 @@ root = build_root_agent(personas, tools_by_persona=tools_by_persona)
 9. **Step 9** — Update agent_factory to capability-based
 10. **Step 10** — Update session bootstrap callers
 11. **Step 11** *(added)* — OAuth MCP support (`MCP_OAUTH` kind, `OAuthService`, 3 API endpoints, UI popup flow)
+12. **Step 12** *(added)* — Smart session features: session title auto-generation, cross-client session suggestion broadcast, live client activity dots, voice persona switcher UI — see **Smart Session & Cross-Client Improvements** below
 
 ---
+
+## Smart Session & Cross-Client Improvements
+
+### Session Title Auto-Generation
+- **Backend** (`backend/app/services/session_service.py`): `generate_title_from_message(session_id, user_message)` — checks if session still has the default `"Session 202…"` title, then calls `_generate_title()` which sends a Gemini `TEXT_MODEL` request (via `asyncio.to_thread`) to produce a ≤6 word title; updates Firestore non-blocking.
+- **Trigger points**: first user text message in both `/ws/live` (`_upstream`) and `/ws/chat` handler.
+- **Frontend** (`dashboard/src/hooks/useChatWebSocket.js`): after the first `sendText()` call, schedules `loadSessions()` refresh after 4 s so the auto-generated title appears in the sidebar.
+
+### Cross-Client Session Suggestion
+- **EventBus broadcast** (`ws_live.py`): after a client connects and auth succeeds, publishes `session_suggestion` to `EventBus` with `available_clients: [str(client_type)]` and a human-readable message. The `_relay_cross_events` helper skips `session_suggestion` and `client_status_update` so `/ws/events` remains the sole delivery channel for infrastructure events (prevents triple-delivery).
+- **Dashboard** (`useEventSocket.js`): routes `session_suggestion` → `sessionSuggestionStore.setSuggestion()` + `sessionStore.ensureSession()` + `sessionStore.setActiveSession()` (in that order to avoid orphaned active IDs).
+- **Desktop client** (`desktop-client/src/ws_client.py`): `_dispatch()` handles `session_suggestion` and invokes registered handler callback.
+- **Chrome extension** (`chrome-extension/background.js`): `handleServerMessage()` forwards `session_suggestion` to popup; `popup.js` renders a dismissible blue banner.
+
+### Live Client Activity Dots (Sidebar)
+- `Sidebar.jsx` subscribes to `useClientStore` and renders up to 3 green dots (+ overflow count) next to the **Clients** nav item, reflecting currently connected clients in real-time.
+
+### Voice Persona Switcher
+- `DashboardPage.jsx` overview panel: dropdown `<select>` listing all personas (`name — voice`), wired to `personaStore.setActivePersona()`. A `useEffect` watching `activePersona?.id` triggers `voice.reconnect()` when the persona changes, so the backend resumes with the new voice/system instruction.
+
+
 
 ## ADK Reference Patterns Used
 

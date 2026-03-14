@@ -59,6 +59,8 @@ export default function DashboardPage() {
                 image_url: m.image_url || '',
                 description: m.description || '',
                 text: m.type === 'image' ? (m.description || m.content || '') : undefined,
+                images: m.images || [],
+                parts: m.parts || [],
             }));
         });
     }, [sessionId, loadMessages, switchSession, clearMessages, addMessage]);
@@ -113,8 +115,8 @@ export default function DashboardPage() {
                     <button
                         onClick={() => setSidebarTab('overview')}
                         className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${sidebarTab === 'overview'
-                                ? 'bg-primary text-primary-foreground'
-                                : 'text-muted-foreground hover:bg-muted'
+                            ? 'bg-primary text-primary-foreground'
+                            : 'text-muted-foreground hover:bg-muted'
                             }`}
                     >
                         Overview
@@ -122,8 +124,8 @@ export default function DashboardPage() {
                     <button
                         onClick={() => setSidebarTab('pipeline')}
                         className={`relative flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${sidebarTab === 'pipeline'
-                                ? 'bg-primary text-primary-foreground'
-                                : 'text-muted-foreground hover:bg-muted'
+                            ? 'bg-primary text-primary-foreground'
+                            : 'text-muted-foreground hover:bg-muted'
                             }`}
                     >
                         Pipeline
@@ -153,14 +155,27 @@ export default function DashboardPage() {
                             </div>
                         </div>
 
-                        {/* Active persona */}
+                        {/* Active persona + switcher */}
                         {activePersona && (
                             <div>
                                 <p className="mb-2 text-xs font-medium text-muted-foreground">Active Persona</p>
                                 <PersonaCard persona={activePersona} isActive />
-                                <p className="mt-1 text-[10px] text-muted-foreground">
-                                    Change persona in Settings
-                                </p>
+                                {personas.length > 1 && (
+                                    <select
+                                        value={activePersona.id}
+                                        onChange={(e) => {
+                                            const p = personas.find((p) => p.id === e.target.value);
+                                            if (p) setActivePersona(p);
+                                        }}
+                                        className="mt-2 w-full rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-primary"
+                                    >
+                                        {personas.map((p) => (
+                                            <option key={p.id} value={p.id}>
+                                                {p.name} — {p.voice || 'default voice'}
+                                            </option>
+                                        ))}
+                                    </select>
+                                )}
                             </div>
                         )}
 

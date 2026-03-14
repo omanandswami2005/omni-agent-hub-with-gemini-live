@@ -170,10 +170,17 @@ async def generate_image(
         logger.warning("image_generated_no_user_id", prompt=prompt[:80])
 
     summary = text_summary or full_prompt
-    return (
-        f"Successfully generated an image of: {summary}. "
-        "The image has been sent to the user's dashboard."
-    )
+    # Return a structured dict so ADK stores image_url in the session event.
+    # Gemini reads the `result` key; the other keys are metadata for session replay.
+    return {
+        "result": (
+            f"Successfully generated an image of: {summary}. "
+            "The image has been sent to the user's dashboard."
+        ),
+        "image_url": gcs_uri,
+        "description": full_prompt,
+        "mime_type": mime_type,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -274,11 +281,22 @@ async def generate_rich_image(
         logger.warning("rich_image_generated_no_user_id", prompt=prompt[:80])
 
     img_count = len(images)
-    return (
-        f"{summary}\n\n"
-        f"Generated {img_count} image{'s' if img_count != 1 else ''} "
-        "and sent them to the user's dashboard."
-    )
+    # Return a structured dict so ADK stores gcs_uris in the session event.
+    # Strip base64 to avoid bloating Gemini's context window.
+    image_parts_for_storage = [
+        {"gcs_uri": img["gcs_uri"], "mime_type": img.get("mime_type", "image/png")}
+        for img in images
+        if img.get("gcs_uri")
+    ]
+    return {
+        "result": (
+            f"{summary}\n\n"
+            f"Generated {img_count} image{'s' if img_count != 1 else ''} "
+            "and sent them to the user's dashboard."
+        ),
+        "text_summary": summary,
+        "image_parts": image_parts_for_storage,
+    }
 
 
 # ---------------------------------------------------------------------------

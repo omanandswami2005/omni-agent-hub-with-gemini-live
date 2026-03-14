@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import json
 import os
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -39,6 +40,10 @@ _INSTANCE_ID = os.environ.get("K_REVISION", "") + "-" + os.urandom(4).hex()
 
 _PRESENCE_COLLECTION = "client_presence"
 
+# How long (seconds) a mic floor holder can be silent before the lock expires.
+# Prevents indefinite locks when a client stops sending audio without releasing.
+_STALE_MIC_TIMEOUT_S = 30.0
+
 
 class ConnectionManager:
     """Hybrid connection registry: local WebSocket refs + Firestore presence.
@@ -56,6 +61,14 @@ class ConnectionManager:
         self._aux_sockets: dict[str, dict[str, WebSocket]] = {}
         # { user_id: { client_type: { "capabilities": [...], "local_tools": [...] } } }
         self._capabilities: dict[str, dict[ClientType, dict]] = {}
+        # Mic floor lock: tracks which client_type currently holds the active voice mic per user.
+        # Only one device can stream audio at a time to avoid Gemini Live collision.
+        # { user_id: ClientType }
+        self._mic_floor: dict[str, ClientType] = {}
+        # Timestamp (monotonic) of the last audio frame from the current floor holder.
+        # Used to expire stale locks when a holder goes silent without releasing.
+        # { user_id: float }
+        self._mic_last_audio: dict[str, float] = {}
         self._reaper_task: asyncio.Task | None = None
         self._db = None  # lazy Firestore client
 
@@ -128,6 +141,8 @@ class ConnectionManager:
             user_caps.pop(client_type, None)
             if not user_caps:
                 self._capabilities.pop(user_id, None)
+        # Release mic floor if this client was holding it
+        self.release_mic_floor(user_id, client_type)
         logger.info("client_disconnected", user_id=user_id, client_type=client_type)
 
         # Remove Firestore presence (best-effort, non-blocking)
@@ -180,6 +195,61 @@ class ConnectionManager:
             }
         )
         await self.send_to_user(user_id, payload)
+
+    # ── Mic Floor Lock ────────────────────────────────────────────────
+
+    def try_acquire_mic_floor(self, user_id: str, client_type: ClientType) -> bool:
+        """Try to acquire the voice mic floor for *client_type*.
+
+        Returns True if the floor was acquired (or already held by this client).
+        Returns False if another client_type is currently holding the floor.
+
+        Stale-lock eviction: if the current holder has not sent audio for
+        ``_STALE_MIC_TIMEOUT_S`` seconds the lock is automatically expired
+        before the new acquire is evaluated.
+        """
+        current = self._mic_floor.get(user_id)
+        if current is not None and current != client_type:
+            # Auto-expire if the holder has gone silent
+            last = self._mic_last_audio.get(user_id, 0.0)
+            if time.monotonic() - last > _STALE_MIC_TIMEOUT_S:
+                logger.info(
+                    "mic_floor_stale_expired",
+                    user_id=user_id,
+                    evicted=current,
+                    new_holder=client_type,
+                )
+                current = None  # fall through to acquire
+        if current is None or current == client_type:
+            self._mic_floor[user_id] = client_type
+            self._mic_last_audio[user_id] = time.monotonic()
+            logger.debug("mic_floor_acquired", user_id=user_id, client_type=client_type)
+            return True
+        return False
+
+    def touch_mic_floor(self, user_id: str, client_type: ClientType) -> None:
+        """Update the last-audio timestamp for *client_type* if it holds the floor.
+
+        Call this on every audio frame to keep the stale-lock watchdog alive.
+        """
+        if self._mic_floor.get(user_id) == client_type:
+            self._mic_last_audio[user_id] = time.monotonic()
+
+    def release_mic_floor(self, user_id: str, client_type: ClientType) -> bool:
+        """Release the floor if *client_type* currently holds it.
+
+        Returns True if the floor was released, False if it wasn't held.
+        """
+        if self._mic_floor.get(user_id) == client_type:
+            del self._mic_floor[user_id]
+            self._mic_last_audio.pop(user_id, None)
+            logger.debug("mic_floor_released", user_id=user_id, client_type=client_type)
+            return True
+        return False
+
+    def get_mic_floor_holder(self, user_id: str) -> ClientType | None:
+        """Return which client_type currently holds the mic floor, or None."""
+        return self._mic_floor.get(user_id)
 
     # ── Messaging ─────────────────────────────────────────────────────
 

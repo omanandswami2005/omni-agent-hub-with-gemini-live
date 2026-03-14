@@ -6,6 +6,9 @@ All sessions are scoped to a user_id. Firestore collection layout:
 Indexed on (user_id, created_at DESC) for efficient list queries.
 """
 
+from __future__ import annotations
+
+import asyncio
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -143,6 +146,47 @@ class SessionService:
         for snap in query.stream():
             return SessionResponse(id=snap.id, **snap.to_dict())
         return None
+
+    async def generate_title_from_message(self, session_id: str, user_message: str) -> None:
+        """Use Gemini to generate a short title from the first user message.
+
+        Best-effort — failures are silently logged.  Only updates if the
+        current title looks like the default timestamp-based placeholder.
+        """
+        try:
+            snap = self.db.collection(COLLECTION).document(session_id).get()
+            if not snap.exists:
+                return
+            doc = snap.to_dict()
+            title = doc.get("title", "")
+            # Only auto-generate if the title is the default pattern "Session YYYY-MM-DD HH:MM"
+            if title and not title.startswith("Session 20"):
+                return
+
+            generated = await _generate_title(user_message)
+            if generated:
+                self.db.collection(COLLECTION).document(session_id).update(
+                    {"title": generated, "updated_at": datetime.now(UTC)}
+                )
+                logger.info("session_title_generated", session_id=session_id, title=generated)
+        except Exception:
+            logger.debug("session_title_generation_failed", session_id=session_id, exc_info=True)
+
+
+async def _generate_title(user_message: str) -> str:
+    """Call Gemini to produce a concise session title (≤6 words)."""
+    from google import genai
+
+    client = genai.Client(vertexai=settings.GOOGLE_GENAI_USE_VERTEXAI,
+                          project=settings.GOOGLE_CLOUD_PROJECT,
+                          location=settings.GOOGLE_CLOUD_LOCATION)
+    response = await asyncio.to_thread(
+        client.models.generate_content,
+        model=settings.TEXT_MODEL,
+        contents=f"Generate a short title (max 6 words, no quotes) summarising this user message for a chat session:\n\n\"{user_message}\"",
+    )
+    title = (getattr(response, "text", None) or "").strip().strip('"').strip("'")
+    return title[:60] if title else ""
 
 
 # ── Module-level singleton ────────────────────────────────────────────

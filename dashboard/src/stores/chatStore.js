@@ -6,6 +6,8 @@ const nextId = () => `msg_${Date.now()}_${++_msgId}`;
 export const useChatStore = create((set, get) => ({
   messages: [],
   transcript: { input: '', output: '' },
+  // Live transcript for audio coming from another device (cross-client relay)
+  crossTranscript: { input: '', output: '' },
   agentState: 'idle', // idle, listening, processing, speaking, error
   activeTools: new Set(),
 
@@ -68,6 +70,28 @@ export const useChatStore = create((set, get) => ({
     } else {
       set((s) => ({
         transcript: { ...s.transcript, [msg.direction]: msg.text },
+      }));
+    }
+  },
+
+  /**
+   * Handle transcription events relayed from another device.
+   * Partials update the crossTranscript overlay; final commit adds a message.
+   */
+  updateCrossClientTranscript: (msg) => {
+    if (msg.finished) {
+      const direction = msg.direction;
+      const role = direction === 'input' ? 'user' : 'assistant';
+      const text = msg.text?.trim();
+      if (text) {
+        get().addMessage({ role, content: text, source: 'voice', cross_client: true });
+      }
+      set((s) => ({
+        crossTranscript: { ...s.crossTranscript, [direction]: '' },
+      }));
+    } else {
+      set((s) => ({
+        crossTranscript: { ...s.crossTranscript, [msg.direction]: msg.text },
       }));
     }
   },

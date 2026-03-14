@@ -53,6 +53,7 @@ export default function FloatingVoiceBubble({
     isVideoActive,
     captureVolume = 0,
     playbackVolume = 0,
+    micBlocked = false,
     onToggleRecording,
     onToggleMute,
     onToggleScreen,
@@ -101,11 +102,15 @@ export default function FloatingVoiceBubble({
         },
         {
             icon: isRecording ? PhoneOff : Phone,
-            label: !isConnected && !isRecording ? 'Start (disconnected)' : isRecording ? 'Stop' : 'Start',
-            onClick: onToggleRecording,
+            label: micBlocked && !isRecording
+                ? 'Mic in use by another device'
+                : !isConnected && !isRecording ? 'Start (disconnected)' : isRecording ? 'Stop' : 'Start',
+            onClick: micBlocked && !isRecording ? undefined : onToggleRecording,
             active: isRecording,
-            color: !isConnected && !isRecording ? 'text-muted-foreground/50' : isRecording ? 'text-red-400' : 'text-emerald-400',
-            disabled: !isConnected && !isRecording,
+            color: micBlocked && !isRecording
+                ? 'text-amber-400'
+                : !isConnected && !isRecording ? 'text-muted-foreground/50' : isRecording ? 'text-red-400' : 'text-emerald-400',
+            disabled: (!isConnected && !isRecording) || (micBlocked && !isRecording),
         },
         {
             icon: isScreenSharing ? MonitorOff : Monitor,

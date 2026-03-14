@@ -132,6 +132,34 @@ After successful auth, the client and server exchange messages in any order.
 
 Raw PCM audio: 16 kHz, 16-bit, mono, little-endian. Send as binary WebSocket frames.
 
+**Required handshake before streaming**: Send `mic_acquire` before your first audio frame. The server serialises all concurrent acquire requests so only one device streams at a time. Wait for `mic_floor:{event:"granted"}` before sending audio. When recording stops, send `mic_release`.
+
+```json
+// 1. Request the mic floor
+{"type": "mic_acquire"}
+
+// 2a. Server grants it
+{"type": "mic_floor", "event": "granted", "holder": "mobile"}
+// → safe to start sending binary PCM frames
+
+// 2b. Server denies it (another device is already streaming)
+{"type": "mic_floor", "event": "denied", "holder": "web"}
+// → show the user that the mic is in use, don't start streaming
+
+// 3. When recording stops, release explicit
+{"type": "mic_release"}
+```
+
+All connected clients of the same user also receive a broadcast:
+
+```json
+{"type": "mic_floor", "event": "acquired", "holder": "mobile"}
+// ... later ...
+{"type": "mic_floor", "event": "released", "holder": "mobile"}
+```
+
+Use these broadcasts to update your UI (e.g. disable a "Start recording" button while another device holds the floor).
+
 ---
 
 ## Message Reference — Server → Client
@@ -186,11 +214,30 @@ Raw PCM audio: 16 kHz, 16-bit, mono, little-endian. Send as binary WebSocket fra
 {
   "type": "image_response",
   "tool_name": "generate_image",
-  "image_base64": "<base64>",
+  "image_base64": "<base64>",   // present during live session (ephemeral)
+  "image_url": "https://...",   // signed HTTPS URL (60-min TTL) — use for display/caching
   "mime_type": "image/png",
   "description": "A sunset over Tokyo"
 }
 ```
+
+For the rich multi-image tool (`generate_rich_image`) the payload uses `parts` instead:
+
+```json
+{
+  "type": "image_response",
+  "tool_name": "generate_rich_image",
+  "parts": [
+    {"type": "text", "content": "Step 1: ..."},
+    {"type": "image", "image_url": "https://...", "mime_type": "image/png"},
+    {"type": "text", "content": "Step 2: ..."},
+    {"type": "image", "image_url": "https://...", "mime_type": "image/png"}
+  ],
+  "text": "Summary of the illustrated guide"
+}
+```
+
+> **Image persistence**: `image_url` is a signed GCS URL valid for 60 minutes. Clients should use this URL for rendering rather than the `image_base64` field, which is only available during the live session and not stored. Sessions API (`GET /sessions/{id}/messages`) returns `image_url` / `parts[].image_url` for all historical messages so images survive page reloads.
 
 ### Agent activity (sub-agent calls, reasoning, etc.)
 
@@ -251,6 +298,40 @@ States: `idle`, `listening`, `processing`, `speaking`, `error`
   "message": "Continue this session on your desktop?"
 }
 ```
+
+### Mic floor events (multi-device — `/ws/live` only)
+
+Broadcast to **all** connected clients of the user when the mic floor changes:
+
+```json
+// Another device started streaming
+{"type": "mic_floor", "event": "acquired", "holder": "mobile"}
+
+// That device stopped streaming
+{"type": "mic_floor", "event": "released", "holder": "mobile"}
+
+// Only sent to the requesting client — see "Send audio" section above
+{"type": "mic_floor", "event": "granted", "holder": "web"}
+{"type": "mic_floor", "event": "denied",  "holder": "mobile"}
+
+// Fallback: server received raw audio before mic_acquire was sent (legacy clients)
+{"type": "mic_floor", "event": "busy",    "holder": "desktop"}
+```
+
+### Cross-client rendering deduplication
+
+When multiple clients are connected, events are fanned out via the EventBus to all of them. Each event carries `cross_client: true` when it originated on another device:
+
+```json
+{
+  "type": "response",
+  "data": "Here is the weather forecast...",
+  "cross_client": true,
+  "_origin_client_type": "mobile"
+}
+```
+
+Clients on `/ws/live` receive only audio + their own messages. Clients on `/ws/chat` (or `/ws/events`) receive the cross-client text events. This split prevents the same text bubble from appearing twice on multi-socket setups.
 
 ---
 
@@ -480,6 +561,11 @@ Some operations use REST instead of WebSocket:
 - [ ] Handle `cross_client` (optional — act on cross-device commands)
 - [ ] Implement T3 `tool_invocation` → `tool_result` (optional — if advertising local tools)
 - [ ] Handle connection drops with reconnect logic
+- [ ] For `/ws/live` audio: send `mic_acquire` before first PCM frame; wait for `granted`
+- [ ] For `/ws/live` audio: send `mic_release` when recording stops
+- [ ] Handle `mic_floor` broadcasts to disable/enable mic UI when another device is streaming
+- [ ] Render images from `image_url` (not `image_base64`) to survive page reloads
+- [ ] For `image_response` with `parts`: render text + image interleaved in order
 
 ---
 

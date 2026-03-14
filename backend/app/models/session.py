@@ -70,3 +70,6 @@ class ChatMessage(BaseModel):
     responded: bool = False
     image_url: str = ""
     description: str = ""
+    # For multi-image / interleaved rich responses
+    images: list[dict] = []
+    parts: list[dict] = []
