@@ -37,7 +37,8 @@ dashboard/.vite/
 .env.production
 .env.*.local
 !.env.example
-
+cloud-run-env.yaml
+**/cloud-run-env.yaml
 # --- Local credential / scratch files ---
 dummy_auth_creds.txt
 *_creds.txt
