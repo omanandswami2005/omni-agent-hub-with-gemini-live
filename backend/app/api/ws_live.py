@@ -1091,11 +1091,26 @@ async def ws_live(websocket: WebSocket) -> None:
                 firestore_session_id = fs_session.id
                 await _fs_svc.link_adk_session(firestore_session_id, session_id)
             else:
-                # No session requested — stay stateless (no session created)
-                # This happens when user visits dashboard without selecting a session
-                session_id = None
-                firestore_session_id = None
-                logger.info("stateless_connection", user_id=user.uid)
+                # No specific session requested — connect to latest session or create new
+                # This ensures users can always chat with their most recent session
+                latest = await _fs_svc.get_latest_session_for_user(user.uid)
+                if latest:
+                    firestore_session_id = latest.id
+                    if latest.adk_session_id and await _adk_session_exists(
+                        latest.adk_session_id, user.uid, active_session_service
+                    ):
+                        session_id = latest.adk_session_id
+                        _adk_session_id_cache[user.uid] = session_id
+                    else:
+                        session_id = await _get_or_create_adk_session(user.uid, active_session_service, force_new=True)
+                        await _fs_svc.link_adk_session(firestore_session_id, session_id)
+                else:
+                    # No existing session — create fresh
+                    session_id = await _get_or_create_adk_session(user.uid, active_session_service)
+                    fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
+                    firestore_session_id = fs_session.id
+                    await _fs_svc.link_adk_session(firestore_session_id, session_id)
+                logger.info("connected_to_latest_session", user_id=user.uid, firestore_session_id=firestore_session_id)
     except Exception:
         # Requested session not found or creation failed — create a new one
         if not session_id:
@@ -1140,19 +1155,19 @@ async def ws_live(websocket: WebSocket) -> None:
 
     # Send auth success + connected message
     auth_ok = AuthResponse(
-        status="ok",
-        user_id=user.uid,
-        session_id=session_id,
+        status="ok", user_id=user.uid, session_id=session_id or "",
         firestore_session_id=firestore_session_id or "",
         available_tools=available_tool_names,
         other_clients_online=[str(ct) for ct in other_clients],
     )
-    connected = ConnectedMessage(session_id=session_id)
+    from starlette.websockets import WebSocketDisconnect
+    connected = ConnectedMessage(session_id=session_id or "")
     try:
         await websocket.send_text(auth_ok.model_dump_json())
         await websocket.send_text(connected.model_dump_json())
-    except RuntimeError:
-        logger.info("ws_send_after_close", user_id=user.uid)
+    except (RuntimeError, WebSocketDisconnect) as e:
+        # Handle cases where websocket disconnects during send
+        logger.info("ws_send_after_close", user_id=user.uid, error=str(e))
         await mgr.disconnect(user.uid, client_type)
         return
 
@@ -1165,7 +1180,12 @@ async def ws_live(websocket: WebSocket) -> None:
             message=f"You're already active on {', '.join(str(ct) for ct in other_clients)}. Join that session for uninterrupted context?",
             session_id=firestore_session_id or "",
         )
-        await websocket.send_text(suggestion.model_dump_json())
+        try:
+            await websocket.send_text(suggestion.model_dump_json())
+        except (RuntimeError, WebSocketDisconnect):
+            logger.info("ws_send_after_close", user_id=user.uid)
+            await mgr.disconnect(user.uid, client_type)
+            return
 
     # Phase 3 — Bidi streaming
     from google.adk.agents.live_request_queue import LiveRequestQueue
@@ -1212,6 +1232,16 @@ async def ws_live(websocket: WebSocket) -> None:
             _downstream(websocket, runner, user.uid, session_id, queue, run_config),
             name="downstream",
         )
+        # Only start downstream (agent runner) if we have a valid session_id
+        # In stateless mode (no session), skip the agent runner
+        if session_id:
+            down_task = asyncio.create_task(
+                _downstream(websocket, runner, user.uid, session_id, queue, run_config),
+                name="downstream",
+            )
+            tasks = {up_task, down_task}
+        else:
+            tasks = {up_task}
         # When either task finishes (disconnect or error), cancel the other
         done, pending = await asyncio.wait(
             {up_task, down_task},

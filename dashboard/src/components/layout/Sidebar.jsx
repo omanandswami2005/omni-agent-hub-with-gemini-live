@@ -18,6 +18,8 @@ import {
   ChevronRight,
   Plus,
   MessageSquare,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useUiStore } from '@/stores/uiStore';
@@ -26,7 +28,63 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useVoice } from '@/hooks/useVoiceProvider';
 import KeyboardShortcut from '@/components/shared/KeyboardShortcut';
+import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import { formatDistanceToNow } from 'date-fns';
+
+/** Modal for renaming a session (shown over the sidebar) */
+function RenameSessionModal({ session, onConfirm, onCancel }) {
+  const [value, setValue] = useState(session?.title || '');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') submit();
+    if (e.key === 'Escape') onCancel();
+  };
+
+  const submit = () => {
+    const trimmed = value.trim();
+    if (trimmed) onConfirm(trimmed);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="w-full max-w-sm rounded-lg border border-border bg-background p-5 shadow-xl">
+        <h3 className="text-base font-semibold">Rename session</h3>
+        <p className="mt-1 mb-3 text-xs text-muted-foreground truncate">
+          "{session?.title || 'Untitled'}"
+        </p>
+        <input
+          ref={inputRef}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="New name…"
+          className="w-full rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary"
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={!value.trim()}
+            className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            Rename
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: Home, shortcut: ['1'] },
@@ -43,52 +101,40 @@ function SidebarSessionList() {
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const switchSession = useSessionStore((s) => s.switchSession);
   const renameSession = useSessionStore((s) => s.renameSession);
+  const deleteSession = useSessionStore((s) => s.deleteSession);
   const clearMessages = useChatStore((s) => s.clearMessages);
   const navigate = useNavigate();
   const voice = useVoice();
 
-  const [editingId, setEditingId] = useState(null);
-  const [editTitle, setEditTitle] = useState('');
-  const inputRef = useRef(null);
-
-  useEffect(() => {
-    if (editingId && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [editingId]);
+  // Modal state
+  const [renameTarget, setRenameTarget] = useState(null);   // session object
+  const [deleteTarget, setDeleteTarget] = useState(null);   // session object
 
   const recent = sessions.slice(0, 10);
 
   const handleClick = (session) => {
-    if (editingId) return;
     if (session.id === activeSessionId) return;
     switchSession(session.id);
     clearMessages();
     navigate(`/session/${session.id}`);
-    // Don't reconnect here - DashboardPage useEffect will handle session loading
-    // and the websocket will naturally connect with the correct session_id
+    voice.reconnect?.();
   };
 
-  const handleDoubleClick = (session) => {
-    setEditTitle(session.title || '');
-    setEditingId(session.id);
+  const handleConfirmRename = (newTitle) => {
+    if (renameTarget) renameSession(renameTarget.id, newTitle);
+    setRenameTarget(null);
   };
 
-  const commitRename = () => {
-    const trimmed = editTitle.trim();
-    if (trimmed && editingId) {
-      const session = sessions.find((s) => s.id === editingId);
-      if (session && trimmed !== session.title) {
-        renameSession(editingId, trimmed);
-      }
+  const handleConfirmDelete = () => {
+    if (!deleteTarget) return;
+    const wasActive = deleteTarget.id === activeSessionId;
+    deleteSession(deleteTarget.id);
+    setDeleteTarget(null);
+    if (wasActive) {
+      clearMessages();
+      navigate('/');
+      voice.reconnect?.();
     }
-    setEditingId(null);
-  };
-
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter') commitRename();
-    if (e.key === 'Escape') setEditingId(null);
   };
 
   if (recent.length === 0) {
@@ -98,40 +144,61 @@ function SidebarSessionList() {
   }
 
   return (
-    <div className="max-h-48 space-y-0.5 overflow-y-auto">
-      {recent.map((s) => (
-        <button
-          key={s.id}
-          onClick={() => handleClick(s)}
-          onDoubleClick={() => handleDoubleClick(s)}
-          className={cn(
-            'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs transition-colors',
-            s.id === activeSessionId
-              ? 'bg-primary/10 text-primary font-medium'
-              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-          )}
-          title={editingId === s.id ? undefined : (s.title || 'Untitled Session — double-click to rename')}
-        >
-          <MessageSquare size={12} className="shrink-0" />
-          {editingId === s.id ? (
-            <input
-              ref={inputRef}
-              value={editTitle}
-              onChange={(e) => setEditTitle(e.target.value)}
-              onBlur={commitRename}
-              onKeyDown={handleKeyDown}
-              onClick={(e) => e.stopPropagation()}
-              className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-primary"
-            />
-          ) : (
+    <>
+      <div className="max-h-48 space-y-0.5 overflow-y-auto">
+        {recent.map((s) => (
+          <div
+            key={s.id}
+            className={cn(
+              'group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs transition-colors cursor-pointer',
+              s.id === activeSessionId
+                ? 'bg-primary/10 text-primary font-medium'
+                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+            )}
+            onClick={() => handleClick(s)}
+          >
+            <MessageSquare size={12} className="shrink-0" />
             <span className="min-w-0 flex-1 truncate">{s.title || 'Untitled'}</span>
-          )}
-          <span className="shrink-0 text-[10px] opacity-60">
-            {s.created_at ? formatDistanceToNow(new Date(s.created_at), { addSuffix: false }) : ''}
-          </span>
-        </button>
-      ))}
-    </div>
+
+            {/* Action icons – revealed on row hover */}
+            <div className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                onClick={(e) => { e.stopPropagation(); setRenameTarget(s); }}
+                className="rounded p-0.5 hover:bg-primary/10 hover:text-primary"
+                title="Rename session"
+              >
+                <Pencil size={11} />
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setDeleteTarget(s); }}
+                className="rounded p-0.5 hover:bg-destructive/10 hover:text-destructive"
+                title="Delete session"
+              >
+                <Trash2 size={11} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Rename modal */}
+      {renameTarget && (
+        <RenameSessionModal
+          session={renameTarget}
+          onConfirm={handleConfirmRename}
+          onCancel={() => setRenameTarget(null)}
+        />
+      )}
+
+      {/* Delete confirmation */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete session?"
+        message={`"${deleteTarget?.title || 'Untitled'}" will be permanently deleted.`}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
+    </>
   );
 }
 
