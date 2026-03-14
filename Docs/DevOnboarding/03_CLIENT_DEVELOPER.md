@@ -468,46 +468,105 @@ async def main(server, token, esp32_ip):
             resp = json.loads(await ws.recv())
             assert resp["status"] == "ok"
 
-            # 2. Camera task — send images periodically
-            async def send_frames():
-                while True:
-                    async with http.get(f"http://{esp32_ip}/snapshot") as r:
-                        raw = await r.read()
-                    await ws.send(json.dumps({
-                        "type": "image",
-                        "data_base64": base64.b64encode(raw).decode(),
-                        "mime_type": "image/jpeg",
-                    }))
-                    await asyncio.sleep(5)
+            # 2. Acquire mic floor before streaming audio
+            await ws.send(json.dumps({"type": "mic_acquire"}))
 
             # 3. Mic task — send PCM audio as binary frames
             async def send_audio():
-                stream = pyaudio.PyAudio().open(rate=16000, channels=1, ...)
-                while True:
-                    data = stream.read(1024)
-                    await ws.send(data)  # Binary frame → backend
+                async for chunk in esp32_udp_audio_stream():
+                    await ws.send(chunk)  # Binary frame → backend (16kHz PCM)
 
             # 4. Receiver — handle text JSON + binary audio
             async def receiver():
                 async for msg in ws:
                     if isinstance(msg, bytes):
-                        speaker.write(msg)  # 24kHz PCM audio from agent
+                        speaker_udp.sendto(msg, (ESP32_IP, SPEAKER_PORT))  # 24kHz PCM
                     else:
                         data = json.loads(msg)
-                        if data["type"] == "tool_invocation":
-                            # T3: agent requesting a photo/action
-                            await ws.send(json.dumps({
-                                "type": "tool_result",
-                                "call_id": data["call_id"],
-                                "result": execute_tool(data["tool"], data["args"]),
-                            }))
+                        if data.get("type") == "mic_floor" and data.get("event") == "granted":
+                            pass  # Start flowing audio (mic_acquire was accepted)
 
-            await asyncio.gather(send_frames(), send_audio(), receiver())
+            await asyncio.gather(send_audio(), receiver())
 ```
 
 Hardware: ESP32-CAM + INMP441 I2S mic. See `smart-glasses/README.md` for wiring diagrams and firmware.
 
 ---
+
+## Reference Implementation — ESP32 UDP Bridge (Python Host)
+
+For setups where the ESP32 sends/receives raw **UDP** audio (instead of HTTP streaming), a Python host machine bridges UDP ↔ Omni Hub WebSocket:
+
+```
+ESP32 mic ──(UDP 4444)──► Python host ──(WSS /ws/live)──► Omni Hub backend
+ESP32 spk ◄─(UDP 5555)── Python host ◄─(binary WS frames)─ Omni Hub backend
+```
+
+See `smart-glasses/esp32_udp_bridge.py` for the complete implementation. Key patterns:
+
+```python
+import asyncio, json, socket, websockets
+
+UDP_MIC_PORT  = 4444   # Python listens — ESP32 sends PCM here
+SPEAKER_IP    = "192.168.x.x"  # ESP32 IP
+SPEAKER_PORT  = 5555   # Python sends PCM here — ESP32 plays it
+
+async def main(token):
+    # UDP listener (non-blocking via asyncio)
+    loop = asyncio.get_event_loop()
+    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_sock.bind(("0.0.0.0", UDP_MIC_PORT))
+    udp_sock.setblocking(False)
+
+    spk_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    async with websockets.connect("wss://omni-backend-fcapusldtq-uc.a.run.app/ws/live",
+                                  max_size=2**20) as ws:
+        # Auth
+        await ws.send(json.dumps({"type": "auth", "token": token,
+                                  "client_type": "glasses",
+                                  "capabilities": ["microphone", "speaker"]}))
+        auth_resp = json.loads(await ws.recv())
+        assert auth_resp.get("status") == "ok"
+
+        # Request mic floor
+        await ws.send(json.dumps({"type": "mic_acquire"}))
+
+        mic_granted = asyncio.Event()
+
+        async def send_mic():
+            await mic_granted.wait()   # don't send until server grants floor
+            while True:
+                data = await loop.sock_recv(udp_sock, 2048)
+                await ws.send(data)    # raw PCM binary frame
+
+        async def recv_speaker():
+            async for msg in ws:
+                if isinstance(msg, bytes):
+                    # 24kHz PCM from backend → chunk and send to ESP32 speaker over UDP
+                    chunk_size = 1024
+                    for i in range(0, len(msg), chunk_size):
+                        spk_sock.sendto(msg[i:i+chunk_size], (SPEAKER_IP, SPEAKER_PORT))
+                        await asyncio.sleep(chunk_size / (16000 * 2))  # pace to real-time
+                else:
+                    data = json.loads(msg)
+                    if data.get("type") == "mic_floor":
+                        if data.get("event") == "granted":
+                            mic_granted.set()
+                        elif data.get("event") in ("denied", "busy"):
+                            print("Mic in use by another device:", data.get("holder"))
+                    elif data.get("type") == "mic_release":
+                        mic_granted.clear()
+
+        await asyncio.gather(send_mic(), recv_speaker())
+
+asyncio.run(main(token="<firebase-jwt>"))
+```
+
+Audio format notes:
+- **Input** (ESP32 → backend): 16kHz, 16-bit, mono, little-endian PCM, raw binary WS frames
+- **Output** (backend → ESP32): 24kHz, 16-bit, mono, little-endian PCM, raw binary WS frames
+- Pace UDP sends to match real-time playback (1024 bytes / (16000 Hz × 2 bytes) ≈ 32ms/chunk)
 
 ## Client Types
 

@@ -661,14 +661,14 @@ async def _upstream(
                     if mgr.try_acquire_mic_floor(user_id, _upstream_client_type):
                         _holds_mic_floor = True
                         _busy_notified = False
-                        # Unicast "granted" to this client
+                        # Unicast "granted" via locked send so it doesn't race with
+                        # relay_task or _downstream sending concurrently.
                         granted_msg = json.dumps({
                             "type": "mic_floor",
                             "event": "granted",
                             "holder": str(_upstream_client_type),
                         })
-                        with contextlib.suppress(Exception):
-                            await websocket.send_text(granted_msg)
+                        await mgr.send_to_client(user_id, _upstream_client_type, granted_msg)
                         # Broadcast "acquired" to ALL clients (including self) for UI state sync
                         floor_msg = json.dumps({
                             "type": "mic_floor",
@@ -684,8 +684,7 @@ async def _upstream(
                             "event": "denied",
                             "holder": str(holder) if holder else "unknown",
                         })
-                        with contextlib.suppress(Exception):
-                            await websocket.send_text(denied_msg)
+                        await mgr.send_to_client(user_id, _upstream_client_type, denied_msg)
                         logger.info("mic_acquire_denied", user_id=user_id, holder=holder)
                 elif msg_type == "mic_release":
                     # Explicit release — client sends when recording stops.
@@ -1024,6 +1023,8 @@ async def _relay_cross_events(
     queue: asyncio.Queue[str],
     own_conn_tag: str,
     own_client_type: str = "",
+    user_id: str = "",
+    client_type: "ClientType | None" = None,
 ) -> None:
     """Forward EventBus events that did NOT originate from this connection.
 
@@ -1055,7 +1056,18 @@ async def _relay_cross_events(
                 continue
             d["cross_client"] = True
             with contextlib.suppress(Exception):
-                await websocket.send_text(json.dumps(d))
+                # Use the connection manager's locked send to avoid racing
+                # with _upstream (mic_acquire responses) and _downstream.
+                mgr = get_connection_manager()
+                if user_id and client_type is not None:
+                    await mgr.send_to_client(user_id, client_type, json.dumps(d))
+                else:
+                    lock = mgr.get_send_lock(websocket)
+                    if lock:
+                        async with lock:
+                            await websocket.send_text(json.dumps(d))
+                    else:
+                        await websocket.send_text(json.dumps(d))
     except asyncio.CancelledError:
         pass
 
@@ -1323,7 +1335,12 @@ async def ws_live(websocket: WebSocket) -> None:
     cross_queue = bus.create_queue()
     bus.subscribe(user.uid, cross_queue)
     relay_task = asyncio.create_task(
-        _relay_cross_events(websocket, cross_queue, own_conn_tag, own_client_type=str(client_type)),
+        _relay_cross_events(
+            websocket, cross_queue, own_conn_tag,
+            own_client_type=str(client_type),
+            user_id=user.uid,
+            client_type=client_type,
+        ),
         name=f"live_relay_{own_conn_tag}",
     )
 

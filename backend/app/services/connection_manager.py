@@ -69,6 +69,10 @@ class ConnectionManager:
         # Used to expire stale locks when a holder goes silent without releasing.
         # { user_id: float }
         self._mic_last_audio: dict[str, float] = {}
+        # Per-WebSocket asyncio.Lock — serialises concurrent sends so that
+        # relay_task / _upstream / _downstream never interleave frames.
+        # Keyed by id(websocket) so callers only need the WebSocket object.
+        self._send_locks: dict[int, asyncio.Lock] = {}
         self._reaper_task: asyncio.Task | None = None
         self._db = None  # lazy Firestore client
 
@@ -105,6 +109,7 @@ class ConnectionManager:
         old = user_conns.get(client_type)
         if old is not None:
             old_ws, _, _os = old
+            self._send_locks.pop(id(old_ws), None)  # discard stale lock
             with contextlib.suppress(Exception):
                 await old_ws.close(code=4000, reason="Replaced by new connection")
             logger.info(
@@ -114,6 +119,7 @@ class ConnectionManager:
             )
         now = datetime.now(UTC)
         user_conns[client_type] = (websocket, now, os_name)
+        self._send_locks[id(websocket)] = asyncio.Lock()
         logger.info("client_connected", user_id=user_id, client_type=client_type)
 
         # Write Firestore presence (best-effort, non-blocking)
@@ -132,7 +138,9 @@ class ConnectionManager:
         user_conns = self._connections.get(user_id)
         if user_conns is None:
             return
-        user_conns.pop(client_type, None)
+        entry = user_conns.pop(client_type, None)
+        if entry is not None:
+            self._send_locks.pop(id(entry[0]), None)  # clean up send lock
         if not user_conns:
             self._connections.pop(user_id, None)
         # Clean up capabilities for this client
@@ -253,6 +261,25 @@ class ConnectionManager:
 
     # ── Messaging ─────────────────────────────────────────────────────
 
+    def get_send_lock(self, websocket: "WebSocket") -> asyncio.Lock | None:
+        """Return the serialisation lock for *websocket*, or None if not tracked."""
+        return self._send_locks.get(id(websocket))
+
+    async def _safe_send(self, ws: "WebSocket", message: str) -> None:
+        """Send *message* to *ws* while holding its per-socket send lock.
+
+        Serialises concurrent send callers (relay_task, _upstream, _downstream)
+        so that WebSocket frames are never interleaved or silently dropped
+        due to concurrent asyncio send calls on the same socket.
+        """
+        lock = self._send_locks.get(id(ws))
+        if lock is None:
+            # Fallback: send without lock (e.g. aux sockets)
+            await ws.send_text(message)
+            return
+        async with lock:
+            await ws.send_text(message)
+
     async def send_to_user(self, user_id: str, message: str) -> None:
         """Broadcast a JSON text frame to **all** connected clients of a user.
 
@@ -264,7 +291,7 @@ class ConnectionManager:
         dead: list[ClientType] = []
         for ct, (ws, _, _os) in snapshot:
             try:
-                await ws.send_text(message)
+                await self._safe_send(ws, message)
             except Exception:
                 dead.append(ct)
         for ct in dead:
@@ -295,7 +322,7 @@ class ConnectionManager:
             return
         ws, _, _os = entry
         try:
-            await ws.send_text(message)
+            await self._safe_send(ws, message)
         except Exception:
             await self.disconnect(user_id, client_type)
 
