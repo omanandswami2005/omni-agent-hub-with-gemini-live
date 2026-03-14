@@ -8,6 +8,7 @@ appropriate persona sub-agents in order.
 from __future__ import annotations
 
 from google.adk.tools import FunctionTool
+from google.adk.tools.tool_context import ToolContext
 
 from app.agents.task_architect import TaskArchitect
 from app.utils.logging import get_logger
@@ -28,20 +29,21 @@ async def _build_tools_for_architect(user_id: str) -> dict[str, list]:
         return {}
 
 
-async def plan_task(user_id: str, task: str) -> str:
+async def plan_task(task: str, tool_context: ToolContext | None = None) -> str:
     """Decompose a complex task into an ordered plan of persona-routed steps.
 
     Call this when the user request clearly needs **multiple** specialists
     (e.g. "research X, write code for Y, then generate an image of Z").
 
     Args:
-        user_id: Authenticated user ID.
         task: The full complex request to decompose.
+        tool_context: Injected by ADK — provides the authenticated user_id.
 
     Returns:
         A structured plan listing each step, the persona to use, and
         the instruction for that step.
     """
+    user_id = (tool_context.user_id if tool_context else None) or "unknown"
     tools_by_persona = await _build_tools_for_architect(user_id)
     architect = TaskArchitect(user_id=user_id, tools_by_persona=tools_by_persona)
     blueprint = await architect.analyse_task(task)

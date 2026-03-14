@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.services import secret_service
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -102,6 +103,91 @@ class OAuthService:
         self._metadata_cache: dict[str, OAuthMetadata] = {}
         # Cached client creds: { (mcp_server_url, client_name): ClientCredentials }
         self._client_cache: dict[tuple[str, str], ClientCredentials] = {}
+
+    # ── Secret Manager helpers ──────────────────────────────────
+
+    def _save_to_secret_manager(
+        self,
+        user_id: str,
+        plugin_id: str,
+        tokens: OAuthTokens,
+        client_creds: ClientCredentials | None = None,
+        token_endpoint: str = "",
+        issuer: str = "",
+    ) -> None:
+        """Persist OAuth tokens + client credentials to GCP Secret Manager."""
+        # Convert monotonic expires_at → wall-clock unix time for portability
+        if tokens.expires_at > 0:
+            expires_at_unix = time.time() + max(0.0, tokens.expires_at - time.monotonic())
+        else:
+            expires_at_unix = 0.0
+
+        data: dict[str, str] = {
+            "access_token": tokens.access_token,
+            "token_type": tokens.token_type,
+            "expires_at_unix": str(expires_at_unix),
+            "scope": tokens.scope,
+        }
+        if tokens.refresh_token:
+            data["refresh_token"] = tokens.refresh_token
+        if client_creds:
+            data["client_id"] = client_creds.client_id
+            if client_creds.client_secret:
+                data["client_secret"] = client_creds.client_secret
+        if token_endpoint:
+            data["token_endpoint"] = token_endpoint
+        if issuer:
+            data["issuer"] = issuer
+
+        try:
+            secret_service.store_secrets(user_id, f"{plugin_id}-mcp-oauth", data)
+            logger.info("mcp_oauth_persisted", user_id=user_id, plugin_id=plugin_id)
+        except Exception:
+            logger.warning(
+                "mcp_oauth_persist_failed",
+                user_id=user_id,
+                plugin_id=plugin_id,
+                exc_info=True,
+            )
+
+    def _load_from_secret_manager(
+        self, user_id: str, plugin_id: str
+    ) -> tuple[OAuthTokens, ClientCredentials | None, str, str] | None:
+        """Load OAuth tokens + client credentials from GCP Secret Manager.
+
+        Returns (tokens, client_creds, token_endpoint, issuer) or None if not found.
+        """
+        try:
+            data = secret_service.load_secrets(user_id, f"{plugin_id}-mcp-oauth")
+            if not data.get("access_token") and not data.get("refresh_token"):
+                return None
+
+            # Convert wall-clock unix time back to monotonic for in-process use
+            expires_at_unix = float(data.get("expires_at_unix", "0"))
+            if expires_at_unix > 0:
+                expires_at = time.monotonic() + max(0.0, expires_at_unix - time.time())
+            else:
+                expires_at = 0.0
+
+            tokens = OAuthTokens(
+                access_token=data.get("access_token", ""),
+                token_type=data.get("token_type", "Bearer"),
+                refresh_token=data.get("refresh_token") or None,
+                expires_at=expires_at,
+                scope=data.get("scope", ""),
+            )
+            client_creds: ClientCredentials | None = None
+            if data.get("client_id"):
+                client_creds = ClientCredentials(
+                    client_id=data["client_id"],
+                    client_secret=data.get("client_secret") or None,
+                )
+            token_endpoint = data.get("token_endpoint", "")
+            issuer = data.get("issuer", "")
+            logger.info("mcp_oauth_loaded_from_sm", user_id=user_id, plugin_id=plugin_id)
+            return tokens, client_creds, token_endpoint, issuer
+        except Exception:
+            return None
 
     # ── Discovery ───────────────────────────────────────────────────
 
@@ -307,6 +393,17 @@ class OAuthService:
 
         key = (flow.user_id, flow.plugin_id)
         self._tokens[key] = tokens
+
+        # Persist to Secret Manager so tokens survive redeployment
+        self._save_to_secret_manager(
+            flow.user_id,
+            flow.plugin_id,
+            tokens,
+            flow.client_creds,
+            flow.metadata.token_endpoint,
+            flow.metadata.issuer,
+        )
+
         logger.info("oauth_tokens_received", plugin_id=flow.plugin_id, user_id=flow.user_id)
         return flow.user_id, flow.plugin_id
 
@@ -314,14 +411,30 @@ class OAuthService:
 
     def get_access_token(self, user_id: str, plugin_id: str) -> str | None:
         """Return the current access token, or None if not authenticated."""
-        tokens = self._tokens.get((user_id, plugin_id))
+        key = (user_id, plugin_id)
+        tokens = self._tokens.get(key)
+        if tokens is None:
+            loaded = self._load_from_secret_manager(user_id, plugin_id)
+            if loaded:
+                tokens, client_creds, _ep, issuer = loaded
+                self._tokens[key] = tokens
+                if client_creds and issuer:
+                    self._client_cache[(issuer, "Omni Hub")] = client_creds
         if tokens is None:
             return None
         return tokens.access_token
 
     def has_valid_token(self, user_id: str, plugin_id: str) -> bool:
         """Check if we have a non-expired token."""
-        tokens = self._tokens.get((user_id, plugin_id))
+        key = (user_id, plugin_id)
+        tokens = self._tokens.get(key)
+        if tokens is None:
+            loaded = self._load_from_secret_manager(user_id, plugin_id)
+            if loaded:
+                tokens, client_creds, _ep, issuer = loaded
+                self._tokens[key] = tokens
+                if client_creds and issuer:
+                    self._client_cache[(issuer, "Omni Hub")] = client_creds
         if tokens is None:
             return False
         return not (tokens.expires_at and time.monotonic() > tokens.expires_at)
@@ -335,6 +448,19 @@ class OAuthService:
         """Refresh the access token if expired. Returns the (possibly new) access token."""
         key = (user_id, plugin_id)
         tokens = self._tokens.get(key)
+
+        # Load from Secret Manager if not in memory (e.g. after a redeployment)
+        _sm_client_creds: ClientCredentials | None = None
+        _sm_token_endpoint: str = ""
+        _sm_issuer: str = ""
+        if tokens is None:
+            loaded = self._load_from_secret_manager(user_id, plugin_id)
+            if loaded:
+                tokens, _sm_client_creds, _sm_token_endpoint, _sm_issuer = loaded
+                self._tokens[key] = tokens
+                if _sm_client_creds and _sm_issuer:
+                    self._client_cache[(_sm_issuer, "Omni Hub")] = _sm_client_creds
+
         if tokens is None:
             return None
 
@@ -350,12 +476,14 @@ class OAuthService:
         # Discover metadata (cached)
         metadata = await self.discover_oauth_metadata(mcp_server_url)
 
-        # Find client credentials
+        # Find client credentials (in-memory cache first, then Secret Manager fallback)
         client_creds: ClientCredentials | None = None
         for cache_key, creds in self._client_cache.items():
             if cache_key[0] == metadata.issuer:
                 client_creds = creds
                 break
+        if client_creds is None:
+            client_creds = _sm_client_creds  # restored from Secret Manager after restart
         if client_creds is None:
             self._tokens.pop(key, None)
             return None
@@ -392,12 +520,32 @@ class OAuthService:
             scope=data.get("scope", tokens.scope),
         )
         self._tokens[key] = new_tokens
+
+        # Persist refreshed tokens to Secret Manager
+        self._save_to_secret_manager(
+            user_id,
+            plugin_id,
+            new_tokens,
+            client_creds,
+            metadata.token_endpoint,
+            metadata.issuer,
+        )
+
         logger.info("oauth_token_refreshed", plugin_id=plugin_id, user_id=user_id)
         return new_tokens.access_token
 
     def revoke_tokens(self, user_id: str, plugin_id: str) -> None:
         """Remove stored tokens for a user+plugin."""
         self._tokens.pop((user_id, plugin_id), None)
+        try:
+            secret_service.delete_secrets(user_id, f"{plugin_id}-mcp-oauth")
+        except Exception:
+            logger.warning(
+                "mcp_oauth_revoke_sm_failed",
+                user_id=user_id,
+                plugin_id=plugin_id,
+                exc_info=True,
+            )
 
 
 # ── Module-level singleton ──────────────────────────────────────────────

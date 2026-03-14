@@ -57,7 +57,7 @@ T1_TOOL_REGISTRY: dict[str, Callable[[], list]] = {
 _CODE_EXEC_PERSONA_IDS: frozenset[str] = frozenset({"coder", "analyst"})
 
 _PERSONA_CAPABILITIES: dict[str, list[str]] = {
-    "assistant": [TC.SEARCH, TC.DEVICE],
+    "assistant": [TC.COMMUNICATION, TC.DEVICE],
     "coder": [TC.CODE_EXECUTION, TC.DEVICE],
     "researcher": [TC.SEARCH, TC.DEVICE],
     "analyst": [TC.SEARCH, TC.CODE_EXECUTION, TC.DEVICE],

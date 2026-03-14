@@ -2,7 +2,7 @@
  * Page: DashboardPage — Main dashboard with chat panel and activity overview.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import ChatPanel from '@/components/chat/ChatPanel';
@@ -15,6 +15,7 @@ import { useChatStore } from '@/stores/chatStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { usePersonaStore } from '@/stores/personaStore';
 import { useClientStore } from '@/stores/clientStore';
+import { usePipelineStore } from '@/stores/pipelineStore';
 
 export default function DashboardPage() {
     useDocumentTitle('Dashboard');
@@ -69,6 +70,16 @@ export default function DashboardPage() {
     const clients = useClientStore((s) => s.clients);
     const activeTools = useChatStore((s) => s.activeTools);
 
+    const [sidebarTab, setSidebarTab] = useState('overview');
+    const activePipeline = usePipelineStore((s) => s.pipeline);
+    const pipelineHistory = usePipelineStore((s) => s.history);
+    const hasPipeline = !!activePipeline || pipelineHistory.length > 0;
+
+    // Auto-switch to pipeline tab when a pipeline starts
+    useEffect(() => {
+        if (activePipeline) setSidebarTab('pipeline');
+    }, [activePipeline?.pipeline_id]);
+
     // When persona changes, reconnect WS so the backend uses the new persona's voice
     const reconnect = useVoice((v) => v.reconnect);
     const prevPersonaRef = useRef(null);
@@ -96,61 +107,102 @@ export default function DashboardPage() {
             </div>
 
             {/* Right sidebar */}
-            <aside className="hidden w-80 space-y-4 overflow-y-auto p-4 lg:block">
-                {/* Connection status */}
-                <div className="rounded-lg border border-border p-3">
-                    <p className="mb-1 text-xs font-medium text-muted-foreground">Status</p>
-                    <div className="space-y-1.5">
-                        <div className="flex items-center gap-2">
-                            <span className={`h-2 w-2 rounded-full ${voice.isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-                            <span className="text-sm">{voice.isConnected ? 'Connected' : 'Disconnected'}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <span className={`h-2 w-2 rounded-full ${voice.voiceEnabled ? 'bg-blue-500' : 'bg-muted-foreground'}`} />
-                            <span className="text-sm">Voice {voice.voiceEnabled ? 'On' : 'Off'}</span>
-                        </div>
-                    </div>
+            <aside className="hidden w-80 flex-col overflow-y-auto lg:flex">
+                {/* Tab nav */}
+                <div className="flex shrink-0 gap-1 border-b border-border px-1 pb-2 pt-1">
+                    <button
+                        onClick={() => setSidebarTab('overview')}
+                        className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${sidebarTab === 'overview'
+                                ? 'bg-primary text-primary-foreground'
+                                : 'text-muted-foreground hover:bg-muted'
+                            }`}
+                    >
+                        Overview
+                    </button>
+                    <button
+                        onClick={() => setSidebarTab('pipeline')}
+                        className={`relative flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${sidebarTab === 'pipeline'
+                                ? 'bg-primary text-primary-foreground'
+                                : 'text-muted-foreground hover:bg-muted'
+                            }`}
+                    >
+                        Pipeline
+                        {hasPipeline && sidebarTab !== 'pipeline' && (
+                            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-blue-500" />
+                        )}
+                        {activePipeline && (
+                            <span className="ml-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-green-400" />
+                        )}
+                    </button>
                 </div>
 
-                {/* Active persona - view only in main UI, change in Settings */}
-                {activePersona && (
-                    <div>
-                        <p className="mb-2 text-xs font-medium text-muted-foreground">Active Persona</p>
-                        <PersonaCard persona={activePersona} isActive />
-                        <p className="mt-1 text-[10px] text-muted-foreground">
-                            Change persona in Settings
-                        </p>
-                    </div>
-                )}
-
-                {/* Connected clients */}
-                {clients.length > 0 && (
-                    <div>
-                        <p className="mb-2 text-xs font-medium text-muted-foreground">Clients</p>
-                        <ClientStatusBar clients={clients} />
-                    </div>
-                )}
-
-                {/* Active tools */}
-                {activeTools.size > 0 && (
-                    <div className="rounded-lg border border-border p-3">
-                        <p className="mb-1 text-xs font-medium text-muted-foreground">Active Tools</p>
-                        <div className="flex flex-wrap gap-1">
-                            {[...activeTools].map((tool) => (
-                                <span key={tool} className="rounded bg-primary/10 px-2 py-0.5 text-xs text-primary">{tool}</span>
-                            ))}
+                {sidebarTab === 'overview' ? (
+                    <div className="space-y-4 overflow-y-auto p-4">
+                        {/* Connection status */}
+                        <div className="rounded-lg border border-border p-3">
+                            <p className="mb-1 text-xs font-medium text-muted-foreground">Status</p>
+                            <div className="space-y-1.5">
+                                <div className="flex items-center gap-2">
+                                    <span className={`h-2 w-2 rounded-full ${voice.isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+                                    <span className="text-sm">{voice.isConnected ? 'Connected' : 'Disconnected'}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className={`h-2 w-2 rounded-full ${voice.voiceEnabled ? 'bg-blue-500' : 'bg-muted-foreground'}`} />
+                                    <span className="text-sm">Voice {voice.voiceEnabled ? 'On' : 'Off'}</span>
+                                </div>
+                            </div>
                         </div>
+
+                        {/* Active persona */}
+                        {activePersona && (
+                            <div>
+                                <p className="mb-2 text-xs font-medium text-muted-foreground">Active Persona</p>
+                                <PersonaCard persona={activePersona} isActive />
+                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                    Change persona in Settings
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Connected clients */}
+                        {clients.length > 0 && (
+                            <div>
+                                <p className="mb-2 text-xs font-medium text-muted-foreground">Clients</p>
+                                <ClientStatusBar clients={clients} />
+                            </div>
+                        )}
+
+                        {/* Active tools */}
+                        {activeTools.size > 0 && (
+                            <div className="rounded-lg border border-border p-3">
+                                <p className="mb-1 text-xs font-medium text-muted-foreground">Active Tools</p>
+                                <div className="flex flex-wrap gap-1">
+                                    {[...activeTools].map((tool) => (
+                                        <span key={tool} className="rounded bg-primary/10 px-2 py-0.5 text-xs text-primary">{tool}</span>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* GenUI preview */}
+                        {lastGenUI && (
+                            <div>
+                                <p className="mb-2 text-xs font-medium text-muted-foreground">Generated UI</p>
+                                <GenUIRenderer type={lastGenUI.genui_type} data={lastGenUI.genui_data} />
+                            </div>
+                        )}
                     </div>
-                )}
-
-                {/* Pipeline monitor */}
-                <PipelineMonitor />
-
-                {/* GenUI preview */}
-                {lastGenUI && (
-                    <div>
-                        <p className="mb-2 text-xs font-medium text-muted-foreground">Generated UI</p>
-                        <GenUIRenderer type={lastGenUI.genui_type} data={lastGenUI.genui_data} />
+                ) : (
+                    <div className="overflow-y-auto p-4">
+                        <PipelineMonitor />
+                        {!hasPipeline && (
+                            <div className="mt-4 rounded-lg border border-dashed border-border p-6 text-center">
+                                <p className="text-sm font-medium text-muted-foreground">No pipeline yet</p>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                    Ask for a complex multi-step task to trigger the Task Architect.
+                                </p>
+                            </div>
+                        )}
                     </div>
                 )}
             </aside>

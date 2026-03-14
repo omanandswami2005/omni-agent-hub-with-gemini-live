@@ -298,12 +298,7 @@ export default function Sidebar() {
               title={label}
             >
               <Icon size={18} />
-              {sidebarOpen && (
-                <>
-                  <span className="flex-1">{label}</span>
-                  <KeyboardShortcut keys={shortcut} />
-                </>
-              )}
+              {sidebarOpen && <span className="flex-1">{label}</span>}
             </NavLink>
           );
         })}

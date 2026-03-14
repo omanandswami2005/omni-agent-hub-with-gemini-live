@@ -32,6 +32,15 @@ __all__ = [
     "TaskStage",
 ]
 
+
+def _sanitize_name(name: str) -> str:
+    """Convert a human-readable name to a valid ADK agent identifier."""
+    import re
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+    if sanitized and sanitized[0].isdigit():
+        sanitized = "_" + sanitized
+    return sanitized or "agent"
+
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
@@ -263,19 +272,20 @@ class TaskArchitect:
 
         for stage in blueprint.stages:
             sub_agents = [self._create_sub_agent(t) for t in stage.tasks]
+            stage_name = _sanitize_name(stage.name)
 
             if stage.stage_type == StageType.PARALLEL and len(sub_agents) > 1:
-                stage_agents.append(ParallelAgent(name=stage.name, sub_agents=sub_agents))
+                stage_agents.append(ParallelAgent(name=stage_name, sub_agents=sub_agents))
             elif stage.stage_type == StageType.LOOP:
                 stage_agents.append(
                     LoopAgent(
-                        name=stage.name,
+                        name=stage_name,
                         sub_agents=sub_agents,
                         max_iterations=stage.max_iterations,
                     )
                 )
             elif stage.stage_type == StageType.SEQUENTIAL and len(sub_agents) > 1:
-                stage_agents.append(SequentialAgent(name=stage.name, sub_agents=sub_agents))
+                stage_agents.append(SequentialAgent(name=stage_name, sub_agents=sub_agents))
             elif sub_agents:
                 # Single agent — no wrapper needed
                 stage_agents.append(sub_agents[0])
@@ -343,9 +353,7 @@ class TaskArchitect:
         content = genai_types.Content(
             role="user",
             parts=[
-                genai_types.Part.from_text(
-                    f"Execute the following plan:\n{blueprint.task_description}"
-                )
+                genai_types.Part(text=f"Execute the following plan:\n{blueprint.task_description}")
             ],
         )
 
@@ -494,7 +502,7 @@ class TaskArchitect:
         if t2_tools:
             tools = tools + list(t2_tools)
         return Agent(
-            name=task.id,
+            name=_sanitize_name(task.id),
             model=TEXT_MODEL,
             instruction=task.instruction or task.description,
             tools=tools,
