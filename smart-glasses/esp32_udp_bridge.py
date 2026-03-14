@@ -193,13 +193,14 @@ class ESP32UDPBridge:
 
         # Barge-in / interruption support
         self._interrupted = asyncio.Event()   # set when server signals interruption
-        self._playing = False                 # True while speaker worker is sending audio
+        self._playing = False                 # True while ANY chunk is being sent (chunk-level)
+        self._queue_has_audio = False         # True while queue has pending chunks OR chunk playing
         self._agent_state = ""                # track to detect state transitions (like React dashboard)
 
         # Post-playback cooldown — keep mic muted briefly after speaker stops
         # so ESP32 I2S DMA buffer drains and mic doesn't pick up the tail
-        self._spk_stop_time = 0.0             # monotonic time when speaker last stopped
-        _SPK_COOLDOWN_S = 0.15                # 150ms cooldown after playback
+        self._spk_stop_time = 0.0             # monotonic time when ALL speaker audio stopped
+        _SPK_COOLDOWN_S = 0.35                # 350ms cooldown — increased to cover ESP32 I2S DMA drain
         self._spk_cooldown = _SPK_COOLDOWN_S
 
         # Counters for periodic mic logging
@@ -358,9 +359,11 @@ class ESP32UDPBridge:
             try:
                 data = await loop.sock_recv(self._mic_sock, MIC_CHUNK)
                 now = time.monotonic()
-                # ── Half-duplex: mute mic while speaker is playing ─────────
-                # Prevents echo: ESP32 mic picks up ESP32 speaker → feedback loop.
-                if self._playing:
+                # ── Half-duplex: mute mic while speaker has ANY audio ──────
+                # Use _queue_has_audio (not _playing) so mic stays muted between
+                # consecutive chunks — _playing briefly resets to False between each
+                # buffer in the queue, which was the main echo source.
+                if self._queue_has_audio:
                     self._mic_dropped_playing += 1
                     total_dropped = self._mic_dropped_playing + self._mic_dropped_cooldown
                     if total_dropped % self._mic_log_interval == 1:
@@ -403,6 +406,7 @@ class ESP32UDPBridge:
                 self._spk_frames_dropped += 1
             except asyncio.QueueEmpty:
                 break
+        self._queue_has_audio = False
         if flushed:
             self._log("SPK-FLUSH", f"Flushed {flushed} chunks ({flushed_bytes}B) | total_recv={self._spk_frames_received} played={self._spk_frames_played} dropped={self._spk_frames_dropped}")
 
@@ -412,6 +416,10 @@ class ESP32UDPBridge:
         Uses exact timing from reference send_audio_to_esp32():
           chunk_size = 1024, sample_rate = 16000, bytes_per_sample = 2
           duration = (chunk_size // bytes_per_sample) / sample_rate = 0.032s
+
+        NOTE: does NOT reset _playing/_spk_stop_time on exit — _speaker_worker
+        does that after the full queue is drained, so mic stays muted between
+        consecutive chunks.
         """
         raw_len = len(audio_bytes)
         # Backend sends 24kHz; ESP32 I2S expects 16kHz — always resample
@@ -439,9 +447,9 @@ class ESP32UDPBridge:
             self._log("SPK-PLAY", f"DONE {chunks_sent} chunks in {elapsed:.3f}s (expected {duration_s:.3f}s)")
             self._spk_frames_played += 1
         finally:
+            # Only reset _playing here (chunk-level flag); _queue_has_audio and
+            # _spk_stop_time are managed by _speaker_worker after the full queue drains.
             self._playing = False
-            self._spk_stop_time = time.monotonic()
-            self._log("SPK-PLAY", f"_playing=False, cooldown={self._spk_cooldown:.3f}s starts now")
 
     async def _speaker_worker(self) -> None:
         """Drain speaker queue one buffer at a time — stops immediately on interruption."""
@@ -453,15 +461,27 @@ class ESP32UDPBridge:
                 self._log("SPK-WORK", f"Got chunk but interrupted — discarding {len(pcm)}B + flushing queue")
                 self._spk_frames_dropped += 1
                 self._flush_spk_queue()
+                self._queue_has_audio = False
+                self._spk_stop_time = time.monotonic()
                 continue
+            # Mark that audio is in flight (queue-level flag — mic stays muted until
+            # this goes False, even between consecutive chunks)
+            self._queue_has_audio = True
             self._log("SPK-WORK", f"Dequeued {len(pcm)}B | queue_remaining={self._spk_queue.qsize()} interrupted={self._interrupted.is_set()} playing={self._playing}")
             try:
                 await self._play_speaker_audio(pcm)
             except asyncio.CancelledError:
                 self._log("SPK-WORK", "Cancelled")
+                self._queue_has_audio = False
+                self._spk_stop_time = time.monotonic()
                 break
             except Exception as e:
                 self._log("SPK-WORK", f"Playback error: {e}")
+            # Only clear _queue_has_audio when the queue is fully drained
+            if self._spk_queue.empty():
+                self._queue_has_audio = False
+                self._spk_stop_time = time.monotonic()
+                self._log("SPK-PLAY", f"_queue_has_audio=False, cooldown={self._spk_cooldown:.3f}s starts now")
 
     # ── Message receiver: WebSocket → decode + route ──────────────────────────
 
@@ -557,8 +577,12 @@ class ESP32UDPBridge:
                     self._interrupted.clear()
                     self._log("...", "Thinking...")
                 elif state == "idle":
-                    # Turn complete — agent finished cleanly, clear any stale interrupt
-                    self._interrupted.clear()
+                    # Turn complete — but only clear interrupt if queue is fully drained.
+                    # If we clear while chunks are still queued, mic opens mid-playback → echo.
+                    if self._spk_queue.empty() and not self._queue_has_audio:
+                        self._interrupted.clear()
+                    else:
+                        self._log("...", f"Idle but queue={self._spk_queue.qsize()} has_audio={self._queue_has_audio} — deferring interrupt clear")
                 elif state == "listening":
                     self._log("...", "Listening...")
 
