@@ -111,7 +111,7 @@ function SidebarSessionList() {
   const [renameTarget, setRenameTarget] = useState(null);   // session object
   const [deleteTarget, setDeleteTarget] = useState(null);   // session object
 
-  const recent = sessions.slice(0, 10);
+  const recent = sessions.slice(0, 25);
 
   const handleClick = (session) => {
     if (session.id === activeSessionId) return;
@@ -146,7 +146,7 @@ function SidebarSessionList() {
 
   return (
     <>
-      <div className="max-h-48 space-y-0.5 overflow-y-auto">
+      <div className="max-h-[40vh] space-y-0.5 overflow-y-auto scrollbar-thin">
         {recent.map((s) => (
           <div
             key={s.id}
@@ -161,8 +161,11 @@ function SidebarSessionList() {
             <MessageSquare size={12} className="shrink-0" />
             <span className="min-w-0 flex-1 truncate">{s.title || 'Untitled'}</span>
 
-            {/* Action icons – revealed on row hover */}
-            <div className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            {/* Action icons – visible on active, revealed on hover for others */}
+            <div className={cn(
+              'flex shrink-0 items-center gap-0.5 transition-opacity',
+              s.id === activeSessionId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+            )}>
               <button
                 onClick={(e) => { e.stopPropagation(); setRenameTarget(s); }}
                 className="rounded p-0.5 hover:bg-primary/10 hover:text-primary"
@@ -181,6 +184,14 @@ function SidebarSessionList() {
           </div>
         ))}
       </div>
+      {sessions.length > 25 && (
+        <button
+          onClick={() => navigate('/sessions')}
+          className="w-full px-3 py-1.5 text-[11px] text-primary hover:underline text-left"
+        >
+          View all {sessions.length} sessions →
+        </button>
+      )}
 
       {/* Rename modal */}
       {renameTarget && (
@@ -261,23 +272,29 @@ export default function Sidebar() {
             : location.pathname.startsWith(to);
 
           if (hasSublist && sidebarOpen) {
-            // Sessions with collapsible sublist - use click to toggle instead of hover for better UX
+            // Sessions with collapsible sublist — click label navigates, chevron toggles sublist
             return (
               <div key={to}>
-                <button
-                  onClick={() => setSessionsExpanded((prev) => !prev)}
+                <div
                   className={cn(
-                    'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+                    'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors cursor-pointer',
                     isActive
                       ? 'bg-accent text-accent-foreground font-medium'
                       : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
                   )}
                   title={label}
+                  onClick={() => navigate(to)}
                 >
                   <Icon size={18} />
                   <span className="flex-1 text-left">{label}</span>
-                  {sessionsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setSessionsExpanded((prev) => !prev); }}
+                    className="rounded p-0.5 hover:bg-muted"
+                    aria-label={sessionsExpanded ? 'Collapse sessions' : 'Expand sessions'}
+                  >
+                    {sessionsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </button>
+                </div>
                 {sessionsExpanded && (
                   <div className="ml-2 mt-1 border-l border-border pl-2">
                     <SidebarSessionList />

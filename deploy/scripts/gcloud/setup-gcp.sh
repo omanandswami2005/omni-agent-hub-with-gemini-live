@@ -27,6 +27,13 @@
 
 set -euo pipefail
 
+# --- Windows / Python 3.14 compatibility for gcloud CLI ----------------------
+if [[ -z "${CLOUDSDK_PYTHON:-}" ]]; then
+  for _py in "/c/Program Files/Python314/python.exe" "/c/Python312/python.exe"; do
+    if [[ -f "$_py" ]]; then export CLOUDSDK_PYTHON="$_py"; break; fi
+  done
+fi
+
 # --- Colors ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'

@@ -8,6 +8,13 @@
 
 set -euo pipefail
 
+# --- Windows / Python 3.14 compatibility for gcloud CLI ----------------------
+if [[ -z "${CLOUDSDK_PYTHON:-}" ]]; then
+  for _py in "/c/Program Files/Python314/python.exe" "/c/Python312/python.exe"; do
+    if [[ -f "$_py" ]]; then export CLOUDSDK_PYTHON="$_py"; break; fi
+  done
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="${SCRIPT_DIR}/../../.."
 PROJECT_ID="${1:-$(gcloud config get-value project 2>/dev/null)}"

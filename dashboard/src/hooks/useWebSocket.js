@@ -107,6 +107,35 @@ export function useWebSocket() {
           case 'client_status_update':
             useClientStore.getState().setClients(msg.clients);
             break;
+          case 'session_suggestion': {
+            // Another device started a session — switch to it for continuity
+            if (msg.session_id) {
+              const ss = useSessionStore.getState();
+              ss.setActiveSession(msg.session_id);
+              ss.ensureSession(msg.session_id);
+              setServerSessionId(msg.session_id);
+              const sss = useSessionSuggestionStore.getState();
+              if (sss.autoJoin) {
+                toast.info(`Joined session from ${msg.available_clients?.join(', ') || 'another device'}`, { duration: 3000 });
+              } else {
+                sss.setSuggestion({
+                  availableClients: msg.available_clients || [],
+                  message: msg.message || 'Active session on another device.',
+                  sessionId: msg.session_id,
+                });
+              }
+              // Reconnect the live WS to the new session
+              setTimeout(() => {
+                if (wsRef.current) {
+                  wsRef.current.onclose = null;
+                  wsRef.current.close();
+                  wsRef.current = null;
+                }
+                connect();
+              }, 150);
+            }
+            break;
+          }
           default:
             break;
         }

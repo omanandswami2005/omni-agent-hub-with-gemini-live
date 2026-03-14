@@ -54,6 +54,21 @@ export function VoiceProvider({ children }) {
     const isScreenSharing = isVideoActive && videoSource === 'screen';
     const isCameraOn = isVideoActive && videoSource === 'camera';
 
+    // Mic floor: auto-stop recording when another device acquires the mic floor
+    const micFloorHolder = useClientStore((s) => s.micFloorHolder);
+    const myClientType = getClientType();
+    // True when another device currently holds the mic floor — block recording start
+    const micBlocked = !!(micFloorHolder && micFloorHolder !== myClientType);
+
+    // Wrapper that also sends mic_release to the server when stopping.
+    // Use this instead of bare stopRecording() everywhere inside VoiceProvider.
+    // IMPORTANT: Must be declared before any useEffect that references it to
+    // avoid a TDZ (Temporal Dead Zone) error in production builds.
+    const stopRecordingAndRelease = useCallback(() => {
+        stopRecording();
+        releaseMic();
+    }, [stopRecording, releaseMic]);
+
     // Track previous isConnected to detect disconnects
     const prevConnectedRef = useRef(isConnected);
     useEffect(() => {
@@ -69,19 +84,6 @@ export function VoiceProvider({ children }) {
         }
         prevConnectedRef.current = isConnected;
     }, [isConnected, stopCapture, stopRecordingAndRelease, stopPlayback, isRecording]);
-
-    // Mic floor: auto-stop recording when another device acquires the mic floor
-    const micFloorHolder = useClientStore((s) => s.micFloorHolder);
-    const myClientType = getClientType();
-    // True when another device currently holds the mic floor — block recording start
-    const micBlocked = !!(micFloorHolder && micFloorHolder !== myClientType);
-
-    // Wrapper that also sends mic_release to the server when stopping.
-    // Use this instead of bare stopRecording() everywhere inside VoiceProvider.
-    const stopRecordingAndRelease = useCallback(() => {
-        stopRecording();
-        releaseMic();
-    }, [stopRecording, releaseMic]);
 
     useEffect(() => {
         if (micBlocked && isRecording) {

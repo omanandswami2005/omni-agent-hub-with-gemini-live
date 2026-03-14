@@ -1031,14 +1031,15 @@ async def _relay_cross_events(
     Used by ``ws_chat`` so that voice-session events from ``ws_live`` (e.g.
     a mobile caller) appear in the desktop chat panel in real-time.
 
-    Infrastructure events (``session_suggestion``, ``client_status_update``)
-    are skipped here because they are already delivered by ``/ws/events``.
+    ``session_suggestion`` is forwarded (with ``cross_client: True``) so the
+    dashboard can reconnect to the new session.  ``client_status_update`` is
+    skipped because it is already delivered by ``/ws/events``.
 
     Events that originated from the SAME client_type (same device) are also
     skipped to prevent same-device duplication when both /ws/live and /ws/chat
     are open simultaneously — /ws/live already renders them directly.
     """
-    _INFRA_TYPES = {"session_suggestion", "client_status_update"}
+    _INFRA_TYPES = {"client_status_update"}
     try:
         while True:
             json_str = await queue.get()
@@ -1352,6 +1353,7 @@ async def ws_live(websocket: WebSocket) -> None:
             "available_clients": [str(client_type)],
             "message": f"Session active on {client_type}.",
             "_origin_conn": own_conn_tag,
+            "_origin_client_type": str(client_type),
         }
         asyncio.create_task(bus.publish(user.uid, json.dumps(session_msg)))
 

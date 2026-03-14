@@ -1,0 +1,12 @@
+GOOGLE_CLOUD_PROJECT: gemini-live-hackathon-2026
+FIREBASE_PROJECT_ID: gemini-live-hackathon-2026
+GOOGLE_GENAI_USE_VERTEXAI: "true"
+GOOGLE_CLOUD_LOCATION: us-central1
+GCS_BUCKET_NAME: gemini-live-hackathon-2026-omni-artifacts
+ENVIRONMENT: production
+BACKEND_HOST: "::"
+BACKEND_URL: "https://example-backend-url.com"
+FRONTEND_URL: "https://example-frontend-url.com"
+GOOGLE_OAUTH_CLIENT_ID: "example-client-id.apps.googleusercontent.com"
+GOOGLE_OAUTH_CLIENT_SECRET: "example-client-secret"
+CORS_ORIGINS: "https://example-frontend-url.com,https://example-frontend-url.com,http://localhost:5173,http://localhost:3000"
