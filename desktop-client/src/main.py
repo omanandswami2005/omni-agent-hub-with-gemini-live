@@ -1,29 +1,33 @@
-"""Omni Desktop Client — CLI entry point with system tray.
+"""Omni Desktop Client — CLI entry point with system tray and Qt GUI.
 
 Provides a ``typer`` CLI that:
-- ``connect`` — starts the WebSocket client with a system-tray icon
+- ``connect`` — starts the WebSocket client and Qt GUI
 - ``status``  — prints current connection status
 - ``config``  — shows the active configuration
 
-All tool handlers are loaded from the plugin system (see ``plugins/``). The
-only built-in logic here is the tray icon and the CLI commands.
+All tool handlers are loaded from the plugin system (see ``plugins/``).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import threading
 from pathlib import Path
 
 import typer
-from PIL import Image, ImageDraw
 from rich.console import Console
+
+from PyQt6.QtWidgets import QApplication
+import qasync
 
 from src.config import DesktopConfig
 from src.files import set_allowed_directories
 from src.plugin_registry import PluginRegistry
 from src.ws_client import DesktopWSClient
+from src.gui import MainWindow
+from src.plugins.command_plugin import set_gui_instance
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -44,45 +48,7 @@ def _build_registry() -> PluginRegistry:
     return registry
 
 
-# ── System tray ───────────────────────────────────────────────────────
-
-
-def _create_tray_icon() -> Image.Image:
-    """Generate a simple 64×64 tray icon (green circle on transparent bg)."""
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.ellipse([8, 8, 56, 56], fill=(34, 197, 94, 255))  # green
-    draw.text((20, 18), "O", fill=(255, 255, 255, 255))
-    return img
-
-
-def _run_tray(stop_event: threading.Event) -> None:
-    """Run the pystray system-tray icon in a background thread."""
-    try:
-        import pystray  # noqa: PLC0415
-    except ImportError:
-        logger.warning("pystray not installed — running without system tray")
-        return
-
-    def on_quit(icon: pystray.Icon, _item: pystray.MenuItem) -> None:
-        stop_event.set()
-        icon.stop()
-
-    icon = pystray.Icon(
-        "omni-desktop",
-        _create_tray_icon(),
-        "Omni Desktop Agent",
-        menu=pystray.Menu(
-            pystray.MenuItem("Status: Connected", lambda *_: None, enabled=False),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Quit", on_quit),
-        ),
-    )
-    icon.run()
-
-
 # ── CLI commands ──────────────────────────────────────────────────────
-
 
 @app.command()
 def connect(
@@ -104,6 +70,15 @@ def connect(
     # Configure logging
     logging.basicConfig(level=getattr(logging, cfg.log_level.upper(), logging.INFO))
 
+    # Set up Qt Application and async event loop
+    qt_app = QApplication(sys.argv)
+    loop = qasync.QEventLoop(qt_app)
+    asyncio.set_event_loop(loop)
+
+    # Initialize Main Window before discovering plugins
+    main_window = MainWindow()
+    set_gui_instance(main_window) # Provide GUI reference to command plugin
+
     # Discover plugins and build the handler registry
     registry = _build_registry()
     registry.load_all(cfg)
@@ -124,30 +99,40 @@ def connect(
     # Advertise T3 capabilities and local tools from plugins
     _client.set_t3_tools(registry.capabilities, registry.tool_defs)
 
-    # Start system tray in a background thread
-    stop_event = threading.Event()
-    tray_thread = threading.Thread(target=_run_tray, args=(stop_event,), daemon=True)
-    tray_thread.start()
+    _client.set_gui(main_window) # Inject GUI to client
+    main_window.show()
 
-    # Run the WS client (blocks until stop_event or Ctrl+C)
-    try:
-        asyncio.run(_run_client(_client, stop_event))
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Shutting down…[/yellow]")
-    finally:
-        stop_event.set()
+    # Create run task
+    with loop:
+        task = loop.create_task(_run_client(_client, main_window))
+        try:
+            loop.run_forever()
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Shutting down…[/yellow]")
+        finally:
+            task.cancel()
+            _client._should_run = False
 
 
-async def _run_client(client: DesktopWSClient, stop_event: threading.Event) -> None:
-    """Run WS client until the stop event is set."""
-    task = asyncio.create_task(client.run())
+async def _run_client(client: DesktopWSClient, window: MainWindow) -> None:
+    """Run WS client"""
+    # Create the task for running client loop
+    run_task = asyncio.create_task(client.run())
 
-    # Poll the threading event periodically
-    while not stop_event.is_set():
-        await asyncio.sleep(0.5)
+    # Wait a tiny bit for the run loop to start and set _should_run
+    await asyncio.sleep(0.1)
+
+    while client._should_run or not run_task.done():
+         # Need to break when window is closed
+         if window.isHidden():
+              client._should_run = False
+              break
+         await asyncio.sleep(0.5)
 
     await client.disconnect()
-    task.cancel()
+    if not run_task.done():
+        run_task.cancel()
+    QApplication.instance().quit()
 
 
 @app.command()
