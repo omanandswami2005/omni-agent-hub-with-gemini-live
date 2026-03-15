@@ -105,7 +105,11 @@ def _create_proxy_tool(tool_def: dict, user_id: str, client_type: ClientType) ->
     # Attach parameter hints as annotations for ADK to discover
     if tool_params:
         annotations = {}
-        for param_name, param_info in tool_params.items():
+        # Unwrap JSON Schema: parameters may be {"type": "object", "properties": {...}}
+        props = tool_params.get("properties", tool_params) if isinstance(tool_params, dict) else {}
+        for param_name, param_info in props.items():
+            if not isinstance(param_info, dict):
+                continue
             ptype = param_info.get("type", "string")
             type_map = {
                 "string": str,

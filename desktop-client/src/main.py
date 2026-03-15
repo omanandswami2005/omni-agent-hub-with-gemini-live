@@ -58,11 +58,7 @@ def connect(
     """Connect to Omni server and start desktop agent."""
     cfg = DesktopConfig()
     url = server_url or cfg.server_url
-    auth = token or cfg.auth_token
-
-    if not auth:
-        console.print("[red]Error:[/red] No auth token provided. Set OMNI_DESKTOP_AUTH_TOKEN or use --token.")
-        raise typer.Exit(code=1)
+    auth_token = token or cfg.auth_token
 
     # Apply allowed directories from config
     set_allowed_directories(cfg.allowed_directories)
@@ -75,9 +71,33 @@ def connect(
     loop = qasync.QEventLoop(qt_app)
     asyncio.set_event_loop(loop)
 
+    # ── Login flow ────────────────────────────────────────────────
+    # If no token on CLI/env, show the login dialog (requires firebase_api_key)
+    auth_result = None
+    if not auth_token:
+        api_key = cfg.firebase_api_key
+        if not api_key:
+            console.print(
+                "[red]Error:[/red] No auth token and no Firebase API key configured.\n"
+                "Set OMNI_DESKTOP_AUTH_TOKEN or OMNI_DESKTOP_FIREBASE_API_KEY."
+            )
+            raise typer.Exit(code=1)
+
+        from src.login_dialog import LoginDialog
+
+        dialog = LoginDialog(api_key)
+        if dialog.exec() != LoginDialog.DialogCode.Accepted or not dialog.auth_result:
+            console.print("[yellow]Login cancelled.[/yellow]")
+            raise typer.Exit(code=0)
+
+        auth_result = dialog.auth_result
+        auth_token = auth_result.id_token
+        console.print(f"[green]Signed in as[/green] {auth_result.email}")
+
+    # ── GUI + plugins ─────────────────────────────────────────────
     # Initialize Main Window before discovering plugins
     main_window = MainWindow()
-    set_gui_instance(main_window) # Provide GUI reference to command plugin
+    set_gui_instance(main_window)  # Provide GUI reference to command plugin
 
     # Discover plugins and build the handler registry
     registry = _build_registry()
@@ -90,7 +110,12 @@ def connect(
     console.print(f"[green]Connecting to[/green] {url}")
 
     global _client  # noqa: PLW0603
-    _client = DesktopWSClient(url, auth)
+    _client = DesktopWSClient(url, auth_token)
+
+    # If we logged in via dialog, give the client the refresh token
+    # so it can auto-refresh before the ID token expires.
+    if auth_result:
+        _client.set_auth_refresh(cfg.firebase_api_key, auth_result.refresh_token)
 
     # Register all plugin handlers
     for action_name, handler_fn in registry.handlers.items():
@@ -101,10 +126,6 @@ def connect(
 
     _client.set_gui(main_window) # Inject GUI to client
     main_window.show()
-
-    # We do NOT automatically start the client connection here.
-    # The user should press the 'Connect' button in the GUI to start the session.
-    # We just run an idle watcher to keep the Qt loop alive and handle closing.
 
     with loop:
         task = loop.create_task(_run_app_watcher(_client, main_window))

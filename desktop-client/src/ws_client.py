@@ -33,6 +33,11 @@ class DesktopWSClient:
         self.connected = False
         self._should_run = False
         self._run_task = None
+        self._refresh_task: asyncio.Task | None = None
+
+        # Firebase token refresh (set via set_auth_refresh)
+        self._firebase_api_key: str | None = None
+        self._refresh_token: str | None = None
 
         self.gui = None
         self.audio_streamer = AudioStreamer(self)
@@ -44,6 +49,11 @@ class DesktopWSClient:
         self._local_tools: list[dict] = []
         # Cancellation tracking
         self._active_tasks: dict[str, asyncio.Task] = {}
+
+    def set_auth_refresh(self, api_key: str, refresh_token: str) -> None:
+        """Enable automatic token refresh using Firebase refresh token."""
+        self._firebase_api_key = api_key
+        self._refresh_token = refresh_token
 
     def set_gui(self, gui):
         """Inject the GUI instance to update UI and receive signals."""
@@ -121,12 +131,19 @@ class DesktopWSClient:
     async def connect(self) -> None:
         """Establish WebSocket connection and send auth message."""
         import platform
+
+        # Refresh token if we have a refresh mechanism and the token may be stale
+        await self._maybe_refresh_token()
+
         self.ws = await websockets.connect(self.server_url, max_size=10 * 1024 * 1024)
         self.connected = True
         logger.info("Connected to %s", self.server_url)
 
         if self.gui:
             self.gui.set_status(True)
+
+        # Start periodic token refresh (every 50 minutes)
+        self._start_token_refresh_loop()
 
         # Send auth handshake with T3 capabilities and local tools
         auth_msg: dict[str, Any] = {
@@ -203,6 +220,10 @@ class DesktopWSClient:
         self._should_run = False
         self.connected = False
 
+        if self._refresh_task and not self._refresh_task.done():
+            self._refresh_task.cancel()
+            self._refresh_task = None
+
         if self.gui:
             self.gui.set_status(False)
 
@@ -217,6 +238,36 @@ class DesktopWSClient:
 
         if self._run_task and not self._run_task.done():
             self._run_task.cancel()
+
+    # ── Token refresh ───────────────────────────────────────────────
+
+    async def _maybe_refresh_token(self) -> None:
+        """Refresh the Firebase ID token if a refresh token is available."""
+        if not self._firebase_api_key or not self._refresh_token:
+            return
+        try:
+            from src.firebase_auth import FirebaseAuth
+            fa = FirebaseAuth(self._firebase_api_key)
+            result = fa.refresh_token(self._refresh_token)
+            self.token = result.id_token
+            self._refresh_token = result.refresh_token
+            logger.info("Firebase token refreshed")
+        except Exception as exc:
+            logger.warning("Token refresh failed: %s", exc)
+
+    def _start_token_refresh_loop(self) -> None:
+        """Start a background task that refreshes the token every 50 minutes."""
+        if not self._firebase_api_key or not self._refresh_token:
+            return
+        if self._refresh_task and not self._refresh_task.done():
+            return
+        self._refresh_task = asyncio.create_task(self._token_refresh_loop())
+
+    async def _token_refresh_loop(self) -> None:
+        """Periodically refresh the Firebase ID token (every 50 min)."""
+        while self._should_run:
+            await asyncio.sleep(50 * 60)  # 50 minutes
+            await self._maybe_refresh_token()
 
     # ── Cancellation ──────────────────────────────────────────────────
 

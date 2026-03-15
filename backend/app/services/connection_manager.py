@@ -143,11 +143,25 @@ class ConnectionManager:
         self,
         user_id: str,
         client_type: ClientType = ClientType.WEB,
+        websocket: WebSocket | None = None,
     ) -> None:
-        """Remove the connection for ``(user_id, client_type)``."""
+        """Remove the connection for ``(user_id, client_type)``.
+
+        If *websocket* is provided, only remove the entry when the stored
+        WebSocket matches — this prevents a stale finally-block from
+        removing a replacement connection that was registered concurrently.
+        """
         user_conns = self._connections.get(user_id)
         if user_conns is None:
             return
+        current = user_conns.get(client_type)
+        if current is not None and websocket is not None and current[0] is not websocket:
+            logger.debug(
+                "disconnect_skipped_mismatch",
+                user_id=user_id,
+                client_type=client_type,
+            )
+            return  # A newer connection replaced us — don't remove it
         entry = user_conns.pop(client_type, None)
         if entry is not None:
             self._send_locks.pop(id(entry[0]), None)  # clean up send lock

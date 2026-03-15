@@ -76,9 +76,9 @@ class E2BDesktopService:
         returns its info.
         """
         if user_id in self._desktops:
-            _, info = self._desktops[user_id]
-            if info.status != DesktopStatus.DESTROYED:
-                return info
+            existing = await self.get_desktop_info(user_id)
+            if existing is not None:
+                return existing
 
         from e2b_desktop import Sandbox
 
@@ -120,11 +120,25 @@ class E2BDesktopService:
             raise
 
     async def get_desktop_info(self, user_id: str) -> DesktopInfo | None:
-        """Return desktop info for a user, or None."""
+        """Return desktop info for a user, or None.
+
+        Also verifies the sandbox is still alive on E2B's side. If the
+        sandbox has expired, cleans up the stale entry and returns None.
+        """
         entry = self._desktops.get(user_id)
         if not entry:
             return None
-        return entry[1]
+        sandbox, info = entry
+        if info.status == DesktopStatus.DESTROYED:
+            return None
+        # Probe the sandbox to check it's still alive
+        if not self._is_sandbox_alive(sandbox):
+            logger.warning("stale_sandbox_detected", user_id=user_id, sandbox_id=info.sandbox_id)
+            self._desktops.pop(user_id, None)
+            info.status = DesktopStatus.DESTROYED
+            await self._publish_status(info)
+            return None
+        return info
 
     async def destroy_desktop(self, user_id: str) -> bool:
         """Stop and destroy a user's desktop sandbox."""
@@ -264,6 +278,15 @@ class E2BDesktopService:
         if info.status == DesktopStatus.DESTROYED:
             raise RuntimeError(f"Desktop sandbox for user {user_id} has been destroyed.")
         return sandbox
+
+    @staticmethod
+    def _is_sandbox_alive(sandbox) -> bool:
+        """Check whether an E2B sandbox is still running."""
+        try:
+            sandbox.commands.run("echo ok", timeout=5)
+            return True
+        except Exception:
+            return False
 
     async def _publish_status(self, info: DesktopInfo) -> None:
         """Publish desktop status to EventBus."""

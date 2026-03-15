@@ -163,9 +163,9 @@ async def _send_action(
 
     message = json.dumps(
         {
-            "type": "cross_client_action",
+            "type": "cross_client",
             "action": action,
-            "payload": _safe_parse_json(payload) if isinstance(payload, str) else payload,
+            "data": _safe_parse_json(payload) if isinstance(payload, str) else payload,
         }
     )
 

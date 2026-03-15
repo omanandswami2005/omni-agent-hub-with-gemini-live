@@ -42,7 +42,8 @@ export default function DesktopViewer() {
         }
     }, []);
 
-    const isRunning = desktop?.status === 'running';
+    // Backend E2B service returns statuses: creating, ready, streaming, working, idle, destroyed, error
+    const isRunning = !!desktop?.status && !['destroyed', 'error', 'none'].includes(desktop.status);
     const streamUrl = desktop?.stream_url;
 
     // No desktop state yet — show start button

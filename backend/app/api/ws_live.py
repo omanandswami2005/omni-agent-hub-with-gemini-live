@@ -1467,7 +1467,7 @@ async def ws_live(websocket: WebSocket) -> None:
     except (RuntimeError, WebSocketDisconnect) as e:
         # Handle cases where websocket disconnects during send
         logger.info("ws_send_after_close", user_id=user.uid, error=str(e))
-        await mgr.disconnect(user.uid, client_type)
+        await mgr.disconnect(user.uid, client_type, websocket=websocket)
         return
 
     # If other clients are online, suggest session continuation
@@ -1483,7 +1483,7 @@ async def ws_live(websocket: WebSocket) -> None:
             await websocket.send_text(suggestion.model_dump_json())
         except (RuntimeError, WebSocketDisconnect):
             logger.info("ws_send_after_close", user_id=user.uid)
-            await mgr.disconnect(user.uid, client_type)
+            await mgr.disconnect(user.uid, client_type, websocket=websocket)
             return
 
     # Phase 3 — Bidi streaming
@@ -1602,7 +1602,7 @@ async def ws_live(websocket: WebSocket) -> None:
                         exc_info=True,
                     )
 
-        await mgr.disconnect(user.uid, client_type)
+        await mgr.disconnect(user.uid, client_type, websocket=websocket)
         logger.info("ws_live_closed", user_id=user.uid, session_id=session_id)
 
 

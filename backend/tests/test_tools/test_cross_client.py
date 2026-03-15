@@ -155,9 +155,9 @@ class TestMessageFormat:
             await send_to_desktop("capture_screen", '{"format": "png"}', tool_context=_fake_ctx())
         sent_msg = mock_cm.send_to_client.call_args[0][2]
         parsed = json.loads(sent_msg)
-        assert parsed["type"] == "cross_client_action"
+        assert parsed["type"] == "cross_client"
         assert parsed["action"] == "capture_screen"
-        assert parsed["payload"]["format"] == "png"
+        assert parsed["data"]["format"] == "png"
 
 
 # ── Desktop tools (E2B-based) ────────────────────────────────────────
