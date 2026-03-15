@@ -7,6 +7,8 @@ since no reliable public Wikipedia MCP endpoint exists.
 
 from __future__ import annotations
 
+import contextlib
+
 from google.adk.tools import FunctionTool
 
 from app.models.plugin import (
@@ -57,10 +59,8 @@ async def search_wikipedia(query: str, num_results: int = 5) -> dict:
     try:
         results = wikipedia.search(query, results=num_results)
         suggestion = None
-        try:
+        with contextlib.suppress(Exception):
             _, suggestion = wikipedia.search(query, results=1, suggestion=True)
-        except Exception:
-            pass
         return {
             "results": results,
             "suggestion": suggestion,

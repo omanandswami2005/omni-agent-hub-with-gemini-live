@@ -16,6 +16,7 @@ export default function MCPDetail({ server, onToggle, onClose }) {
   const disconnectOAuth = useMcpStore((s) => s.disconnectOAuth);
   const handleOAuthCallback = useMcpStore((s) => s.handleOAuthCallback);
   const fetchCatalog = useMcpStore((s) => s.fetchCatalog);
+  const refreshAfterOAuth = useMcpStore((s) => s.refreshAfterOAuth);
   const saveSecrets = useMcpStore((s) => s.saveSecrets);
   const startGoogleOAuth = useMcpStore((s) => s.startGoogleOAuth);
   const disconnectGoogleOAuth = useMcpStore((s) => s.disconnectGoogleOAuth);
@@ -36,9 +37,14 @@ export default function MCPDetail({ server, onToggle, onClose }) {
     if (event.data?.type === 'oauth_callback' && event.data.plugin_id === server?.id) {
       handleOAuthCallback(event.data.plugin_id, event.data.status);
       setOauthLoading(false);
+      // Fetch immediately, then retry with backoff until tools appear
+      // (backend tool discovery can be on a different Cloud Run instance)
       fetchCatalog();
+      if (event.data.status === 'success') {
+        refreshAfterOAuth(event.data.plugin_id);
+      }
     }
-  }, [server?.id, handleOAuthCallback, fetchCatalog]);
+  }, [server?.id, handleOAuthCallback, fetchCatalog, refreshAfterOAuth]);
 
   useEffect(() => {
     window.addEventListener('message', onMessage);

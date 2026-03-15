@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { api } from '@/lib/api';
 
-export const useMcpStore = create((set, _get) => ({
+export const useMcpStore = create((set, get) => ({
   catalog: [],
   installed: [],
   loading: false,
@@ -104,6 +104,32 @@ export const useMcpStore = create((set, _get) => ({
           ? state.installed
           : [...state.installed, pluginId],
       }));
+    }
+  },
+
+  /**
+   * After OAuth success, re-fetch the catalog with retries until the
+   * connected plugin reports tools. This handles the case where the OAuth
+   * callback hit a different Cloud Run instance than the catalog request
+   * (in-memory _discovered_summaries lives per-instance).
+   */
+  refreshAfterOAuth: async (pluginId) => {
+    const delays = [800, 2000, 3500, 5000];
+    for (let i = 0; i < delays.length; i++) {
+      await new Promise((r) => setTimeout(r, delays[i]));
+      await get().fetchCatalog();
+
+      // Preserve connected state even if server briefly reports enabled
+      const item = get().catalog.find((m) => m.id === pluginId);
+      if (item && item.state !== 'connected') {
+        set((state) => ({
+          catalog: state.catalog.map((m) =>
+            m.id === pluginId ? { ...m, state: 'connected' } : m,
+          ),
+        }));
+      }
+
+      if (item?.tools_summary?.length > 0 || item?.tools?.length > 0) return;
     }
   },
 

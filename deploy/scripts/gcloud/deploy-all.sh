@@ -15,7 +15,6 @@
 #
 # Prerequisites:
 #   - gcloud CLI authenticated  (gcloud auth login)
-#   - Docker running locally    (for backend build)
 #   - firebase CLI installed    (for dashboard deploy)
 #   - pnpm installed            (for dashboard build)
 #   - Artifact Registry repo "omni" already exists (run setup-gcp.sh once first)
@@ -73,24 +72,21 @@ log "Dashboard: Firebase Hosting (${PROJECT_ID}.web.app)"
 # =============================================================================
 if [[ -z "${SKIP_BACKEND:-}" ]]; then
 
-  # --- Authenticate Docker with Artifact Registry ---
-  step "Docker → Artifact Registry auth"
+  # --- Authenticate Docker with Artifact Registry (needed for Cloud Run pulls) ---
+  step "Backend → Artifact Registry auth"
   gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
   ok "Authenticated"
 
   if [[ -z "${SKIP_BUILD:-}" ]]; then
-    step "Backend — Docker build"
-    docker build \
-      --platform linux/amd64 \
-      -t "${BACKEND_IMAGE}:${TAG}" \
+    step "Backend — Cloud Build (remote Docker build)"
+    gcloud builds submit \
+      --tag="${BACKEND_IMAGE}:${TAG}" \
+      --project="${PROJECT_ID}" \
+      --timeout=900 \
       "${ROOT_DIR}/backend/"
-    ok "Built ${BACKEND_IMAGE}:${TAG}"
-
-    step "Backend — Push to Artifact Registry"
-    docker push "${BACKEND_IMAGE}:${TAG}"
-    ok "Pushed"
+    ok "Built & pushed ${BACKEND_IMAGE}:${TAG}"
   else
-    warn "Skipping backend Docker build (SKIP_BUILD=1)"
+    warn "Skipping backend build (SKIP_BUILD=1)"
   fi
 
   step "Backend — Deploy to Cloud Run"

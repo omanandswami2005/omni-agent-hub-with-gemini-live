@@ -29,6 +29,16 @@ logger = get_logger(__name__)
 
 __all__ = ["ConnectionManager", "get_connection_manager"]
 
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _fire_and_forget(coro) -> asyncio.Task:
+    """Schedule *coro* as a background task and prevent GC until done."""
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
 # Heartbeat interval + timeout (seconds)
 _HEARTBEAT_INTERVAL = 30
 _PING_TIMEOUT = 10
@@ -123,7 +133,7 @@ class ConnectionManager:
         logger.info("client_connected", user_id=user_id, client_type=client_type)
 
         # Write Firestore presence (best-effort, non-blocking)
-        asyncio.create_task(self._set_presence(user_id, client_type, os_name, now))
+        _fire_and_forget(self._set_presence(user_id, client_type, os_name, now))
 
         await self._broadcast_client_status(
             user_id, event="connected", changed_client_type=client_type
@@ -154,7 +164,7 @@ class ConnectionManager:
         logger.info("client_disconnected", user_id=user_id, client_type=client_type)
 
         # Remove Firestore presence (best-effort, non-blocking)
-        asyncio.create_task(self._clear_presence(user_id, client_type))
+        _fire_and_forget(self._clear_presence(user_id, client_type))
 
         await self._broadcast_client_status(
             user_id, event="disconnected", changed_client_type=client_type
@@ -261,11 +271,11 @@ class ConnectionManager:
 
     # ── Messaging ─────────────────────────────────────────────────────
 
-    def get_send_lock(self, websocket: "WebSocket") -> asyncio.Lock | None:
+    def get_send_lock(self, websocket: WebSocket) -> asyncio.Lock | None:
         """Return the serialisation lock for *websocket*, or None if not tracked."""
         return self._send_locks.get(id(websocket))
 
-    async def _safe_send(self, ws: "WebSocket", message: str) -> None:
+    async def _safe_send(self, ws: WebSocket, message: str) -> None:
         """Send *message* to *ws* while holding its per-socket send lock.
 
         Serialises concurrent send callers (relay_task, _upstream, _downstream)
@@ -398,22 +408,31 @@ class ConnectionManager:
     def get_connected_clients(self, user_id: str) -> list[ClientInfo]:
         """Return ``ClientInfo`` for every active connection of *user_id*.
 
-        Queries Firestore ``client_presence`` collection so clients on
-        **all** Cloud Run instances are visible.  Falls back to local
-        in-memory data if Firestore is unavailable.
+        Merges local in-memory connections with Firestore ``client_presence``
+        so clients on **all** Cloud Run instances are visible.  Local data
+        is always included first (it's authoritative for this instance and
+        avoids race conditions with async Firestore presence writes).
         """
+        # Start with local connections (always up-to-date for this instance)
+        seen_types: set[str] = set()
+        clients: list[ClientInfo] = []
+        for info in self._get_local_clients(user_id):
+            seen_types.add(str(info.client_type))
+            clients.append(info)
+
+        # Merge Firestore entries for clients on OTHER instances
         try:
             db = self._get_db()
             docs = db.collection(_PRESENCE_COLLECTION).where("user_id", "==", user_id).stream()
             cutoff = datetime.now(UTC).timestamp() - _PRESENCE_STALE_SECONDS
-            clients: list[ClientInfo] = []
             for doc in docs:
                 d = doc.to_dict()
-                # Skip stale entries that the reaper hasn't cleaned yet
                 hb = d.get("last_heartbeat")
                 if hb is not None and hb.timestamp() < cutoff:
                     continue
                 ct_val = d.get("client_type", "web")
+                if ct_val in seen_types:
+                    continue  # already have this client_type from local
                 try:
                     ct = ClientType(ct_val)
                 except ValueError:
@@ -435,11 +454,11 @@ class ConnectionManager:
                         os_name=d.get("os_name", "Unknown"),
                     )
                 )
-            return clients
+                seen_types.add(ct_val)
         except Exception:
             logger.warning("firestore_presence_read_failed", user_id=user_id, exc_info=True)
-            # Fallback to local-only
-            return self._get_local_clients(user_id)
+
+        return clients
 
     def _get_local_clients(self, user_id: str) -> list[ClientInfo]:
         """Fallback: return clients from local in-memory state only."""

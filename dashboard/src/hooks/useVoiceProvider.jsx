@@ -101,8 +101,10 @@ export function VoiceProvider({ children }) {
         } else {
             if (micBlocked) return; // Another device holds the floor — refuse silently
             stopPlayback();
-            acquireMic();        // Tell server we want the floor BEFORE audio starts
-            startRecording();    // Worklet frames are held until server grants the floor
+            // Request the mic floor — recording starts only after the server
+            // confirms the grant.  This eliminates the race where audio frames
+            // are silently dropped during the round-trip to the server.
+            acquireMic(() => startRecording());
         }
     }, [isRecording, isConnected, micBlocked, acquireMic, startRecording, stopRecordingAndRelease, stopPlayback]);
 

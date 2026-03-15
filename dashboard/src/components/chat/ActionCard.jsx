@@ -129,14 +129,14 @@ export default function ActionCard({ action }) {
         <button
           onClick={(e) => {
             e.stopPropagation();
-            // Mark cancelled in UI
+            // Mark cancelled in UI — pass call_id for exact match
             useChatStore.getState().completeAction(tool_name, {
               result: 'Cancelled by user',
               success: false,
-            });
+            }, action.call_id);
             useChatStore.getState().setToolActive(tool_name, false);
             // Send custom event so the ChatPanel/VoiceProvider can send the abort text
-            window.dispatchEvent(new CustomEvent('cancel_tool', { detail: { tool_name } }));
+            window.dispatchEvent(new CustomEvent('cancel_tool', { detail: { tool_name, call_id: action.call_id } }));
           }}
           className="text-destructive hover:text-destructive/80 bg-destructive/10 absolute top-1.5 -right-2 inline-flex translate-x-full items-center rounded-full px-2 py-0.5 text-[10px] opacity-0 transition-colors group-hover:opacity-100"
           title="Cancel Execution"
@@ -155,7 +155,7 @@ export default function ActionCard({ action }) {
           )}
 
           {/* Arguments */}
-          {args !== undefined && (
+          {args != null && typeof args === 'object' && (
             <div>
               <p className="text-muted-foreground/70 text-[10px] font-medium tracking-wider uppercase">
                 Arguments

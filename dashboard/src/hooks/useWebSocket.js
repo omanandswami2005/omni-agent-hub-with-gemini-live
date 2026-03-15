@@ -25,6 +25,9 @@ export function useWebSocket() {
   // sendAudio drops frames until this is true, preventing audio from reaching
   // ADK before the explicit mic_acquire handshake completes.
   const micGrantedRef = useRef(false);
+  // Callback invoked once when mic floor is granted (used by VoiceProvider
+  // to defer startRecording until the server is ready to accept audio).
+  const onMicGrantedRef = useRef(null);
   const [isConnected, setIsConnected] = useState(false);
   // Firestore session ID returned by the server after auth
   const [serverSessionId, setServerSessionId] = useState(null);
@@ -111,6 +114,8 @@ export function useWebSocket() {
             // Another device started a session — switch to it for continuity
             if (msg.session_id) {
               const ss = useSessionStore.getState();
+              // Guard: don't reconnect if already on this session
+              if (ss.activeSessionId === msg.session_id) break;
               ss.setActiveSession(msg.session_id);
               ss.ensureSession(msg.session_id);
               setServerSessionId(msg.session_id);
@@ -183,6 +188,7 @@ export function useWebSocket() {
             status: msg.status,
             action_kind: msg.action_kind || 'tool',
             source_label: msg.source_label || '',
+            call_id: msg.call_id || '',
           });
           break;
         case 'tool_response':
@@ -194,7 +200,7 @@ export function useWebSocket() {
             success: msg.success,
             action_kind: msg.action_kind || 'tool',
             source_label: msg.source_label || '',
-          });
+          }, msg.call_id || '');
           break;
         case 'agent_transfer':
           useChatStore.getState().addAction({
@@ -234,6 +240,16 @@ export function useWebSocket() {
             }
           }
           break;
+        case 'session_created': {
+          // Server lazily created a Firestore session on first message
+          if (msg.firestore_session_id) {
+            setServerSessionId(msg.firestore_session_id);
+            const ss = useSessionStore.getState();
+            ss.setActiveSession(msg.firestore_session_id);
+            ss.ensureSession(msg.firestore_session_id);
+          }
+          break;
+        }
         case 'client_status_update':
           useClientStore.getState().setClients(msg.clients);
           break;
@@ -242,9 +258,15 @@ export function useWebSocket() {
             // Server granted us the mic floor — start forwarding audio frames
             micGrantedRef.current = true;
             useClientStore.getState().setMicFloorHolder(msg.holder || null);
+            // Fire the pending callback (e.g. startRecording) now that server is ready
+            if (onMicGrantedRef.current) {
+              onMicGrantedRef.current();
+              onMicGrantedRef.current = null;
+            }
           } else if (msg.event === 'denied') {
             // Server denied our acquire request — another device holds the floor
             micGrantedRef.current = false;
+            onMicGrantedRef.current = null;
             useClientStore.getState().setMicFloorHolder(msg.holder || null);
           } else if (msg.event === 'acquired' || msg.event === 'released') {
             useClientStore.getState().setMicFloorHolder(
@@ -258,8 +280,14 @@ export function useWebSocket() {
           break;
         case 'session_suggestion': {
           const sss = useSessionSuggestionStore.getState();
+          const myType = getClientType();
+          // Ignore suggestions that are only about our own client type — these
+          // are self-broadcasts from our own connection, not a different device.
+          const isSelfBroadcast =
+            (msg.available_clients || []).length === 1 &&
+            msg.available_clients[0] === myType;
           // If the server included a session_id, switch to it for continuity
-          if (msg.session_id) {
+          if (msg.session_id && !isSelfBroadcast) {
             const ss = useSessionStore.getState();
             if (ss.activeSessionId !== msg.session_id) {
               ss.setActiveSession(msg.session_id);
@@ -276,14 +304,16 @@ export function useWebSocket() {
               }, 100);
             }
           }
-          if (sss.autoJoin) {
-            toast.info(`Joined your active session from ${msg.available_clients?.join(', ') || 'another device'}`, { duration: 3000 });
-          } else {
-            sss.setSuggestion({
-              availableClients: msg.available_clients || [],
-              message: msg.message || 'You have an active session on another device.',
-              sessionId: msg.session_id || '',
-            });
+          if (!isSelfBroadcast) {
+            if (sss.autoJoin) {
+              toast.info(`Joined your active session from ${msg.available_clients?.join(', ') || 'another device'}`, { duration: 3000 });
+            } else {
+              sss.setSuggestion({
+                availableClients: msg.available_clients || [],
+                message: msg.message || 'You have an active session on another device.',
+                sessionId: msg.session_id || '',
+              });
+            }
           }
           break;
         }
@@ -308,6 +338,10 @@ export function useWebSocket() {
       setIsConnected(false);
       // 4000 = replaced by new connection, 4003 = auth failure — don't reconnect for either
       const noReconnect = e.code === 4000 || e.code === 4003;
+      if (e.code === 4003) {
+        toast.error('Authentication failed. Please sign in again.', { duration: 6000 });
+      }
+      clearTimeout(reconnectTimer.current);
       if (!intentionalClose.current && !noReconnect) {
         const delay = reconnectDelay(attemptRef.current);
         attemptRef.current += 1;
@@ -397,8 +431,10 @@ export function useWebSocket() {
 
   // Send explicit mic floor acquire request before streaming audio.
   // The server will respond with mic_floor:{event:"granted"} or {event:"denied"}.
-  const acquireMic = useCallback(() => {
+  // Optional *onGranted* callback is invoked once when the floor is granted.
+  const acquireMic = useCallback((onGranted) => {
     micGrantedRef.current = false; // wait for server grant
+    onMicGrantedRef.current = onGranted || null;
     sendJsonMessage(wsRef.current, { type: 'mic_acquire' });
   }, []);
 

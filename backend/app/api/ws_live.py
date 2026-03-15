@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import contextvars
 import json
+import re
 import time
 import warnings
 from typing import TYPE_CHECKING
@@ -33,13 +34,12 @@ warnings.filterwarnings(
     module=r"pydantic\.main",
 )
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect  # noqa: E402
 
-# ── Light imports only (no google.adk / google.genai at module level) ──
-from app.config import settings
-from app.middleware.auth_middleware import AuthenticatedUser, _get_firebase_app
-from app.models.client import ClientType
-from app.models.ws_messages import (
+from app.config import settings  # noqa: E402
+from app.middleware.auth_middleware import AuthenticatedUser, _get_firebase_app  # noqa: E402
+from app.models.client import ClientType  # noqa: E402
+from app.models.ws_messages import (  # noqa: E402
     ActionKind,
     AgentResponse,
     AgentState,
@@ -56,8 +56,11 @@ from app.models.ws_messages import (
     TranscriptionDirection,
     TranscriptionMessage,
 )
-from app.services.connection_manager import get_connection_manager
-from app.services.event_bus import EventBus, get_event_bus
+from app.services.connection_manager import get_connection_manager  # noqa: E402
+from app.services.event_bus import EventBus, get_event_bus  # noqa: E402
+from app.services.mcp_manager import get_mcp_manager  # noqa: E402
+from app.services.memory_service import get_memory_service  # noqa: E402
+from app.utils.logging import get_logger  # noqa: E402
 
 # Per-task context variable: set to `str(id(websocket))` inside every
 # _process_event() call so _publish() can stamp the origin connection.
@@ -66,9 +69,6 @@ _conn_tag_var: contextvars.ContextVar[str] = contextvars.ContextVar("conn_tag", 
 # Per-task context variable: set to the client_type string in _process_event()
 # so _publish() can embed _origin_client_type in every EventBus event.
 _client_type_var: contextvars.ContextVar[str] = contextvars.ContextVar("client_type", default="")
-from app.services.mcp_manager import get_mcp_manager
-from app.services.memory_service import get_memory_service
-from app.utils.logging import get_logger
 
 if TYPE_CHECKING:
     from google.adk.agents.live_request_queue import LiveRequestQueue
@@ -79,6 +79,18 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 router = APIRouter()
+
+# ── Background task tracking (prevents RUF006 / GC of fire-and-forget tasks) ──
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _fire_and_forget(coro) -> asyncio.Task:
+    """Schedule *coro* as a background task and prevent GC until done."""
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
 
 # ── Module-level singletons (built lazily on first use) ───────────────
 
@@ -208,7 +220,11 @@ async def _get_runner(user_id: str, session_service=None):
         except Exception:
             logger.warning("tool_registry_build_failed", user_id=user_id, exc_info=True)
 
-        root = build_root_agent(personas=personas, tools_by_persona=tools_by_persona)
+        root = build_root_agent(
+            personas=personas,
+            tools_by_persona=tools_by_persona,
+            plugin_summaries=get_plugin_registry().get_tool_summaries(user_id),
+        )
         runner = Runner(
             app_name=APP_NAME,
             agent=root,
@@ -340,7 +356,10 @@ async def _get_chat_runner(user_id: str, session_service=None):
             logger.warning("tool_registry_build_failed_chat", user_id=user_id, exc_info=True)
 
         root = build_root_agent(
-            personas=personas, tools_by_persona=tools_by_persona, model=TEXT_MODEL
+            personas=personas,
+            tools_by_persona=tools_by_persona,
+            model=TEXT_MODEL,
+            plugin_summaries=get_plugin_registry().get_tool_summaries(user_id),
         )
         runner = Runner(
             app_name=APP_NAME,
@@ -502,13 +521,55 @@ async def _increment_msg_count(firestore_session_id: str) -> None:
         pass  # Non-critical — silently ignore
 
 
+async def _lazy_create_firestore_session(
+    fs_id_ref: list[str | None],
+    user_id: str,
+    adk_session_id: str | None,
+    websocket: WebSocket,
+    first_content: str = "",
+) -> str | None:
+    """Create a Firestore session on first user activity (lazy).
+
+    *fs_id_ref* is a single-element list used as a mutable reference so the
+    caller's variable is updated in place.  If a session already exists,
+    returns immediately.  Otherwise creates one, links ADK, and notifies
+    the client with a ``session_created`` message.
+    """
+    if fs_id_ref[0]:
+        return fs_id_ref[0]
+    try:
+        from app.models.session import SessionCreate
+        from app.services.session_service import get_session_service as _get_fs_svc
+
+        svc = _get_fs_svc()
+        fs = await svc.create_session(user_id, SessionCreate())
+        fs_id_ref[0] = fs.id
+        if adk_session_id:
+            await svc.link_adk_session(fs.id, adk_session_id)
+        # Notify client of the new session ID
+        with contextlib.suppress(Exception):
+            await websocket.send_text(json.dumps({
+                "type": "session_created",
+                "firestore_session_id": fs.id,
+            }))
+        logger.info("lazy_session_created", user_id=user_id, session_id=fs.id)
+        # Auto-generate title from first content (non-blocking)
+        if first_content.strip():
+            _fire_and_forget(svc.generate_title_from_message(fs.id, first_content))
+        return fs.id
+    except Exception:
+        logger.warning("lazy_session_create_failed", user_id=user_id, exc_info=True)
+        return None
+
+
 async def _upstream(
     websocket: WebSocket,
     queue: LiveRequestQueue,
     user_id: str,
     client_type: ClientType | None = None,
-    firestore_session_id: str | None = None,
+    firestore_session_id_ref: list[str | None] | None = None,
     conn_tag: str = "",
+    adk_session_id: str | None = None,
 ) -> None:
     """Receive frames from the client and push into the ADK queue.
 
@@ -519,6 +580,8 @@ async def _upstream(
     _title_generated = False
     _holds_mic_floor = False  # True once this connection has acquired the floor
     _busy_notified = False    # Limit busy notifications to once per "episode"
+    # Mutable ref so lazy session creation can update the ID
+    _fs_ref = firestore_session_id_ref if firestore_session_id_ref is not None else [None]
     from google.genai import types
 
     try:
@@ -536,7 +599,7 @@ async def _upstream(
                             "event": "acquired",
                             "holder": str(_upstream_client_type),
                         })
-                        asyncio.create_task(mgr.send_to_user(user_id, floor_msg))
+                        _fire_and_forget(mgr.send_to_user(user_id, floor_msg))
                     else:
                         # Another device holds the floor — notify once then drop silently
                         if not _busy_notified:
@@ -558,6 +621,11 @@ async def _upstream(
                     data=msg["bytes"],
                 )
                 queue.send_realtime(audio_blob)
+                # Lazy Firestore session creation on first audio frame
+                if not _fs_ref[0]:
+                    await _lazy_create_firestore_session(
+                        _fs_ref, user_id, adk_session_id, websocket, "[voice]"
+                    )
             elif msg.get("text"):
                 try:
                     data = json.loads(msg["text"])
@@ -571,6 +639,12 @@ async def _upstream(
                         role="user",
                     )
                     queue.send_content(content)
+                    # Lazy Firestore session creation on first user message
+                    if not _fs_ref[0] and content_str.strip():
+                        await _lazy_create_firestore_session(
+                            _fs_ref, user_id, adk_session_id, websocket, content_str
+                        )
+                        _title_generated = True  # title generated inside lazy create
                     # Publish text to EventBus for cross-client sync
                     bus = get_event_bus()
                     if bus and user_id:
@@ -578,17 +652,18 @@ async def _upstream(
                             "type": "user_message",
                             "content": content_str,
                             "_origin_conn": conn_tag,
+                            "_origin_client_type": str(_upstream_client_type) if _upstream_client_type else "",
                         }
-                        asyncio.create_task(bus.publish(user_id, json.dumps(user_msg)))
+                        _fire_and_forget(bus.publish(user_id, json.dumps(user_msg)))
                     # Increment message count (best-effort, non-blocking)
-                    if firestore_session_id:
-                        asyncio.create_task(_increment_msg_count(firestore_session_id))
+                    if _fs_ref[0]:
+                        _fire_and_forget(_increment_msg_count(_fs_ref[0]))
                     # Auto-generate session title from first text message
-                    if not _title_generated and firestore_session_id and content_str.strip():
+                    if not _title_generated and _fs_ref[0] and content_str.strip():
                         _title_generated = True
                         from app.services.session_service import get_session_service as _get_fs_svc
-                        asyncio.create_task(
-                            _get_fs_svc().generate_title_from_message(firestore_session_id, content_str)
+                        _fire_and_forget(
+                            _get_fs_svc().generate_title_from_message(_fs_ref[0], content_str)
                         )
                 elif msg_type == "image":
                     import base64
@@ -675,7 +750,7 @@ async def _upstream(
                             "event": "acquired",
                             "holder": str(_upstream_client_type),
                         })
-                        asyncio.create_task(mgr.send_to_user(user_id, floor_msg))
+                        _fire_and_forget(mgr.send_to_user(user_id, floor_msg))
                         logger.info("mic_acquire_granted", user_id=user_id, client_type=_upstream_client_type)
                     else:
                         holder = mgr.get_mic_floor_holder(user_id)
@@ -697,7 +772,7 @@ async def _upstream(
                             "event": "released",
                             "holder": str(_upstream_client_type),
                         })
-                        asyncio.create_task(mgr.send_to_user(user_id, floor_msg))
+                        _fire_and_forget(mgr.send_to_user(user_id, floor_msg))
                         logger.info("mic_release_explicit", user_id=user_id, client_type=_upstream_client_type)
                 # Other control messages (persona_switch)
                 # are handled at the API layer, not pushed to ADK
@@ -719,7 +794,7 @@ async def _upstream(
                     "event": "released",
                     "holder": str(_upstream_client_type),
                 })
-                asyncio.create_task(mgr.send_to_user(user_id, floor_msg))
+                _fire_and_forget(mgr.send_to_user(user_id, floor_msg))
 
 
 # ── Downstream (ADK → client) ────────────────────────────────────────
@@ -865,6 +940,56 @@ def _classify_tool(tool_name: str) -> tuple[ActionKind, str]:
     return ActionKind.TOOL, ""
 
 
+_call_id_counter = 0
+
+
+def _try_parse_genui(text: str) -> dict | None:
+    """Detect structured GenUI JSON in agent text output.
+
+    Agents can emit GenUI by returning JSON with a ``genui_type`` field:
+    ``{"genui_type": "chart", "data": {...}, "text": "Here's a chart"}``
+
+    Also detects markdown-fenced JSON blocks with genui_type.
+    Returns the parsed dict on success, or None if not GenUI.
+    """
+    stripped = text.strip()
+    # Quick reject: most text isn't GenUI
+    if "genui_type" not in stripped:
+        return None
+    # Try direct JSON parse
+    try:
+        obj = json.loads(stripped)
+        if isinstance(obj, dict) and obj.get("genui_type"):
+            return {"type": obj["genui_type"], "data": obj.get("data", obj), "text": obj.get("text", "")}
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Try extracting from markdown code fences
+    match = re.search(r"```(?:json)?\s*\n?({.*?})\s*\n?```", stripped, re.DOTALL)
+    if match:
+        try:
+            obj = json.loads(match.group(1))
+            if isinstance(obj, dict) and obj.get("genui_type"):
+                return {"type": obj["genui_type"], "data": obj.get("data", obj), "text": obj.get("text", "")}
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return None
+
+
+def _next_call_id(fc_id: str | None = None) -> str:
+    """Generate a unique call_id for tool_call ↔ tool_response matching."""
+    global _call_id_counter
+    if fc_id:
+        return fc_id
+    _call_id_counter += 1
+    return f"tc_{_call_id_counter}_{int(__import__('time').time() * 1000)}"
+
+
+# Map tool_name → stack of call_ids for matching function_responses back to calls.
+# Keyed by (conn_tag, tool_name). Uses a list (FIFO) so overlapping calls to the
+# same tool name don't clobber each other.
+_pending_call_ids: dict[tuple[str, str], list[str]] = {}
+
+
 async def _process_event(
     websocket: WebSocket,
     event: Event,
@@ -888,10 +1013,19 @@ async def _process_event(
                 # Raw PCM audio → binary frame (NOT forwarded to dashboard)
                 await websocket.send_bytes(part.inline_data.data)
             elif part.text:
-                msg = AgentResponse(
-                    content_type=ContentType.TEXT,
-                    data=part.text,
-                )
+                # Detect GenUI: if the text is a JSON block with "genui_type"
+                genui_payload = _try_parse_genui(part.text)
+                if genui_payload:
+                    msg = AgentResponse(
+                        content_type=ContentType.GENUI,
+                        data=genui_payload.get("text", ""),
+                        genui=genui_payload,
+                    )
+                else:
+                    msg = AgentResponse(
+                        content_type=ContentType.TEXT,
+                        data=part.text,
+                    )
                 json_str = msg.model_dump_json()
                 await websocket.send_text(json_str)
                 await _publish(bus, user_id, json_str)
@@ -940,7 +1074,10 @@ async def _process_event(
             continue
 
         kind, label = _classify_tool(fc.name)
+        call_id = _next_call_id(getattr(fc, "id", None))
+        _pending_call_ids.setdefault((conn_tag, fc.name), []).append(call_id)
         msg = ToolCallMessage(
+            call_id=call_id,
             tool_name=fc.name,
             arguments=dict(fc.args) if fc.args else {},
             status=ToolStatus.STARTED,
@@ -974,6 +1111,12 @@ async def _process_event(
                 await _publish(bus, user_id, json_str)
 
         kind, label = _classify_tool(fr.name)
+        # Recover the call_id assigned during the tool_call phase (FIFO pop)
+        _id_stack = _pending_call_ids.get((conn_tag, fr.name))
+        resp_call_id = (_id_stack.pop(0) if _id_stack else "") or getattr(fr, "id", "") or ""
+        # Clean up empty stack entries
+        if _id_stack is not None and not _id_stack:
+            _pending_call_ids.pop((conn_tag, fr.name), None)
         # Always send the tool response (text summary for image tools)
         msg = ToolResponseMessage(
             tool_name=fr.name,
@@ -981,6 +1124,7 @@ async def _process_event(
             success=True,
             action_kind=kind,
             source_label=label,
+            call_id=resp_call_id,
         )
         json_str = msg.model_dump_json()
         await websocket.send_text(json_str)
@@ -1024,7 +1168,7 @@ async def _relay_cross_events(
     own_conn_tag: str,
     own_client_type: str = "",
     user_id: str = "",
-    client_type: "ClientType | None" = None,
+    client_type: ClientType | None = None,
 ) -> None:
     """Forward EventBus events that did NOT originate from this connection.
 
@@ -1170,26 +1314,27 @@ async def ws_live(websocket: WebSocket) -> None:
     # Get or create the ADK session (InMemory; we cache the ID)
     active_session_service = _get_session_service()
 
-    # Create/link Firestore session to ADK session
-    from app.models.session import SessionCreate
+    # ── Session resolution ────────────────────────────────────────
+    # • If the client requests a specific Firestore session → resume it.
+    # • If other clients are already online → reuse their session (continuity).
+    # • Otherwise → create only an ADK session; the Firestore session is
+    #   created lazily on first user message (no empty sessions).
     from app.services.session_service import get_session_service as _get_fs_svc
 
     _fs_svc = _get_fs_svc()
     firestore_session_id = None
     session_id = None
     try:
-        if requested_session_id:
+        if requested_session_id and requested_session_id != "new":
             # Client wants to resume a specific Firestore session
             fs_session = await _fs_svc.get_session(user.uid, requested_session_id)
             firestore_session_id = fs_session.id
             if fs_session.adk_session_id and await _adk_session_exists(
                 fs_session.adk_session_id, user.uid, active_session_service
             ):
-                # Resume existing ADK session (verified to exist on this instance)
                 session_id = fs_session.adk_session_id
                 _adk_session_id_cache[user.uid] = session_id
             else:
-                # ADK session gone (cold start) or never linked — create new
                 session_id = await _get_or_create_adk_session(
                     user.uid, active_session_service, force_new=True
                 )
@@ -1210,53 +1355,38 @@ async def ws_live(websocket: WebSocket) -> None:
                     )
                     await _fs_svc.link_adk_session(firestore_session_id, session_id)
             else:
-                # No existing session — create fresh
+                # No existing session — ADK only, Firestore lazy on first message
                 session_id = await _get_or_create_adk_session(user.uid, active_session_service)
-                fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
-                firestore_session_id = fs_session.id
-                await _fs_svc.link_adk_session(firestore_session_id, session_id)
+        elif requested_session_id == "new":
+            # User explicitly started a new chat — ADK session only,
+            # Firestore session deferred to first message
+            session_id = await _get_or_create_adk_session(
+                user.uid, active_session_service, force_new=True
+            )
         else:
-            # No specific session requested — only create if user explicitly wants a new session
-            # The frontend sends session_id="new" when user clicks "New Session" button
-            if requested_session_id == "new":
-                # User explicitly wants a new session
-                session_id = await _get_or_create_adk_session(
-                    user.uid, active_session_service, force_new=True
-                )
-                fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
-                firestore_session_id = fs_session.id
-                await _fs_svc.link_adk_session(firestore_session_id, session_id)
-            else:
-                # No specific session requested — connect to latest session or create new
-                # This ensures users can always chat with their most recent session
-                latest = await _fs_svc.get_latest_session_for_user(user.uid)
-                if latest:
-                    firestore_session_id = latest.id
-                    if latest.adk_session_id and await _adk_session_exists(
-                        latest.adk_session_id, user.uid, active_session_service
-                    ):
-                        session_id = latest.adk_session_id
-                        _adk_session_id_cache[user.uid] = session_id
-                    else:
-                        session_id = await _get_or_create_adk_session(user.uid, active_session_service, force_new=True)
-                        await _fs_svc.link_adk_session(firestore_session_id, session_id)
+            # Default: try to resume the latest session, or ADK-only
+            latest = await _fs_svc.get_latest_session_for_user(user.uid)
+            if latest:
+                firestore_session_id = latest.id
+                if latest.adk_session_id and await _adk_session_exists(
+                    latest.adk_session_id, user.uid, active_session_service
+                ):
+                    session_id = latest.adk_session_id
+                    _adk_session_id_cache[user.uid] = session_id
                 else:
-                    # No existing session — create fresh
-                    session_id = await _get_or_create_adk_session(user.uid, active_session_service)
-                    fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
-                    firestore_session_id = fs_session.id
+                    session_id = await _get_or_create_adk_session(
+                        user.uid, active_session_service, force_new=True
+                    )
                     await _fs_svc.link_adk_session(firestore_session_id, session_id)
-                logger.info("connected_to_latest_session", user_id=user.uid, firestore_session_id=firestore_session_id)
+            else:
+                # First ever connection — ADK only, Firestore lazy
+                session_id = await _get_or_create_adk_session(user.uid, active_session_service)
+            logger.info("connected_to_latest_session", user_id=user.uid, firestore_session_id=firestore_session_id)
     except Exception:
-        # Requested session not found or creation failed — create a new one
+        # Fallback: ensure ADK session exists
         if not session_id:
             session_id = await _get_or_create_adk_session(user.uid, active_session_service)
-        try:
-            fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
-            firestore_session_id = fs_session.id
-            await _fs_svc.link_adk_session(firestore_session_id, session_id)
-        except Exception:
-            logger.debug("firestore_session_link_failed", user_id=user.uid)
+        # Don't create a Firestore session — leave it for lazy creation
 
     # Determine voice from requested voice, persona, or default
     from app.agents.personas import get_default_personas
@@ -1355,7 +1485,7 @@ async def ws_live(websocket: WebSocket) -> None:
             "_origin_conn": own_conn_tag,
             "_origin_client_type": str(client_type),
         }
-        asyncio.create_task(bus.publish(user.uid, json.dumps(session_msg)))
+        _fire_and_forget(bus.publish(user.uid, json.dumps(session_msg)))
 
     logger.info(
         "live_session_ready",
@@ -1366,9 +1496,10 @@ async def ws_live(websocket: WebSocket) -> None:
 
     up_task: asyncio.Task | None = None
     down_task: asyncio.Task | None = None
+    fs_id_ref = [firestore_session_id]
     try:
         up_task = asyncio.create_task(
-            _upstream(websocket, queue, user.uid, client_type, firestore_session_id, own_conn_tag),
+            _upstream(websocket, queue, user.uid, client_type, firestore_session_id_ref=fs_id_ref, conn_tag=own_conn_tag, adk_session_id=session_id),
             name="upstream",
         )
         # Only start downstream (agent runner) if we have a valid session_id
@@ -1489,34 +1620,26 @@ async def ws_chat(websocket: WebSocket) -> None:
     if capabilities or local_tools:
         mgr.store_capabilities(user.uid, client_type, capabilities, local_tools)
 
-    # Link Firestore session to ADK session
-    from app.models.session import SessionCreate
+    # Link Firestore session to ADK session — lazy creation on first message
     from app.services.session_service import get_session_service as _get_fs_svc
 
     _fs_svc = _get_fs_svc()
     firestore_session_id = None
     try:
-        if requested_session_id:
+        if requested_session_id and requested_session_id != "new":
             # Client wants to resume a specific Firestore session
             fs_session = await _fs_svc.get_session(user.uid, requested_session_id)
             firestore_session_id = fs_session.id
             if not fs_session.adk_session_id:
                 await _fs_svc.link_adk_session(firestore_session_id, session_id)
-        else:
+        elif requested_session_id != "new":
+            # Check if there's an existing session to resume
             latest = await _fs_svc.get_latest_session_for_user(user.uid)
             if latest and latest.adk_session_id == session_id:
                 firestore_session_id = latest.id
-            else:
-                fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
-                firestore_session_id = fs_session.id
-                await _fs_svc.link_adk_session(fs_session.id, session_id)
+            # Otherwise: firestore_session_id stays None → lazy creation on first message
     except Exception:
-        try:
-            fs_session = await _fs_svc.create_session(user.uid, SessionCreate())
-            firestore_session_id = fs_session.id
-            await _fs_svc.link_adk_session(fs_session.id, session_id)
-        except Exception:
-            logger.debug("firestore_session_link_failed_chat", user_id=user.uid)
+        pass  # Firestore session deferred to first user message
 
     auth_ok = AuthResponse(
         status="ok",
@@ -1567,6 +1690,7 @@ async def ws_chat(websocket: WebSocket) -> None:
     logger.info("ws_chat_connected", user_id=user.uid, session_id=session_id)
 
     _first_message_in_chat = True
+    _active_turn: asyncio.Task | None = None  # currently running run_async turn
     try:
         while True:
             raw = await websocket.receive_text()
@@ -1584,53 +1708,91 @@ async def ws_chat(websocket: WebSocket) -> None:
                 role="user",
             )
 
-            # Auto-generate session title from first user message (non-blocking)
-            if _first_message_in_chat and firestore_session_id:
+            # Lazy Firestore session creation on first user message
+            if _first_message_in_chat and not firestore_session_id:
+                _fs_ref = [None]
+                await _lazy_create_firestore_session(
+                    _fs_ref, user.uid, session_id, websocket, user_text
+                )
+                firestore_session_id = _fs_ref[0]
                 _first_message_in_chat = False
-                asyncio.create_task(
+            elif _first_message_in_chat and firestore_session_id:
+                _first_message_in_chat = False
+                _fire_and_forget(
                     _fs_svc.generate_title_from_message(firestore_session_id, user_text)
                 )
+
+            # Publish user text to EventBus for cross-client sync
+            if bus and user.uid:
+                user_msg = {
+                    "type": "user_message",
+                    "content": user_text,
+                    "_origin_conn": own_conn_tag,
+                    "_origin_client_type": str(client_type) if client_type else "",
+                }
+                _fire_and_forget(bus.publish(user.uid, json.dumps(user_msg)))
+
+            # Increment message count
+            if firestore_session_id:
+                _fire_and_forget(_increment_msg_count(firestore_session_id))
+
+            # Cancel any in-flight turn so the new message takes priority
+            if _active_turn and not _active_turn.done():
+                _active_turn.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await _active_turn
+                # Let the user know the previous turn was interrupted
+                interrupt_msg = StatusMessage(state=AgentState.IDLE, detail="Interrupted — processing new message")
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(interrupt_msg.model_dump_json())
 
             # Status: thinking
             thinking_msg = StatusMessage(state=AgentState.PROCESSING)
             await websocket.send_text(thinking_msg.model_dump_json())
 
-            try:
-                async for event in runner.run_async(
-                    user_id=user.uid,
-                    session_id=session_id,
-                    new_message=content,
-                ):
-                    await _process_event(websocket, event, bus, user.uid, conn_tag=own_conn_tag, client_type=str(client_type))
-                # run_async events don't carry turn_complete, so send IDLE explicitly
-                idle_msg = StatusMessage(state=AgentState.IDLE)
-                await websocket.send_text(idle_msg.model_dump_json())
-            except Exception as turn_exc:
-                turn_exc_str = str(turn_exc)
-                turn_exc_lower = turn_exc_str.lower()
-                if "429" in turn_exc_str or "resource_exhausted" in turn_exc_lower:
-                    logger.warning("ws_chat_turn_rate_limited", user_id=user.uid)
-                    err_msg = ErrorMessage(
-                        code="rate_limited",
-                        description="The AI service is temporarily overloaded (rate limit). Please wait a moment and try again.",
-                    )
-                    await websocket.send_text(err_msg.model_dump_json())
-                elif "timed out" in turn_exc_lower or isinstance(turn_exc, TimeoutError):
-                    logger.warning("ws_chat_turn_timeout", user_id=user.uid)
-                    err_msg = ErrorMessage(
-                        code="request_timeout",
-                        description="The request to the AI service timed out. Please try again.",
-                    )
-                    await websocket.send_text(err_msg.model_dump_json())
-                else:
-                    logger.exception("ws_chat_turn_error", user_id=user.uid)
-                    err_msg = ErrorMessage(
-                        code="agent_error",
-                        description="Something went wrong processing your message. Please try again.",
-                    )
-                    await websocket.send_text(err_msg.model_dump_json())
-                # Always return to IDLE so the client re-enables input
-                await websocket.send_text(StatusMessage(state=AgentState.IDLE).model_dump_json())
+            # Run the ADK turn in a background task so the receive loop stays responsive.
+            # This allows the user to send a new message while a tool is running.
+            async def _run_turn(_content=content):
+                try:
+                    async for event in runner.run_async(
+                        user_id=user.uid,
+                        session_id=session_id,
+                        new_message=_content,
+                    ):
+                        await _process_event(websocket, event, bus, user.uid, conn_tag=own_conn_tag, client_type=str(client_type))
+                    # run_async events don't carry turn_complete, so send IDLE explicitly
+                    idle_msg = StatusMessage(state=AgentState.IDLE)
+                    await websocket.send_text(idle_msg.model_dump_json())
+                except asyncio.CancelledError:
+                    raise  # Let cancellation propagate cleanly
+                except Exception as turn_exc:
+                    turn_exc_str = str(turn_exc)
+                    turn_exc_lower = turn_exc_str.lower()
+                    if "429" in turn_exc_str or "resource_exhausted" in turn_exc_lower:
+                        logger.warning("ws_chat_turn_rate_limited", user_id=user.uid)
+                        err_msg = ErrorMessage(
+                            code="rate_limited",
+                            description="The AI service is temporarily overloaded (rate limit). Please wait a moment and try again.",
+                        )
+                        await websocket.send_text(err_msg.model_dump_json())
+                    elif "timed out" in turn_exc_lower or isinstance(turn_exc, TimeoutError):
+                        logger.warning("ws_chat_turn_timeout", user_id=user.uid)
+                        err_msg = ErrorMessage(
+                            code="request_timeout",
+                            description="The request to the AI service timed out. Please try again.",
+                        )
+                        await websocket.send_text(err_msg.model_dump_json())
+                    else:
+                        logger.exception("ws_chat_turn_error", user_id=user.uid)
+                        err_msg = ErrorMessage(
+                            code="agent_error",
+                            description="Something went wrong processing your message. Please try again.",
+                        )
+                        await websocket.send_text(err_msg.model_dump_json())
+                    # Always return to IDLE so the client re-enables input
+                    await websocket.send_text(StatusMessage(state=AgentState.IDLE).model_dump_json())
+
+            _active_turn = asyncio.create_task(_run_turn(), name=f"chat_turn_{own_conn_tag}")
 
     except (WebSocketDisconnect, RuntimeError):
         logger.info("ws_chat_disconnected", user_id=user.uid)

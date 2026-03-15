@@ -1,5 +1,7 @@
 """CRUD /sessions + message retrieval from ADK session events."""
 
+import contextlib
+
 from fastapi import APIRouter, Depends
 
 from app.middleware.auth_middleware import CurrentUser
@@ -67,27 +69,23 @@ async def list_messages(
     # Try InMemory first (zero-latency, available while server is running)
     inmem = _get_session_service()
     session = None
-    try:
+    with contextlib.suppress(Exception):
         session = await inmem.get_session(
             app_name=APP_NAME,
             user_id=user.uid,
             session_id=adk_sid,
         )
-    except Exception:
-        pass
 
     # Fall back to Vertex AI (persisted sessions)
     if session is None or not session.events:
         vertex_ss = _get_vertex_session_service()
         if vertex_ss:
-            try:
+            with contextlib.suppress(Exception):
                 session = await vertex_ss.get_session(
                     app_name=APP_NAME,
                     user_id=user.uid,
                     session_id=adk_sid,
                 )
-            except Exception:
-                pass
 
     if session is None or not session.events:
         return []
@@ -96,10 +94,8 @@ async def list_messages(
 
     # Update message_count in Firestore to stay in sync with actual message count
     if messages:
-        try:
+        with contextlib.suppress(Exception):
             await svc.update_message_count(session_id, len(messages))
-        except Exception:
-            pass  # Non-critical - silently ignore
 
     return messages
 
@@ -113,6 +109,7 @@ async def _gcs_uri_to_https(gcs_uri: str) -> str:
     if not gcs_uri or not gcs_uri.startswith("gs://"):
         return gcs_uri  # already an HTTPS URL or empty
     import asyncio as _asyncio
+
     from app.services.storage_service import get_storage_service
     # gs://bucket-name/path/to/file  →  path/to/file
     parts = gcs_uri[5:].split("/", 1)  # strip "gs://"

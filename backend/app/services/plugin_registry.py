@@ -128,6 +128,8 @@ class PluginRegistry:
     receives tool summaries until a plugin is explicitly activated.
     """
 
+    _ENABLED_COLLECTION = "plugin_enabled_state"
+
     def __init__(self) -> None:
         # Catalog: { plugin_id: PluginManifest }
         self._catalog: dict[str, PluginManifest] = {}
@@ -143,6 +145,8 @@ class PluginRegistry:
         self._user_secrets: dict[str, dict[str, dict[str, str]]] = {}
         # Plugin errors: { (user_id, plugin_id): error_msg }
         self._errors: dict[tuple[str, str], str] = {}
+        # Firestore client (lazy)
+        self._db = None
 
         # Load built-in catalog
         for manifest in _builtin_plugins():
@@ -150,6 +154,52 @@ class PluginRegistry:
 
         # Auto-discover plugins from app/plugins/ directory
         self._discover_plugin_modules()
+
+    # ------------------------------------------------------------------
+    # Firestore persistence for enabled state
+    # ------------------------------------------------------------------
+
+    def _get_db(self):
+        if self._db is None:
+            from google.cloud import firestore
+
+            from app.config import settings
+
+            self._db = firestore.Client(project=settings.GOOGLE_CLOUD_PROJECT or None)
+        return self._db
+
+    def _persist_enabled(self, user_id: str) -> None:
+        """Persist the enabled plugin set for *user_id* to Firestore."""
+        try:
+            db = self._get_db()
+            enabled = self._user_enabled.get(user_id, {})
+            enabled_ids = [pid for pid, on in enabled.items() if on]
+            db.collection(self._ENABLED_COLLECTION).document(user_id).set(
+                {"enabled_ids": enabled_ids}, merge=True,
+            )
+        except Exception:
+            logger.warning("persist_enabled_failed", user_id=user_id, exc_info=True)
+
+    def _load_enabled(self, user_id: str) -> dict[str, bool]:
+        """Load enabled plugin IDs from Firestore for *user_id*."""
+        try:
+            db = self._get_db()
+            doc = db.collection(self._ENABLED_COLLECTION).document(user_id).get()
+            if doc.exists:
+                data = doc.to_dict()
+                return {pid: True for pid in data.get("enabled_ids", [])}
+        except Exception:
+            logger.warning("load_enabled_failed", user_id=user_id, exc_info=True)
+        return {}
+
+    def _ensure_enabled_loaded(self, user_id: str) -> dict[str, bool]:
+        """Ensure enabled state is loaded from Firestore if not in memory."""
+        if user_id not in self._user_enabled:
+            loaded = self._load_enabled(user_id)
+            if loaded:
+                self._user_enabled[user_id] = loaded
+                logger.info("enabled_state_recovered", user_id=user_id, plugins=list(loaded.keys()))
+        return self._user_enabled.get(user_id, {})
 
     # ------------------------------------------------------------------
     # Plugin discovery
@@ -184,7 +234,7 @@ class PluginRegistry:
 
     def get_catalog(self, user_id: str | None = None) -> list[PluginStatus]:
         """Return the full catalog with per-user state."""
-        enabled = self._user_enabled.get(user_id, {}) if user_id else {}
+        enabled = self._ensure_enabled_loaded(user_id) if user_id else {}
         result = []
         for m in self._catalog.values():
             state = PluginState.AVAILABLE
@@ -237,7 +287,8 @@ class PluginRegistry:
         return self._catalog.get(plugin_id)
 
     def get_enabled_ids(self, user_id: str) -> list[str]:
-        return [pid for pid, on in self._user_enabled.get(user_id, {}).items() if on]
+        enabled = self._ensure_enabled_loaded(user_id)
+        return [pid for pid, on in enabled.items() if on]
 
     # ------------------------------------------------------------------
     # User secrets
@@ -327,10 +378,12 @@ class PluginRegistry:
                 success = self._connect_native(plugin_id, manifest)
                 if success:
                     self._user_enabled.setdefault(user_id, {})[plugin_id] = True
+                    self._persist_enabled(user_id)
                 return success
             elif manifest.kind == PluginKind.E2B:
                 # E2B is always available; just mark enabled
                 self._user_enabled.setdefault(user_id, {})[plugin_id] = True
+                self._persist_enabled(user_id)
                 return True
         except Exception as exc:
             self._errors[(user_id, plugin_id)] = str(exc)
@@ -377,6 +430,7 @@ class PluginRegistry:
                 ]
                 self._mcp_toolsets[key] = (toolset, time.monotonic())
                 self._user_enabled.setdefault(user_id, {})[plugin_id] = True
+                self._persist_enabled(user_id)
                 logger.info("mcp_connected", user_id=user_id, plugin_id=plugin_id, tools=len(tools))
                 return True
             except Exception as exc:
@@ -433,6 +487,7 @@ class PluginRegistry:
                 ]
                 self._mcp_toolsets[key] = (toolset, time.monotonic())
                 self._user_enabled.setdefault(user_id, {})[plugin_id] = True
+                self._persist_enabled(user_id)
                 logger.info(
                     "mcp_oauth_connected", user_id=user_id, plugin_id=plugin_id, tools=len(tools)
                 )
@@ -487,6 +542,7 @@ class PluginRegistry:
 
         user_mcps = self._user_enabled.get(user_id, {})
         user_mcps.pop(plugin_id, None)
+        self._persist_enabled(user_id)
         logger.info("plugin_disconnected", user_id=user_id, plugin_id=plugin_id)
         return True
 
@@ -664,6 +720,7 @@ class PluginRegistry:
                 user_id, plugin_id = key
                 user_mcps = self._user_enabled.get(user_id, {})
                 user_mcps.pop(plugin_id, None)
+                self._persist_enabled(user_id)
         if expired:
             logger.info("plugins_idle_evicted", count=len(expired))
         return len(expired)

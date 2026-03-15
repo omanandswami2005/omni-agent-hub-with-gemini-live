@@ -37,7 +37,8 @@ logger = get_logger(__name__)
 
 
 def _build_root_instruction(
-    persona_names: list[tuple[str, str]], has_device: bool, tools_map: dict[str, list]
+    persona_names: list[tuple[str, str]], has_device: bool, tools_map: dict[str, list],
+    plugin_summaries: list[dict] | None = None,
 ) -> str:
     """Dynamically build the root instruction from active personas and their available tools."""
 
@@ -67,6 +68,26 @@ def _build_root_instruction(
         else ""
     )
 
+    # Build plugin/integration awareness section
+    plugin_section = ""
+    if plugin_summaries:
+        plugin_lines = []
+        # Group by plugin
+        plugins_grouped: dict[str, list[str]] = {}
+        for s in plugin_summaries:
+            pname = s.get("plugin", "")
+            tname = s.get("tool", "")
+            tdesc = s.get("description", "")
+            plugins_grouped.setdefault(pname, []).append(f"{tname} ({tdesc})" if tdesc else tname)
+        for pname, tools in plugins_grouped.items():
+            plugin_lines.append(f"- {pname}: {', '.join(tools)}")
+        plugin_section = (
+            "\n\nEnabled integrations/plugins (use these via the persona that has the tools):\n"
+            + "\n".join(plugin_lines)
+            + "\nWhen the user asks about calendar, files, or any integration-related task, "
+            "transfer to the persona that has the relevant plugin tools — do NOT use device_agent for plugin tasks."
+        )
+
     return (
         "You are Omni, a friendly and capable AI hub. "
         "For simple greetings, casual conversation, or short factual questions you already know the answer to, "
@@ -74,7 +95,8 @@ def _build_root_instruction(
         "Only use transfer_to_agent when a specialist agent is genuinely needed.\n\n"
         "Available personas (use these exact names with transfer_to_agent) and their specific tools:\n"
         f"{persona_text}\n"
-        f"{device_section}\n\n"
+        f"{device_section}"
+        f"{plugin_section}\n\n"
         "You also have a plan_task tool. Call it when the user request clearly "
         "requires MULTIPLE specialists working together (e.g. 'research X, write code, "
         "then make an image'). Pass only the `task` argument — the full user request. "
@@ -86,11 +108,12 @@ def _build_root_instruction(
         "2. If the user names a persona explicitly, transfer to that persona.\n"
         "3. For complex multi-step requests → call plan_task first.\n"
         "4. For device control, sending to desktop/chrome/dashboard → transfer to device_agent.\n"
-        "5. For deep research, complex analysis, or when the user EXPLICITLY asks to search/look up something → transfer to researcher.\n"
-        "6. For code writing or execution → transfer to coder.\n"
-        "7. For image generation → transfer to creative.\n"
-        "8. For data/charts/analysis → transfer to analyst.\n"
-        "9. For scheduling, email drafts, reminders, calendar, and general tasks → transfer to assistant.\n\n"
+        "5. For plugin/integration tasks (calendar, files, etc.) → transfer to the persona that has those tools, NOT device_agent.\n"
+        "6. For deep research, complex analysis, or when the user EXPLICITLY asks to search/look up something → transfer to researcher.\n"
+        "7. For code writing or execution → transfer to coder.\n"
+        "8. For image generation → transfer to creative.\n"
+        "9. For data/charts/analysis → transfer to analyst.\n"
+        "10. For scheduling, email drafts, reminders, calendar, and general tasks → transfer to assistant.\n\n"
         "IMPORTANT: Do NOT use Google Search or any search for casual conversation, greetings, or questions you can answer from your training knowledge. "
         "Do NOT invent tool names. You only have transfer_to_agent and plan_task."
     )
@@ -102,6 +125,7 @@ def build_root_agent(
     model: str | None = None,
     # Legacy compat for callers that haven't migrated yet
     mcp_tools: list | None = None,
+    plugin_summaries: list[dict] | None = None,
 ) -> Agent:
     """Construct the root ADK agent with 3-layer routing.
 
@@ -119,6 +143,8 @@ def build_root_agent(
     mcp_tools:
         **Legacy** — flat tool list given to every persona (old behavior).
         Use ``tools_by_persona`` instead.
+    plugin_summaries:
+        Lightweight plugin tool summaries for agent awareness.
     """
     effective_model = model or LIVE_MODEL
     if personas is None:
@@ -131,12 +157,8 @@ def build_root_agent(
     persona_names: list[tuple[str, str]] = []
 
     for p in personas:
-        # Decide T2 tools for this persona
-        if tools_by_persona is not None:
-            extra = tools_map.get(p.id, [])
-        else:
-            # Legacy path: flat mcp_tools for all personas
-            extra = mcp_tools
+        # Decide T2 tools for this persona (legacy path: flat mcp_tools for all)
+        extra = tools_map.get(p.id, []) if tools_by_persona is not None else mcp_tools
 
         agent = create_agent(p, extra_tools=extra, model=effective_model)
         sub_agents.append(agent)
@@ -155,7 +177,7 @@ def build_root_agent(
     root_tools = [get_task_planner_tool()]
 
     # ── Layer 0: Root router ──────────────────────────────────────────
-    instruction = _build_root_instruction(persona_names, has_device, tools_map)
+    instruction = _build_root_instruction(persona_names, has_device, tools_map, plugin_summaries)
 
     root = Agent(
         name="omni_root",

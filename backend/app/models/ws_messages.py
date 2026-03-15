@@ -149,6 +149,7 @@ class TranscriptionMessage(BaseModel):
 
 class ToolCallMessage(BaseModel):
     type: Literal["tool_call"] = "tool_call"
+    call_id: str = ""  # Unique ID to match tool_call → tool_response
     tool_name: str
     arguments: dict = {}
     status: ToolStatus = ToolStatus.STARTED
@@ -158,6 +159,7 @@ class ToolCallMessage(BaseModel):
 
 class ToolResponseMessage(BaseModel):
     type: Literal["tool_response"] = "tool_response"
+    call_id: str = ""  # Matches the call_id from the corresponding tool_call
     tool_name: str
     result: str = ""
     success: bool = True

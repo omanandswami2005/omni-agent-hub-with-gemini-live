@@ -40,9 +40,11 @@ export const useSessionStore = create((set, get) => ({
 
     deleteSession: async (id) => {
         await api.delete(`/sessions/${id}`);
+        const remaining = get().sessions.filter((s) => s.id !== id);
+        const wasActive = get().activeSessionId === id;
         set({
-            sessions: get().sessions.filter((s) => s.id !== id),
-            activeSessionId: get().activeSessionId === id ? null : get().activeSessionId,
+            sessions: remaining,
+            activeSessionId: wasActive ? (remaining[0]?.id ?? null) : get().activeSessionId,
         });
     },
 

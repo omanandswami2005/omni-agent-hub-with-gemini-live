@@ -97,10 +97,21 @@ class SessionService:
     # ── Delete ────────────────────────────────────────────────────────
 
     async def delete_session(self, user_id: str, session_id: str) -> None:
-        # Verify ownership
-        await self.get_session(user_id, session_id)
+        # Verify ownership and fetch the session (we need adk_session_id)
+        session = await self.get_session(user_id, session_id)
         self.db.collection(COLLECTION).document(session_id).delete()
         logger.info("session_deleted", session_id=session_id, user_id=user_id)
+
+        # Clean up the ADK session ID cache so deleted sessions are not reused
+        if session.adk_session_id:
+            try:
+                from app.api.ws_live import _adk_session_id_cache
+                # Only clear the cache if it still points to this session's ADK ID
+                if _adk_session_id_cache.get(user_id) == session.adk_session_id:
+                    _adk_session_id_cache.pop(user_id, None)
+                    logger.debug("adk_session_cache_cleared", user_id=user_id, adk_session_id=session.adk_session_id)
+            except ImportError:
+                pass
 
     # ── Link to ADK session ───────────────────────────────────────────
 

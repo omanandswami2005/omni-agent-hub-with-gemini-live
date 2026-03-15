@@ -8,12 +8,14 @@ import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import SessionList from '@/components/session/SessionList';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useChatStore } from '@/stores/chatStore';
+import { useVoice } from '@/hooks/useVoiceProvider';
 
 export default function SessionsPage() {
   useDocumentTitle('Sessions');
   const navigate = useNavigate();
   const { sessions, activeSessionId, loading, loadSessions, switchSession, deleteSession, createSession, renameSession } = useSessionStore();
   const clearMessages = useChatStore((s) => s.clearMessages);
+  const voice = useVoice();
 
   useEffect(() => {
     loadSessions();
@@ -31,18 +33,16 @@ export default function SessionsPage() {
     if (wasActive) {
       clearMessages();
       navigate('/');
+      voice.reconnect?.();
     }
   };
 
-  const handleNewSession = async () => {
-    try {
-      const session = await createSession();
-      clearMessages();
-      switchSession(session.id);
-      navigate(`/session/${session.id}`);
-    } catch {
-      // silently ignore
-    }
+  const handleNewSession = () => {
+    clearMessages();
+    useSessionStore.getState().setActiveSession(null);
+    useSessionStore.getState().setWantsNewSession(true);
+    navigate('/');
+    voice.reconnect?.();
   };
 
   const handleRename = async (session, title) => {

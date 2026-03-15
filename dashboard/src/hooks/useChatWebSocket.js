@@ -109,6 +109,7 @@ export function useChatWebSocket() {
                         status: msg.status,
                         action_kind: msg.action_kind || 'tool',
                         source_label: msg.source_label || '',
+                        call_id: msg.call_id || '',
                         ...(fromOtherDevice && { cross_client: true }),
                     });
                     break;
@@ -120,7 +121,7 @@ export function useChatWebSocket() {
                         success: msg.success,
                         action_kind: msg.action_kind || 'tool',
                         source_label: msg.source_label || '',
-                    });
+                    }, msg.call_id || '');
                     break;
                 case 'image_response':
                     store.addMessage({
@@ -149,6 +150,16 @@ export function useChatWebSocket() {
                         }
                     }
                     break;
+                case 'session_created': {
+                    // Server lazily created a Firestore session on first message
+                    if (msg.firestore_session_id) {
+                        setServerSessionId(msg.firestore_session_id);
+                        const ss = useSessionStore.getState();
+                        ss.setActiveSession(msg.firestore_session_id);
+                        ss.ensureSession(msg.firestore_session_id);
+                    }
+                    break;
+                }
                 case 'client_status_update':
                     useClientStore.getState().setClients(msg.clients);
                     break;
@@ -176,6 +187,16 @@ export function useChatWebSocket() {
                     }
                     break;
                 }
+                case 'user_message':
+                    if (fromOtherDevice && msg.content) {
+                        store.addMessage({
+                            role: 'user',
+                            content: msg.content,
+                            cross_client: true,
+                            timestamp: new Date().toISOString(),
+                        });
+                    }
+                    break;
                 case 'error': {
                     const description = msg.description || 'An unexpected error occurred.';
                     toast.error(description, { duration: 6000 });
@@ -196,6 +217,10 @@ export function useChatWebSocket() {
         ws.onclose = (e) => {
             setIsConnected(false);
             const noReconnect = e.code === 4000 || e.code === 4003;
+            if (e.code === 4003) {
+                toast.error('Authentication failed. Please sign in again.', { duration: 6000 });
+            }
+            clearTimeout(reconnectTimer.current);
             if (!intentionalClose.current && !noReconnect) {
                 const delay = reconnectDelay(attemptRef.current);
                 attemptRef.current += 1;

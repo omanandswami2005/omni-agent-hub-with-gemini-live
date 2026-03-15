@@ -10,6 +10,10 @@ export const useChatStore = create((set, get) => ({
   crossTranscript: { input: '', output: '' },
   agentState: 'idle', // idle, listening, processing, speaking, error
   activeTools: new Set(),
+  // True while loading history from Firestore — suppresses live WS addAction/completeAction
+  // to avoid duplicates between history replay and live events.
+  _isLoadingHistory: false,
+  setLoadingHistory: (v) => set({ _isLoadingHistory: v }),
 
   addMessage: (msg) =>
     set((s) => ({
@@ -20,8 +24,10 @@ export const useChatStore = create((set, get) => ({
   /**
    * Add an action (tool_call) as a message. Returns the message id so
    * the matching tool_response can update the same entry via completeAction.
+   * Skipped during history loading to avoid duplicates.
    */
   addAction: (action) => {
+    if (get()._isLoadingHistory) return null;
     const id = nextId();
     set((s) => ({
       messages: [
@@ -34,17 +40,29 @@ export const useChatStore = create((set, get) => ({
 
   /**
    * Merge a tool_response into its matching tool_call action in-place.
-   * Finds the last unresponded action with the same tool_name.
+   * Matches by call_id first (unique), falls back to last unresponded with same tool_name.
+   * Skipped during history loading to avoid duplicates.
    */
-  completeAction: (tool_name, response) => {
+  completeAction: (tool_name, response, call_id) => {
+    if (get()._isLoadingHistory) return;
     set((s) => {
       const msgs = [...s.messages];
-      // Find the last unresponded action with this tool_name
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        if (msgs[i].type === 'action' && msgs[i].tool_name === tool_name && !msgs[i].responded) {
-          msgs[i] = { ...msgs[i], ...response, responded: true };
-          break;
+      let idx = -1;
+      // Prefer matching by unique call_id
+      if (call_id) {
+        idx = msgs.findIndex((m) => m.type === 'action' && m.call_id === call_id && !m.responded);
+      }
+      // Fallback: last unresponded action with same tool_name
+      if (idx === -1) {
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].type === 'action' && msgs[i].tool_name === tool_name && !msgs[i].responded) {
+            idx = i;
+            break;
+          }
         }
+      }
+      if (idx !== -1) {
+        msgs[idx] = { ...msgs[idx], ...response, responded: true };
       }
       return { messages: msgs };
     });

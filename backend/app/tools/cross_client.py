@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 
 from google.adk.tools import FunctionTool
+from google.adk.tools.tool_context import ToolContext
 
 from app.models.client import ClientType
 from app.services.connection_manager import get_connection_manager
@@ -29,20 +30,26 @@ def _safe_parse_json(payload: str) -> dict | list | str:
         return payload
 
 
+def _get_user_id(tool_context: ToolContext | None) -> str:
+    """Extract user_id from ADK tool context."""
+    if tool_context is None:
+        return ""
+    return getattr(tool_context, "user_id", "") or ""
+
+
 # ---------------------------------------------------------------------------
 # ADK tool functions
 # ---------------------------------------------------------------------------
 
 
 async def send_to_desktop(
-    user_id: str,
     action: str,
     payload: str = "{}",
+    tool_context: ToolContext | None = None,
 ) -> dict:
     """Send an action to the user's desktop tray client.
 
     Args:
-        user_id: The authenticated user's ID.
         action: Action name the desktop client should execute
                 (e.g. ``open_app``, ``type_text``, ``capture_screen``).
         payload: JSON string with action parameters.
@@ -50,60 +57,61 @@ async def send_to_desktop(
     Returns:
         A dict with ``delivered`` bool and optional ``error``.
     """
+    user_id = _get_user_id(tool_context)
     return await _send_action(user_id, ClientType.DESKTOP, action, payload)
 
 
 async def send_to_chrome(
-    user_id: str,
     action: str,
     payload: str = "{}",
+    tool_context: ToolContext | None = None,
 ) -> dict:
     """Send an action to the user's Chrome extension.
 
     Args:
-        user_id: The authenticated user's ID.
         action: Action name (e.g. ``open_tab``, ``get_page_content``).
         payload: JSON string with action parameters.
 
     Returns:
         A dict with ``delivered`` bool and optional ``error``.
     """
+    user_id = _get_user_id(tool_context)
     return await _send_action(user_id, ClientType.CHROME, action, payload)
 
 
 async def send_to_dashboard(
-    user_id: str,
     action: str,
     payload: str = "{}",
+    tool_context: ToolContext | None = None,
 ) -> dict:
     """Send an action or data to the user's web dashboard.
 
     Args:
-        user_id: The authenticated user's ID.
         action: Action name (e.g. ``show_notification``, ``render_genui``).
         payload: JSON string with action parameters.
 
     Returns:
         A dict with ``delivered`` bool and optional ``error``.
     """
+    user_id = _get_user_id(tool_context)
     return await _send_action(user_id, ClientType.WEB, action, payload)
 
 
 async def notify_client(
-    user_id: str,
     message: str,
     client_type: str = "web",
+    tool_context: ToolContext | None = None,
 ) -> dict:
     """Send a notification to a specific client type.
 
     Args:
-        user_id: The authenticated user's ID.
         message: Notification text.
         client_type: One of ``web``, ``desktop``, ``chrome``.
 
     Returns:
         A dict with ``delivered`` bool and optional ``error``.
     """
+    user_id = _get_user_id(tool_context)
     try:
         ct = ClientType(client_type)
     except ValueError:
@@ -113,15 +121,13 @@ async def notify_client(
     return await _send_action(user_id, ct, "notification", payload)
 
 
-async def list_connected_clients(user_id: str) -> dict:
+async def list_connected_clients(tool_context: ToolContext | None = None) -> dict:
     """List all currently connected clients for the user.
-
-    Args:
-        user_id: The authenticated user's ID.
 
     Returns:
         A dict with a ``clients`` list of connected client types.
     """
+    user_id = _get_user_id(tool_context)
     mgr = get_connection_manager()
     clients = mgr.get_connected_clients(user_id)
     return {

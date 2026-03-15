@@ -27,7 +27,9 @@ export default function DashboardPage() {
     const messagesLoading = useSessionStore((s) => s.messagesLoading);
     const addMessage = useChatStore((s) => s.addMessage);
     const clearMessages = useChatStore((s) => s.clearMessages);
+    const setLoadingHistory = useChatStore((s) => s.setLoadingHistory);
     const loadedRef = useRef(null);
+    const loadGenRef = useRef(0); // version counter to prevent session-switch race
 
     // When the chat WS connects and the server assigns a session,
     // navigate to /session/:id so the URL reflects the active session
@@ -41,9 +43,13 @@ export default function DashboardPage() {
     useEffect(() => {
         if (!sessionId || sessionId === loadedRef.current) return;
         loadedRef.current = sessionId;
+        const gen = ++loadGenRef.current;
         switchSession(sessionId);
+        setLoadingHistory(true);
         clearMessages();
         loadMessages(sessionId).then((msgs) => {
+            // Stale — user already switched to a different session
+            if (loadGenRef.current !== gen) return;
             msgs.forEach((m) => addMessage({
                 role: m.role,
                 content: m.content,
@@ -62,8 +68,10 @@ export default function DashboardPage() {
                 images: m.images || [],
                 parts: m.parts || [],
             }));
+        }).finally(() => {
+            if (loadGenRef.current === gen) setLoadingHistory(false);
         });
-    }, [sessionId, loadMessages, switchSession, clearMessages, addMessage]);
+    }, [sessionId, loadMessages, switchSession, clearMessages, addMessage, setLoadingHistory]);
 
     const messages = useChatStore((s) => s.messages);
     const activePersona = usePersonaStore((s) => s.activePersona);

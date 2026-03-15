@@ -9,6 +9,7 @@ Scopes: https://www.googleapis.com/auth/calendar
 from __future__ import annotations
 
 from google.adk.tools import FunctionTool
+from google.adk.tools.tool_context import ToolContext
 
 from app.models.plugin import (
     PluginCategory,
@@ -55,18 +56,19 @@ MANIFEST = PluginManifest(
 # ---------------------------------------------------------------------------
 
 _API = "https://www.googleapis.com/calendar/v3"
+_PLUGIN_ID = "google-calendar"
 
 
-async def _get_headers() -> dict[str, str] | None:
-    """Get auth headers for the current user.
-
-    During tool execution the ``_current_user_token`` is set by the
-    plugin registry before invoking.  For native plugins that need
-    per-user tokens, the registry injects the token via a contextvars
-    approach.  As a simpler alternative we accept token as argument.
-    """
-    # Will be provided via tool argument at call time
-    return None
+async def _get_token(tool_context: ToolContext | None) -> str | None:
+    """Get the Google OAuth access token from the session context."""
+    if tool_context is None:
+        return None
+    user_id = getattr(tool_context, "user_id", None)
+    if not user_id:
+        return None
+    from app.services.google_oauth_service import get_google_oauth_service
+    goauth = get_google_oauth_service()
+    return await goauth.get_valid_token(user_id, _PLUGIN_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -76,13 +78,12 @@ async def _get_headers() -> dict[str, str] | None:
 
 async def list_calendar_events(
     max_results: int = 10,
-    access_token: str = "",
+    tool_context: ToolContext | None = None,
 ) -> dict:
     """List upcoming events from the user's Google Calendar.
 
     Args:
         max_results: Maximum number of events to return (1-50).
-        access_token: The user's Google OAuth access token.
 
     Returns:
         A dict with the list of upcoming events.
@@ -91,8 +92,9 @@ async def list_calendar_events(
 
     import httpx
 
+    access_token = await _get_token(tool_context)
     if not access_token:
-        return {"error": "Not connected. Please connect your Google account first."}
+        return {"error": "Not connected. Please connect your Google account first via the Integrations page."}
 
     max_results = max(1, min(50, max_results))
     now = datetime.now(UTC).isoformat()
@@ -137,7 +139,7 @@ async def create_calendar_event(
     end_time: str,
     description: str = "",
     location: str = "",
-    access_token: str = "",
+    tool_context: ToolContext | None = None,
 ) -> dict:
     """Create a new event on the user's Google Calendar.
 
@@ -147,15 +149,15 @@ async def create_calendar_event(
         end_time: End time in ISO 8601 format.
         description: Optional description.
         location: Optional location.
-        access_token: The user's Google OAuth access token.
 
     Returns:
         A dict with the created event details.
     """
     import httpx
 
+    access_token = await _get_token(tool_context)
     if not access_token:
-        return {"error": "Not connected. Please connect your Google account first."}
+        return {"error": "Not connected. Please connect your Google account first via the Integrations page."}
 
     body: dict = {
         "summary": summary,
@@ -188,21 +190,21 @@ async def create_calendar_event(
 
 async def delete_calendar_event(
     event_id: str,
-    access_token: str = "",
+    tool_context: ToolContext | None = None,
 ) -> dict:
     """Delete an event from the user's Google Calendar.
 
     Args:
         event_id: The ID of the event to delete.
-        access_token: The user's Google OAuth access token.
 
     Returns:
         A dict with the deletion status.
     """
     import httpx
 
+    access_token = await _get_token(tool_context)
     if not access_token:
-        return {"error": "Not connected. Please connect your Google account first."}
+        return {"error": "Not connected. Please connect your Google account first via the Integrations page."}
 
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.delete(
