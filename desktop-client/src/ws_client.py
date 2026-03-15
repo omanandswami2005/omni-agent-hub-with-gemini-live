@@ -64,7 +64,7 @@ class DesktopWSClient:
     def _on_gui_send_text(self, text: str):
         """Handle text sent from GUI."""
         if self.connected:
-            asyncio.create_task(self.send_json({"type": "text", "content": text}))
+            asyncio.create_task(self.send_json({"type": "camera_frame", "content": text}))
 
     def _on_gui_toggle_mic(self, checked: bool):
         """Handle mic toggle from GUI."""
@@ -77,8 +77,8 @@ class DesktopWSClient:
         """Handle periodic screen sharing from GUI."""
         if self.connected:
             msg = {
-                "type": "text",
-                "content": "[Screen Frame Update]",
+                "type": "camera_frame",
+                "content": "screen",
                 "attachments": [
                     {
                         "mime_type": "image/jpeg",

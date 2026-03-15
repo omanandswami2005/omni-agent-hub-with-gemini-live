@@ -28,6 +28,7 @@ from src.plugin_registry import PluginRegistry
 from src.ws_client import DesktopWSClient
 from src.gui import MainWindow
 from src.plugins.command_plugin import set_gui_instance
+from src.plugins.playwright_plugin import cleanup as playwright_cleanup
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -115,6 +116,8 @@ def connect(
         finally:
             task.cancel()
             _client._should_run = False
+            # Cleanup Playwright instances
+            loop.run_until_complete(playwright_cleanup())
 
 
 async def _run_app_watcher(client: DesktopWSClient, window: MainWindow) -> None:
