@@ -1,17 +1,8 @@
-"""WebSocket client for desktop-to-server communication.
+"""WebSocket client for Omni Desktop Agent.
 
-Connects to the Omni backend via raw WebSocket, authenticates with a
-Firebase token, and dispatches incoming cross-client actions to the
-appropriate handler (screenshot, click, type, file ops, etc.).
-
-Interruption model
-------------------
-Every tool invocation runs inside its own ``asyncio.Task`` tracked in
-``_active_tasks[call_id]``.  The server can cancel a single call
-(``type: cancel``, ``call_id: ...``) or all in-flight calls
-(``type: cancel_all``).  A ``status`` message with
-``state == "listening"`` and ``detail == "Interrupted by user"`` triggers
-``cancel_all`` — mirroring the dashboard's interruption flow.
+Connects to the Omni backend, handles authentication, and routes incoming
+cross-client action requests to registered plugin handlers. Also handles
+audio streaming and basic text chat via GUI integration.
 """
 
 from __future__ import annotations
@@ -22,30 +13,95 @@ import logging
 from typing import Any, Callable, Coroutine
 
 import websockets
-from websockets.asyncio.client import ClientConnection
+
+from src.audio import AudioStreamer
 
 logger = logging.getLogger(__name__)
 
-# Reconnection backoff
 _INITIAL_BACKOFF = 1.0
 _MAX_BACKOFF = 30.0
-_BACKOFF_FACTOR = 2.0
+_BACKOFF_FACTOR = 1.5
 
 
 class DesktopWSClient:
-    """Raw WebSocket client for Omni server connection."""
+    """Async WebSocket client for the desktop agent."""
 
     def __init__(self, server_url: str, token: str) -> None:
         self.server_url = server_url
         self.token = token
-        self.ws: ClientConnection | None = None
-        self.connected: bool = False
-        self._should_run: bool = False
+        self.ws: websockets.WebSocketClientProtocol | None = None
+        self.connected = False
+        self._should_run = False
+        self._run_task = None
+
+        self.gui = None
+        self.audio_streamer = AudioStreamer(self)
+
+        # Handlers map: action_name -> async func
         self._handlers: dict[str, Callable[..., Coroutine[Any, Any, Any]]] = {}
+        # T3 definitions to send during auth
         self._capabilities: list[str] = []
         self._local_tools: list[dict] = []
         # Cancellation tracking
         self._active_tasks: dict[str, asyncio.Task] = {}
+
+    def set_gui(self, gui):
+        """Inject the GUI instance to update UI and receive signals."""
+        self.gui = gui
+
+        # Connect GUI signals
+        if hasattr(self.gui, "send_text_signal"):
+            self.gui.send_text_signal.connect(self._on_gui_send_text)
+        if hasattr(self.gui, "toggle_mic_signal"):
+            self.gui.toggle_mic_signal.connect(self._on_gui_toggle_mic)
+        if hasattr(self.gui, "send_screen_signal"):
+            self.gui.send_screen_signal.connect(self._on_gui_send_screen)
+        if hasattr(self.gui, "connect_signal"):
+            self.gui.connect_signal.connect(self._on_gui_connect_toggled)
+        if hasattr(self.gui, "interrupt_signal"):
+            self.gui.interrupt_signal.connect(self._on_gui_interrupt)
+
+    def _on_gui_send_text(self, text: str):
+        """Handle text sent from GUI."""
+        if self.connected:
+            asyncio.create_task(self.send_json({"type": "text", "content": text}))
+
+    def _on_gui_toggle_mic(self, checked: bool):
+        """Handle mic toggle from GUI."""
+        if checked:
+            self.audio_streamer.start_recording()
+        else:
+            self.audio_streamer.stop_recording()
+
+    def _on_gui_send_screen(self, b64_img: str):
+        """Handle periodic screen sharing from GUI."""
+        if self.connected:
+            msg = {
+                "type": "text",
+                "content": "[Screen Frame Update]",
+                "attachments": [
+                    {
+                        "mime_type": "image/jpeg",
+                        "data": b64_img
+                    }
+                ]
+            }
+            asyncio.create_task(self.send_json(msg))
+
+    def _on_gui_connect_toggled(self, connect: bool):
+        """Handle connection toggle from GUI."""
+        if connect and not self.connected:
+            self.start()
+        elif not connect and self.connected:
+            asyncio.create_task(self.disconnect())
+
+    def _on_gui_interrupt(self):
+        """Handle interrupt signal from GUI to stop ongoing agent tasks/audio."""
+        if self.connected:
+            # Tell server to interrupt ongoing text/audio generation
+            asyncio.create_task(self.send_json({"type": "client_message", "action": "interrupt"}))
+            # Also cancel local ongoing tasks locally
+            asyncio.create_task(self.cancel_all())
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -69,6 +125,9 @@ class DesktopWSClient:
         self.connected = True
         logger.info("Connected to %s", self.server_url)
 
+        if self.gui:
+            self.gui.set_status(True)
+
         # Send auth handshake with T3 capabilities and local tools
         auth_msg: dict[str, Any] = {
             "type": "auth",
@@ -83,9 +142,14 @@ class DesktopWSClient:
 
         await self.send_json(auth_msg)
 
+    def start(self):
+        """Starts the run loop via asyncio task if not running."""
+        if not self._should_run:
+             self._should_run = True
+             self._run_task = asyncio.create_task(self.run())
+
     async def run(self) -> None:
         """Connect and listen with auto-reconnect on failure."""
-        self._should_run = True
         backoff = _INITIAL_BACKOFF
 
         while self._should_run:
@@ -100,6 +164,10 @@ class DesktopWSClient:
             ) as exc:
                 self.connected = False
                 self.ws = None
+
+                if self.gui:
+                    self.gui.set_status(False)
+
                 # Cancel all in-flight tasks on disconnect
                 await self.cancel_all()
                 if not self._should_run:
@@ -134,11 +202,21 @@ class DesktopWSClient:
         """Gracefully close connection and stop reconnection."""
         self._should_run = False
         self.connected = False
+
+        if self.gui:
+            self.gui.set_status(False)
+
+        self.audio_streamer.stop_recording()
+        self.audio_streamer.stop_playback()
+
         await self.cancel_all()
         if self.ws:
             await self.ws.close()
             self.ws = None
         logger.info("Disconnected from server")
+
+        if self._run_task and not self._run_task.done():
+            self._run_task.cancel()
 
     # ── Cancellation ──────────────────────────────────────────────────
 
@@ -174,7 +252,8 @@ class DesktopWSClient:
             return
         async for raw in self.ws:
             if isinstance(raw, bytes):
-                # Binary frame — audio playback data; ignore for now
+                # Binary frame — audio playback data
+                await self.audio_streamer.queue_audio(raw)
                 continue
             try:
                 msg = json.loads(raw)
@@ -264,6 +343,13 @@ class DesktopWSClient:
                 logger.info("Authenticated as %s", msg.get("user_id"))
             else:
                 logger.error("Auth failed: %s", msg.get("error"))
+
+        # Simple text display in GUI
+        elif msg_type == "transcript" or msg_type == "agent_response":
+            if self.gui:
+                text = msg.get("text", "")
+                if text:
+                    self.gui.append_chat(f"Omni: {text}")
 
         else:
             logger.debug("Unhandled message type: %s", msg_type)
