@@ -68,6 +68,9 @@ export default function DashboardPage() {
                 images: m.images || [],
                 parts: m.parts || [],
             }));
+        }).catch((err) => {
+            if (loadGenRef.current !== gen) return;
+            if (err?.status === 404) navigate('/');
         }).finally(() => {
             if (loadGenRef.current === gen) setLoadingHistory(false);
         });

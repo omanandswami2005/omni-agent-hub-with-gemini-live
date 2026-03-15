@@ -25,7 +25,8 @@ export const useSessionStore = create((set, get) => ({
         try {
             const messages = await api.get(`/sessions/${sessionId}/messages`);
             return messages || [];
-        } catch {
+        } catch (err) {
+            if (err?.status === 404) throw err;
             return [];
         } finally {
             set({ messagesLoading: false });
