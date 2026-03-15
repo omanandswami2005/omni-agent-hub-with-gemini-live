@@ -72,6 +72,7 @@ function truncate(str, maxLen = 120) {
 
 export default function ActionCard({ action }) {
   const [isOpen, setIsOpen] = useState(false);
+  const toolActivity = useChatStore((s) => s.toolActivity);
   if (!action) return null;
 
   const {
@@ -91,6 +92,9 @@ export default function ActionCard({ action }) {
   const config = KIND_CONFIG[kind] || KIND_CONFIG.tool;
   const Icon = config.icon;
 
+  // Check live tool activity for elapsed time
+  const liveActivity = tool_name ? toolActivity[tool_name] : null;
+
   // Determine status
   const hasResponse = action.responded;
   const status = hasResponse ? (success === false ? 'error' : 'success') : 'loading';
@@ -105,9 +109,10 @@ export default function ActionCard({ action }) {
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
-          'flex w-full items-center gap-2 rounded-lg border px-3 py-1.5 text-left transition-all',
-          'border-border/50 hover:border-border hover:bg-muted/30',
-          isOpen && 'bg-muted/20',
+          'flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left transition-all',
+          'border-white/[0.06] hover:border-white/[0.10] hover:bg-white/[0.03]',
+          isOpen && 'bg-white/[0.02]',
+          status === 'loading' && 'animate-[tool-pulse_2s_ease-in-out_infinite]',
         )}
       >
         {/* Kind icon */}
@@ -123,8 +128,13 @@ export default function ActionCard({ action }) {
           )}
         </div>
 
-        {/* Status + expand */}
+        {/* Status + elapsed + expand */}
         <div className="flex items-center gap-1.5">
+          {liveActivity?.elapsed_s != null && (
+            <span className="text-[10px] text-muted-foreground tabular-nums">
+              {liveActivity.elapsed_s.toFixed(1)}s
+            </span>
+          )}
           <StatusIndicator status={status} />
           <ChevronRight
             size={12}
@@ -155,10 +165,22 @@ export default function ActionCard({ action }) {
 
       {/* Expanded details */}
       {isOpen && (
-        <div className="border-border/40 mt-1 ml-3 space-y-1.5 border-l-2 pb-1 pl-3">
+        <div className="border-white/[0.06] mt-1 ml-3 space-y-1.5 border-l-2 pb-1 pl-3">
           {/* Transfer message */}
           {isTransfer && transferMessage && (
             <p className="text-muted-foreground text-[11px]">{truncate(transferMessage, 200)}</p>
+          )}
+
+          {/* Live activity info */}
+          {liveActivity?.args_preview && (
+            <div>
+              <p className="text-muted-foreground/70 text-[10px] font-medium tracking-wider uppercase">
+                Live Preview
+              </p>
+              <p className="bg-white/[0.03] text-foreground/60 mt-0.5 rounded px-2 py-1 text-[11px]">
+                {liveActivity.args_preview}
+              </p>
+            </div>
           )}
 
           {/* Arguments */}
@@ -167,7 +189,7 @@ export default function ActionCard({ action }) {
               <p className="text-muted-foreground/70 text-[10px] font-medium tracking-wider uppercase">
                 Arguments
               </p>
-              <div className="bg-muted/40 mt-0.5 rounded px-2 py-1">
+              <div className="bg-white/[0.03] mt-0.5 rounded px-2 py-1">
                 {Object.keys(args).length > 0 ? (
                   Object.entries(args).map(([k, v]) => (
                     <div key={k} className="flex gap-2 text-[11px]">
@@ -192,7 +214,7 @@ export default function ActionCard({ action }) {
               <p className="text-muted-foreground/70 text-[10px] font-medium tracking-wider uppercase">
                 Result
               </p>
-              <p className="bg-muted/40 text-foreground/70 mt-0.5 line-clamp-4 rounded px-2 py-1 text-[11px]">
+              <p className="bg-white/[0.03] text-foreground/70 mt-0.5 line-clamp-4 rounded px-2 py-1 text-[11px]">
                 {truncate(result, 300)}
               </p>
             </div>

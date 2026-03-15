@@ -10,6 +10,8 @@ export const useChatStore = create((set, get) => ({
   crossTranscript: { input: '', output: '' },
   agentState: 'idle', // idle, listening, processing, speaking, error
   activeTools: new Set(),
+  // Real-time tool activity tracking from ADK before/after callbacks
+  toolActivity: {}, // { [tool_name]: { event, agent, elapsed_s, args_preview, timestamp } }
   // True while loading history from Firestore — suppresses live WS addAction/completeAction
   // to avoid duplicates between history replay and live events.
   _isLoadingHistory: false,
@@ -144,6 +146,29 @@ export const useChatStore = create((set, get) => ({
 
   // Audio queue for playback
   audioQueue: [],
+
+  /** Handle real-time tool activity events from ADK callbacks */
+  updateToolActivity: (event) => {
+    set((s) => ({
+      toolActivity: {
+        ...s.toolActivity,
+        [event.tool_name]: event,
+      },
+    }));
+    // Auto-clear completed tools after 5 seconds
+    if (event.event === 'completed') {
+      setTimeout(() => {
+        set((s) => {
+          const updated = { ...s.toolActivity };
+          if (updated[event.tool_name]?.event === 'completed') {
+            delete updated[event.tool_name];
+          }
+          return { toolActivity: updated };
+        });
+      }, 5000);
+    }
+  },
+
   voiceOutputEnabled: true,
   setVoiceOutputEnabled: (enabled) => set({ voiceOutputEnabled: enabled }),
   enqueueAudio: (blob) => {

@@ -20,12 +20,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const STATUS_CONFIG = {
     pending: { icon: Clock, color: 'text-muted-foreground', bg: 'bg-muted/30', label: 'Pending', ring: 'ring-muted-foreground/30' },
-    planning: { icon: Loader2, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-500/10', label: 'Planning...', ring: 'ring-blue-500/30' },
-    awaiting_confirmation: { icon: ListTodo, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-500/10', label: 'Review Plan', ring: 'ring-amber-500/30' },
-    running: { icon: Loader2, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-500/10', label: 'Running', ring: 'ring-blue-500/30' },
-    paused: { icon: Pause, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-500/10', label: 'Paused', ring: 'ring-amber-500/30' },
-    completed: { icon: CheckCircle2, color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-500/10', label: 'Completed', ring: 'ring-green-500/30' },
-    failed: { icon: AlertCircle, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-500/10', label: 'Failed', ring: 'ring-red-500/30' },
+    planning: { icon: Loader2, color: 'text-blue-400', bg: 'bg-blue-500/10', label: 'Planning...', ring: 'ring-blue-500/30' },
+    awaiting_confirmation: { icon: ListTodo, color: 'text-amber-400', bg: 'bg-amber-500/10', label: 'Review Plan', ring: 'ring-amber-500/30' },
+    running: { icon: Loader2, color: 'text-blue-400', bg: 'bg-blue-500/10', label: 'Running', ring: 'ring-blue-500/30' },
+    paused: { icon: Pause, color: 'text-amber-400', bg: 'bg-amber-500/10', label: 'Paused', ring: 'ring-amber-500/30' },
+    completed: { icon: CheckCircle2, color: 'text-green-400', bg: 'bg-green-500/10', label: 'Completed', ring: 'ring-green-500/30' },
+    failed: { icon: AlertCircle, color: 'text-red-400', bg: 'bg-red-500/10', label: 'Failed', ring: 'ring-red-500/30' },
     cancelled: { icon: X, color: 'text-muted-foreground', bg: 'bg-muted/30', label: 'Cancelled', ring: 'ring-muted-foreground/30' },
 };
 
@@ -39,11 +39,11 @@ const STEP_STATUS = {
 };
 
 const PERSONA_LABELS = {
-    assistant: { label: 'Assistant', color: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300' },
-    coder: { label: 'Coder', color: 'bg-violet-100 text-violet-700 dark:bg-violet-700 dark:text-violet-300' },
-    researcher: { label: 'Researcher', color: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-700 dark:text-cyan-300' },
-    analyst: { label: 'Analyst', color: 'bg-orange-100 text-orange-700 dark:bg-orange-700 dark:text-orange-300' },
-    creative: { label: 'Creative', color: 'bg-pink-100 text-pink-700 dark:bg-pink-700 dark:text-pink-300' },
+    assistant: { label: 'Assistant', color: 'bg-white/5 text-foreground/70' },
+    coder: { label: 'Coder', color: 'bg-violet-500/10 text-violet-300' },
+    researcher: { label: 'Researcher', color: 'bg-cyan-500/10 text-cyan-300' },
+    analyst: { label: 'Analyst', color: 'bg-orange-500/10 text-orange-300' },
+    creative: { label: 'Creative', color: 'bg-pink-500/10 text-pink-300' },
 };
 
 const CATEGORIES = {
@@ -107,7 +107,7 @@ function StepTimeline({ step, isLast }) {
                     <p className="text-xs text-muted-foreground mt-1 line-clamp-2 bg-muted/30 rounded px-2 py-1">{step.output}</p>
                 )}
                 {step.error && (
-                    <p className="text-xs text-red-500 mt-1 bg-red-50 dark:bg-red-500/10 rounded px-2 py-1">{step.error}</p>
+                    <p className="text-xs text-red-400 mt-1 bg-red-500/10 rounded px-2 py-1">{step.error}</p>
                 )}
             </div>
         </div>
@@ -270,8 +270,8 @@ function TaskCard({ task, isActive, onClick, onReview, onDelete }) {
     return (
         <div
             className={cn(
-                'w-full text-left rounded-lg border p-3 transition-all duration-200 relative group',
-                isActive ? 'border-primary bg-primary/5 shadow-sm' : 'border-border hover:bg-muted/50 hover:border-muted-foreground/20',
+                'w-full text-left rounded-xl border p-3 transition-all duration-200 relative group',
+                isActive ? 'border-white/[0.12] bg-white/[0.04] shadow-sm' : 'border-white/[0.06] hover:bg-white/[0.03] hover:border-white/[0.10]',
             )}
         >
             <div className="flex items-center gap-2 cursor-pointer" onClick={onClick}>
@@ -304,13 +304,28 @@ function TaskCard({ task, isActive, onClick, onReview, onDelete }) {
                     )}
                 </div>
             </div>
-            <div className="flex items-center gap-2 mt-2">
+            <div className="flex items-center gap-2 mt-2 flex-wrap">
                 <span className={cn('text-[10px] px-2 py-0.5 rounded-full font-medium', config.bg, config.color)}>
                     {config.label}
                 </span>
                 {stepCount > 0 && (
                     <span className="text-xs text-muted-foreground">
                         {completedSteps}/{stepCount} steps
+                    </span>
+                )}
+                {task.context?.cron_expression && (
+                    <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-400 font-medium">
+                        <Repeat className="h-2.5 w-2.5" /> Cron
+                    </span>
+                )}
+                {task.context?.scheduled && (
+                    <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 font-medium">
+                        <Calendar className="h-2.5 w-2.5" /> Scheduled
+                    </span>
+                )}
+                {task.context?.reminder && (
+                    <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium">
+                        <Clock className="h-2.5 w-2.5" /> Reminder
                     </span>
                 )}
                 {task.created_at && (
@@ -466,11 +481,11 @@ function TaskDetail({ task, onOpenReview }) {
 
             {/* Result */}
             {task.result_summary && (
-                <div className="rounded-lg border border-green-200 dark:border-green-500/20 bg-green-50 dark:bg-green-500/5 p-3">
-                    <p className="text-xs font-medium text-green-700 dark:text-green-400 mb-1 flex items-center gap-1">
+                <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-3">
+                    <p className="text-xs font-medium text-green-400 mb-1 flex items-center gap-1">
                         <CheckCircle2 className="h-3 w-3" /> Result
                     </p>
-                    <p className="text-sm whitespace-pre-wrap text-green-800 dark:text-green-300">{task.result_summary}</p>
+                    <p className="text-sm whitespace-pre-wrap text-green-300">{task.result_summary}</p>
                 </div>
             )}
         </div>
@@ -593,9 +608,9 @@ export default function TaskPanel() {
     if (tasks.length === 0 && !loading) return null;
 
     return (
-        <div className="rounded-lg border border-border bg-card">
+        <div className="rounded-xl border border-white/[0.06] bg-card/50 backdrop-blur-sm">
             {/* Header */}
-            <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06]">
                 <div className="flex items-center gap-1.5">
                     <ListTodo className="h-4 w-4 text-muted-foreground" />
                     <p className="text-xs font-semibold text-foreground">Tasks</p>

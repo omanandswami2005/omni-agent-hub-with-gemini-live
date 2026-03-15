@@ -405,18 +405,31 @@ class PluginRegistry:
 
         return False
 
+    def _mcp_key(
+        self,
+        user_id: str,
+        plugin_id: str,
+        manifest: PluginManifest,
+    ) -> tuple[str, str]:
+        """Return the toolset cache key — singleton MCPs share one instance."""
+        if manifest.singleton and manifest.kind == PluginKind.MCP_STDIO:
+            return ("__singleton__", plugin_id)
+        return (user_id, plugin_id)
+
     async def _connect_mcp(
         self,
         user_id: str,
         plugin_id: str,
         manifest: PluginManifest,
     ) -> bool:
-        key = (user_id, plugin_id)
+        key = self._mcp_key(user_id, plugin_id, manifest)
 
         # Return existing if connected
         existing = self._mcp_toolsets.get(key)
         if existing is not None:
             self._mcp_toolsets[key] = (existing[0], time.monotonic())
+            self._user_enabled.setdefault(user_id, {})[plugin_id] = True
+            self._persist_enabled(user_id)
             return True
 
         # Resolve env vars
@@ -610,7 +623,7 @@ class PluginRegistry:
             return cached
 
         if manifest.kind in (PluginKind.MCP_STDIO, PluginKind.MCP_HTTP, PluginKind.MCP_OAUTH):
-            key = (user_id, plugin_id)
+            key = self._mcp_key(user_id, plugin_id, manifest)
             entry = self._mcp_toolsets.get(key)
             if entry is None:
                 # Lazy connect on first tool access
@@ -628,8 +641,10 @@ class PluginRegistry:
             except Exception:
                 # Connection/token may be stale — evict and reconnect once
                 logger.warning("mcp_get_tools_stale", plugin_id=plugin_id, exc_info=True)
-                with contextlib.suppress(Exception):
-                    await toolset.close()
+                # Only close if not a singleton shared by other users
+                if not manifest.singleton:
+                    with contextlib.suppress(Exception):
+                        await toolset.close()
                 self._mcp_toolsets.pop(key, None)
                 success = await self.connect_plugin(user_id, plugin_id)
                 if not success:

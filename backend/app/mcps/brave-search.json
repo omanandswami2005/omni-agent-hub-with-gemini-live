@@ -3,6 +3,7 @@
     "name": "Brave Search",
     "description": "Web search via the Brave Search API.",
     "kind": "mcp_stdio",
+    "singleton": true,
     "category": "search",
     "command": "npx",
     "args": [

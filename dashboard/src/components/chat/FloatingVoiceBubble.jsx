@@ -28,20 +28,29 @@ import {
 } from 'lucide-react';
 
 const ORB_COLORS = {
-    idle: 'from-blue-500/80 to-indigo-600/80',
-    listening: 'from-red-500 to-rose-600',
-    processing: 'from-amber-500 to-orange-500',
-    thinking: 'from-amber-500 to-orange-500',
-    speaking: 'from-emerald-500 to-green-600',
-    error: 'from-red-700 to-red-800',
+    idle: 'bg-white/10',
+    listening: 'bg-red-500/20',
+    processing: 'bg-white/15',
+    thinking: 'bg-white/15',
+    speaking: 'bg-emerald-500/20',
+    error: 'bg-red-800/30',
 };
 
-const PULSE_CLASSES = {
-    idle: '',
-    listening: 'animate-[pulse_1.4s_ease-in-out_infinite]',
-    processing: 'animate-spin',
-    thinking: 'animate-spin',
-    speaking: 'animate-[pulse_2s_ease-in-out_infinite]',
+const ORB_RING = {
+    idle: 'ring-white/20',
+    listening: 'ring-red-500/50',
+    processing: 'ring-white/30',
+    thinking: 'ring-white/30',
+    speaking: 'ring-emerald-500/50',
+    error: 'ring-red-500/40',
+};
+
+const ORB_ANIMATION = {
+    idle: 'animate-[orb-glow_3s_ease-in-out_infinite]',
+    listening: 'animate-[orb-listening_1.5s_ease-in-out_infinite]',
+    processing: '',
+    thinking: '',
+    speaking: 'animate-[orb-speaking_2s_ease-in-out_infinite]',
     error: '',
 };
 
@@ -184,30 +193,43 @@ export default function FloatingVoiceBubble({
             <button
                 onClick={isConnected || isRecording ? onToggleRecording : undefined}
                 className={cn(
-                    'group relative flex h-14 w-14 items-center justify-center rounded-full shadow-2xl',
-                    'bg-gradient-to-br transition-all duration-300',
-                    'ring-2 ring-white/10 backdrop-blur-xl',
+                    'group relative flex h-14 w-14 items-center justify-center rounded-full',
+                    'border border-white/10 backdrop-blur-2xl shadow-2xl',
+                    'transition-all duration-300',
                     isConnected || isRecording
                         ? 'hover:scale-110 active:scale-95'
                         : 'cursor-not-allowed opacity-60',
                     ORB_COLORS[state] || ORB_COLORS.idle,
-                    PULSE_CLASSES[state],
+                    'ring-2',
+                    ORB_RING[state] || ORB_RING.idle,
+                    ORB_ANIMATION[state] || '',
                 )}
                 aria-label={isConnected ? `Voice — ${state}` : 'Voice — disconnected'}
                 title={!isConnected && !isRecording ? 'Voice disconnected — reconnecting…' : undefined}
             >
-                {/* Volume ring */}
+                {/* Ripple ring — volume reactive */}
                 <div
                     className={cn(
-                        'absolute inset-0 rounded-full transition-transform duration-100',
-                        state === 'listening' && 'bg-red-500/20',
-                        state === 'speaking' && 'bg-emerald-500/20',
+                        'absolute inset-0 rounded-full border transition-all duration-150',
+                        state === 'listening' && 'border-red-500/30',
+                        state === 'speaking' && 'border-emerald-500/30',
+                        state !== 'listening' && state !== 'speaking' && 'border-white/10',
                     )}
                     style={{
                         transform: `scale(${ringScale})`,
-                        opacity: volume > 0.02 ? 0.7 : 0,
+                        opacity: volume > 0.02 ? 0.8 : 0,
                     }}
                 />
+
+                {/* Outer glow */}
+                {(state === 'listening' || state === 'speaking') && (
+                    <div
+                        className={cn(
+                            'absolute inset-[-6px] rounded-full animate-[ripple_2s_ease-out_infinite]',
+                            state === 'listening' ? 'border border-red-500/20' : 'border border-emerald-500/20',
+                        )}
+                    />
+                )}
 
                 {/* Connection dot */}
                 <div
@@ -260,19 +282,19 @@ function ControlButton({ icon: Icon, label, onClick, active, color, disabled }) 
                 disabled={disabled}
                 className={cn(
                     'flex h-10 w-10 items-center justify-center rounded-full',
-                    'border border-border/60 bg-background/90 backdrop-blur-xl shadow-lg',
+                    'border border-white/10 bg-white/5 backdrop-blur-2xl shadow-lg',
                     'transition-all duration-200',
                     disabled
                         ? 'cursor-not-allowed opacity-40'
-                        : 'hover:scale-110 active:scale-95',
-                    active && !disabled && 'ring-2 ring-primary/30',
+                        : 'hover:scale-110 hover:bg-white/10 active:scale-95',
+                    active && !disabled && 'ring-1 ring-white/20',
                 )}
                 aria-label={label}
             >
                 <Icon size={16} className={cn(color)} />
             </button>
             {/* Tooltip */}
-            <span className="pointer-events-none absolute right-full mr-3 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md opacity-0 transition-opacity group-hover/btn:opacity-100">
+            <span className="pointer-events-none absolute right-full mr-3 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-card border border-border/40 px-2 py-1 text-xs text-foreground shadow-md opacity-0 transition-opacity group-hover/btn:opacity-100">
                 {label}
             </span>
         </div>

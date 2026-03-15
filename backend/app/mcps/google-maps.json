@@ -3,6 +3,7 @@
     "name": "Google Maps",
     "description": "Geocoding, directions, places, and distance matrix via the Google Maps API.",
     "kind": "mcp_stdio",
+    "singleton": true,
     "category": "search",
     "command": "npx",
     "args": [

@@ -30,6 +30,7 @@ from app.tools.capabilities_tool import get_capability_tools
 from app.tools.code_exec import get_code_exec_tools
 from app.tools.cross_client import get_cross_client_tools
 from app.tools.desktop_tools import get_desktop_tools
+from app.tools.genui_schema import get_genui_schema_tools
 from app.tools.image_gen import get_image_gen_tools
 from app.tools.search import get_search_tool
 from app.tools.task_tools import get_human_input_tools, get_planned_task_tools
@@ -52,6 +53,7 @@ T1_TOOL_REGISTRY: dict[str, Callable[[], list]] = {
     TC.DESKTOP: get_desktop_tools,
     TC.TASK: get_planned_task_tools,
     TC.WILDCARD: lambda: [*get_capability_tools(), *get_human_input_tools()],
+    TC.GENUI: get_genui_schema_tools,
 }
 
 # ── Built-in persona ID → capability mapping ─────────────────────────
@@ -74,7 +76,7 @@ _PERSONA_CAPABILITIES: dict[str, list[str]] = {
     "researcher": [TC.SEARCH, TC.TASK, TC.WILDCARD],
     "analyst": [TC.SEARCH, TC.CODE_EXECUTION, TC.DESKTOP, TC.TASK, TC.WILDCARD],
     "creative": [TC.MEDIA, TC.TASK, TC.WILDCARD],
-    "genui": [TC.CODE_EXECUTION, TC.TASK, TC.WILDCARD],
+    "genui": [TC.CODE_EXECUTION, TC.TASK, TC.WILDCARD, TC.GENUI],
 }
 
 

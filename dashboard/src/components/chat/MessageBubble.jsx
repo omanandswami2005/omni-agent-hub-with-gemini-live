@@ -10,6 +10,7 @@ import ActionCard from '@/components/chat/ActionCard';
 import MarkdownContent from '@/components/chat/MarkdownContent';
 
 const GenUIRenderer = lazy(() => import('@/components/genui/GenUIRenderer'));
+const GenUIModal = lazy(() => import('@/components/genui/GenUIModal'));
 
 export default function MessageBubble({ message }) {
   if (!message) return null;
@@ -59,7 +60,7 @@ export default function MessageBubble({ message }) {
     <div className={cn('flex mb-3 group', isUser ? 'justify-end' : 'justify-start')}>
       {/* Avatar */}
       {!isUser && (
-        <div className="mr-2 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+        <div className="mr-2.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.04] text-foreground/70">
           <Bot size={14} />
         </div>
       )}
@@ -68,7 +69,7 @@ export default function MessageBubble({ message }) {
         {/* Source badge */}
         {(isVoice || isCrossClient) && (
           <span className={cn(
-            'inline-flex items-center gap-1 text-[10px] text-muted-foreground',
+            'inline-flex items-center gap-1 text-[10px] text-muted-foreground/60',
             isUser ? 'float-right' : '',
           )}>
             {isCrossClient
@@ -84,21 +85,21 @@ export default function MessageBubble({ message }) {
             className={cn(
               'rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
               isUser
-                ? 'bg-primary text-primary-foreground'
+                ? 'bg-foreground text-background'
                 : isCrossClient
-                  ? 'bg-violet-500/10 border border-violet-500/30 text-foreground'
-                  : 'bg-muted/60 backdrop-blur-sm border border-border/40',
+                  ? 'bg-violet-500/5 border border-violet-500/20 text-foreground'
+                  : 'bg-white/[0.04] border border-white/[0.06] text-foreground/90',
             )}
           >
             {isUser ? content : <MarkdownContent content={content} />}
           </div>
         )}
 
-        {/* GenUI block — inline in chat */}
+        {/* GenUI block — inline in chat with expand-to-modal */}
         {message.genui_type && message.genui_data && (
-          <div className="rounded-xl border border-border/60 bg-background p-3 shadow-sm">
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-3 shadow-sm">
             <Suspense fallback={<div className="h-20 animate-pulse rounded bg-muted" />}>
-              <GenUIRenderer type={message.genui_type} data={message.genui_data} />
+              <GenUIModal type={message.genui_type} data={message.genui_data} />
             </Suspense>
           </div>
         )}
@@ -108,7 +109,7 @@ export default function MessageBubble({ message }) {
           <img
             src={message.image_url}
             alt="Shared image"
-            className="max-h-64 rounded-xl border border-border/40 object-cover"
+            className="max-h-64 rounded-xl border border-white/[0.06] object-cover"
           />
         )}
 
@@ -123,7 +124,7 @@ export default function MessageBubble({ message }) {
 
       {/* User avatar */}
       {isUser && (
-        <div className="ml-2 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">
+        <div className="ml-2.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-foreground text-background text-xs font-bold">
           U
         </div>
       )}

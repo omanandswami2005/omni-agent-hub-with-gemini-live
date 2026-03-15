@@ -49,6 +49,7 @@ class ToolCapability(StrEnum):
     DEVICE = "device"
     DESKTOP = "desktop"
     TASK = "task"
+    GENUI = "genui"
     WILDCARD = "*"
 
 

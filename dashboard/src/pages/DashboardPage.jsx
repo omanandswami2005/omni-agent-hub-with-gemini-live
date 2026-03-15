@@ -6,7 +6,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import ChatPanel from '@/components/chat/ChatPanel';
-import GenUIRenderer from '@/components/genui/GenUIRenderer';
+import GenUIModal from '@/components/genui/GenUIModal';
+import CustomSelect from '@/components/shared/CustomSelect';
 import PersonaCard from '@/components/persona/PersonaCard';
 import ClientStatusBar from '@/components/clients/ClientStatusBar';
 import PipelineMonitor from '@/components/chat/PipelineMonitor';
@@ -135,41 +136,41 @@ export default function DashboardPage() {
             {/* Right sidebar */}
             <aside className="hidden w-80 flex-col overflow-y-auto lg:flex">
                 {/* Tab nav */}
-                <div className="flex shrink-0 gap-1 border-b border-border px-1 pb-2 pt-1">
+                <div className="flex shrink-0 gap-1 border-b border-white/[0.06] px-1 pb-2 pt-1">
                     <button
                         onClick={() => setSidebarTab('overview')}
-                        className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${sidebarTab === 'overview'
-                            ? 'bg-primary text-primary-foreground'
-                            : 'text-muted-foreground hover:bg-muted'
+                        className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${sidebarTab === 'overview'
+                            ? 'bg-foreground text-background'
+                            : 'text-muted-foreground hover:bg-white/[0.04]'
                             }`}
                     >
                         Overview
                     </button>
                     <button
                         onClick={() => setSidebarTab('pipeline')}
-                        className={`relative flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${sidebarTab === 'pipeline'
-                            ? 'bg-primary text-primary-foreground'
-                            : 'text-muted-foreground hover:bg-muted'
+                        className={`relative flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${sidebarTab === 'pipeline'
+                            ? 'bg-foreground text-background'
+                            : 'text-muted-foreground hover:bg-white/[0.04]'
                             }`}
                     >
                         Tasks
                         {hasActivity && sidebarTab !== 'pipeline' && (
-                            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-blue-500" />
+                            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-blue-400" />
                         )}
                         {(activePipeline || hasRunningTask) && (
-                            <span className="ml-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-green-400" />
+                            <span className="ml-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
                         )}
                     </button>
                     <button
                         onClick={() => setSidebarTab('desktop')}
-                        className={`relative flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${sidebarTab === 'desktop'
-                            ? 'bg-primary text-primary-foreground'
-                            : 'text-muted-foreground hover:bg-muted'
+                        className={`relative flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${sidebarTab === 'desktop'
+                            ? 'bg-foreground text-background'
+                            : 'text-muted-foreground hover:bg-white/[0.04]'
                             }`}
                     >
                         Desktop
                         {desktop?.status === 'running' && (
-                            <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-green-400" />
+                            <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
                         )}
                     </button>
                 </div>
@@ -177,15 +178,15 @@ export default function DashboardPage() {
                 {sidebarTab === 'overview' ? (
                     <div className="space-y-4 overflow-y-auto p-4">
                         {/* Connection status */}
-                        <div className="rounded-lg border border-border p-3">
+                        <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
                             <p className="mb-1 text-xs font-medium text-muted-foreground">Status</p>
                             <div className="space-y-1.5">
                                 <div className="flex items-center gap-2">
-                                    <span className={`h-2 w-2 rounded-full ${voice.isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+                                    <span className={`h-2 w-2 rounded-full ${voice.isConnected ? 'bg-emerald-400' : 'bg-red-400'}`} />
                                     <span className="text-sm">{voice.isConnected ? 'Connected' : 'Disconnected'}</span>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                    <span className={`h-2 w-2 rounded-full ${voice.voiceEnabled ? 'bg-blue-500' : 'bg-muted-foreground'}`} />
+                                    <span className={`h-2 w-2 rounded-full ${voice.voiceEnabled ? 'bg-blue-400' : 'bg-muted-foreground'}`} />
                                     <span className="text-sm">Voice {voice.voiceEnabled ? 'On' : 'Off'}</span>
                                 </div>
                             </div>
@@ -197,20 +198,18 @@ export default function DashboardPage() {
                                 <p className="mb-2 text-xs font-medium text-muted-foreground">Active Persona</p>
                                 <PersonaCard persona={activePersona} isActive />
                                 {personas.length > 1 && (
-                                    <select
+                                    <CustomSelect
                                         value={activePersona.id}
-                                        onChange={(e) => {
-                                            const p = personas.find((p) => p.id === e.target.value);
+                                        options={personas.map((p) => ({
+                                            value: p.id,
+                                            label: `${p.name} — ${p.voice || 'default voice'}`,
+                                        }))}
+                                        onChange={(id) => {
+                                            const p = personas.find((p) => p.id === id);
                                             if (p) setActivePersona(p);
                                         }}
-                                        className="mt-2 w-full rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-primary"
-                                    >
-                                        {personas.map((p) => (
-                                            <option key={p.id} value={p.id}>
-                                                {p.name} — {p.voice || 'default voice'}
-                                            </option>
-                                        ))}
-                                    </select>
+                                        className="mt-2"
+                                    />
                                 )}
                             </div>
                         )}
@@ -225,11 +224,11 @@ export default function DashboardPage() {
 
                         {/* Active tools */}
                         {activeTools.size > 0 && (
-                            <div className="rounded-lg border border-border p-3">
+                            <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
                                 <p className="mb-1 text-xs font-medium text-muted-foreground">Active Tools</p>
                                 <div className="flex flex-wrap gap-1">
                                     {[...activeTools].map((tool) => (
-                                        <span key={tool} className="rounded bg-primary/10 px-2 py-0.5 text-xs text-primary">{tool}</span>
+                                        <span key={tool} className="rounded-lg bg-white/[0.04] border border-white/[0.06] px-2 py-0.5 text-xs text-foreground/70">{tool}</span>
                                     ))}
                                 </div>
                             </div>
@@ -239,7 +238,7 @@ export default function DashboardPage() {
                         {lastGenUI && (
                             <div>
                                 <p className="mb-2 text-xs font-medium text-muted-foreground">Generated UI</p>
-                                <GenUIRenderer type={lastGenUI.genui_type} data={lastGenUI.genui_data} />
+                                <GenUIModal type={lastGenUI.genui_type} data={lastGenUI.genui_data} />
                             </div>
                         )}
                     </div>
@@ -252,9 +251,9 @@ export default function DashboardPage() {
                         <TaskPanel />
                         {hasPipeline && <PipelineMonitor />}
                         {!hasActivity && (
-                            <div className="mt-4 rounded-lg border border-dashed border-border p-6 text-center">
+                            <div className="mt-4 rounded-xl border border-dashed border-white/[0.08] bg-white/[0.01] p-6 text-center">
                                 <p className="text-sm font-medium text-muted-foreground">No tasks yet</p>
-                                <p className="mt-1 text-xs text-muted-foreground">
+                                <p className="mt-1 text-xs text-muted-foreground/60">
                                     Ask for a complex multi-step task to trigger the planner.
                                 </p>
                             </div>

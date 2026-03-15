@@ -229,74 +229,74 @@ export default function Sidebar() {
     useSessionStore.getState().setActiveSession(null);
     useSessionStore.getState().setWantsNewSession(true);
     navigate('/dashboard');
-    // Reconnect to create a new session
     voice.reconnect?.();
   };
 
   return (
     <aside
       className={cn(
-        'hidden flex-col border-r border-border bg-[var(--sidebar)] text-[var(--sidebar-foreground)] transition-all duration-200 md:flex',
-        sidebarOpen ? 'w-64' : 'w-16',
+        'hidden flex-col bg-[var(--sidebar)] text-[var(--sidebar-foreground)] transition-all duration-200 md:flex',
+        sidebarOpen ? 'w-60' : 'w-16',
       )}
     >
       {/* Logo + New Chat */}
-      <div className="flex h-14 items-center justify-between border-b border-border px-4">
-        {sidebarOpen && <span className="text-lg font-bold">Omni</span>}
+      <div className="flex h-14 items-center justify-between px-4">
+        {sidebarOpen && (
+          <span className="text-base font-semibold tracking-tight">Omni</span>
+        )}
         <div className="flex items-center gap-1">
           {sidebarOpen && (
             <button
               onClick={handleNewChat}
-              className="rounded-md p-1.5 hover:bg-accent"
+              className="rounded-lg p-1.5 transition-colors hover:bg-white/5"
               aria-label="New chat"
               title="New chat"
             >
-              <Plus size={18} />
+              <Plus size={16} />
             </button>
           )}
           <button
             onClick={toggleSidebar}
-            className="rounded-md p-1.5 hover:bg-accent"
+            className="rounded-lg p-1.5 transition-colors hover:bg-white/5"
             aria-label="Toggle sidebar"
           >
-            {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeft size={18} />}
+            {sidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
           </button>
         </div>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
+      <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-3">
         {NAV_ITEMS.map(({ to, label, icon: Icon, shortcut, hasSublist }) => {
           const isActive = to === '/dashboard'
             ? location.pathname === '/dashboard' || location.pathname.startsWith('/session/')
             : location.pathname.startsWith(to);
 
           if (hasSublist && sidebarOpen) {
-            // Sessions with collapsible sublist — click label navigates, chevron toggles sublist
             return (
               <div key={to}>
-                <div
+                <button
                   className={cn(
-                    'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors cursor-pointer',
+                    'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
                     isActive
-                      ? 'bg-accent text-accent-foreground font-medium'
-                      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                      ? 'bg-white/8 text-foreground font-medium'
+                      : 'text-muted-foreground hover:bg-white/5 hover:text-foreground',
                   )}
                   title={label}
-                  onClick={() => navigate(to)}
+                  onClick={() => {
+                    setSessionsExpanded((prev) => !prev);
+                    navigate(to);
+                  }}
                 >
-                  <Icon size={18} />
+                  <Icon size={16} className="shrink-0" />
                   <span className="flex-1 text-left">{label}</span>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setSessionsExpanded((prev) => !prev); }}
-                    className="rounded p-0.5 hover:bg-muted"
-                    aria-label={sessionsExpanded ? 'Collapse sessions' : 'Expand sessions'}
-                  >
-                    {sessionsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  </button>
-                </div>
+                  <ChevronDown size={14} className={cn(
+                    'transition-transform duration-200',
+                    !sessionsExpanded && '-rotate-90',
+                  )} />
+                </button>
                 {sessionsExpanded && (
-                  <div className="ml-2 mt-1 border-l border-border pl-2">
+                  <div className="ml-3 mt-1 border-l border-border/40 pl-2">
                     <SidebarSessionList />
                   </div>
                 )}
@@ -311,18 +311,17 @@ export default function Sidebar() {
               className={cn(
                 'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
                 isActive
-                  ? 'bg-accent text-accent-foreground font-medium'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                  ? 'bg-white/8 text-foreground font-medium'
+                  : 'text-muted-foreground hover:bg-white/5 hover:text-foreground',
               )}
               title={label}
             >
-              <Icon size={18} />
+              <Icon size={16} className="shrink-0" />
               {sidebarOpen && <span className="flex-1">{label}</span>}
-              {/* Live client dots for Clients nav item */}
               {to === '/clients' && connectedClients.length > 0 && (
                 <span className="flex items-center gap-0.5">
                   {connectedClients.slice(0, 3).map((c, i) => (
-                    <span key={c.client_id || i} className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                    <span key={c.client_id || i} className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                   ))}
                   {connectedClients.length > 3 && (
                     <span className="text-[9px] text-muted-foreground">+{connectedClients.length - 3}</span>
@@ -336,9 +335,9 @@ export default function Sidebar() {
 
       {/* Active persona indicator */}
       {sidebarOpen && activePersona && (
-        <div className="border-t border-border p-3">
-          <div className="flex items-center gap-2 rounded-lg bg-accent/50 px-3 py-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
+        <div className="border-t border-border/40 p-3">
+          <div className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-foreground text-xs font-medium text-background">
               {activePersona.name?.[0] || '?'}
             </div>
             <div className="min-w-0 flex-1">

@@ -1,0 +1,39 @@
+:root {
+    --md-primary-fg-color: #7c3aed;
+    --md-accent-fg-color: #f59e0b;
+}
+
+/* Hero section */
+.md-typeset .hero {
+    text-align: center;
+    padding: 2rem 0;
+}
+
+.md-typeset .hero h1 {
+    font-size: 3rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, #7c3aed 0%, #f59e0b 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* Feature grid */
+.grid-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1rem;
+    margin: 2rem 0;
+}
+
+.grid-item {
+    padding: 1.5rem;
+    border-radius: 0.75rem;
+    border: 1px solid var(--md-default-fg-color--lightest);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.grid-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}

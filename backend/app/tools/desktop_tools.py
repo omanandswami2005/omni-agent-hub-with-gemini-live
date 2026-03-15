@@ -451,6 +451,74 @@ async def desktop_download_file(path: str, user_id: str = "default") -> dict:
     }
 
 
+async def desktop_find_file(
+    name: str = "",
+    content: str = "",
+    directory: str = "/home/user",
+    user_id: str = "default",
+) -> dict:
+    """Search for files on the virtual desktop by name pattern or content.
+
+    Use this to discover where uploaded or generated files are located in
+    the E2B sandbox.  Supports glob patterns for names and grep-style
+    content matching.
+
+    Args:
+        name: Filename pattern (glob) to search for, e.g. ``*.csv``,
+              ``report*``, ``data.xlsx``.  Leave empty to match all files.
+        content: Text to search for inside files (grep -ril).
+              Leave empty to skip content matching.
+        directory: Root directory to search (default: /home/user).
+        user_id: User identifier.
+
+    Returns:
+        Dict with list of matching file paths, sizes, and match details.
+    """
+    svc = get_e2b_desktop_service()
+
+    if content:
+        # grep for content first — most precise
+        cmd = f"grep -ril --include='*' '{content}' {directory} 2>/dev/null | head -50"
+        if name:
+            cmd = f"grep -ril --include='{name}' '{content}' {directory} 2>/dev/null | head -50"
+        result = await svc.run_command(user_id, cmd)
+        paths = [p.strip() for p in result.get("stdout", "").splitlines() if p.strip()]
+    elif name:
+        # find by name pattern
+        cmd = f"find {directory} -name '{name}' -type f 2>/dev/null | head -50"
+        result = await svc.run_command(user_id, cmd)
+        paths = [p.strip() for p in result.get("stdout", "").splitlines() if p.strip()]
+    else:
+        # list all files
+        cmd = f"find {directory} -type f 2>/dev/null | head -50"
+        result = await svc.run_command(user_id, cmd)
+        paths = [p.strip() for p in result.get("stdout", "").splitlines() if p.strip()]
+
+    # Gather sizes for found files
+    files = []
+    if paths:
+        stat_cmd = "stat --format='%n %s' " + " ".join(f"'{p}'" for p in paths[:50]) + " 2>/dev/null"
+        stat_result = await svc.run_command(user_id, stat_cmd)
+        for line in stat_result.get("stdout", "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # format: /path/to/file 12345
+            parts = line.rsplit(" ", 1)
+            if len(parts) == 2:
+                files.append({"path": parts[0], "size": int(parts[1])})
+            else:
+                files.append({"path": line, "size": 0})
+
+    return {
+        "directory": directory,
+        "name_pattern": name or "*",
+        "content_pattern": content or "",
+        "files": files,
+        "count": len(files),
+    }
+
+
 async def desktop_read_screen(user_id: str = "default") -> dict:
     """Take a screenshot and send it to the dashboard for display.
 
@@ -666,6 +734,7 @@ def get_desktop_tools() -> list[FunctionTool]:
             FunctionTool(desktop_bash),
             FunctionTool(desktop_upload_file),
             FunctionTool(desktop_download_file),
+            FunctionTool(desktop_find_file),
             # Voice-enhanced combos
             FunctionTool(desktop_read_screen),
             FunctionTool(desktop_exec_and_show),

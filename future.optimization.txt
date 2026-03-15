@@ -1,0 +1,8 @@
+Token caching across sessions: Currently, tool discovery happens every time an MCP is lazy-connected. Caching _discovered_summaries to Firestore (not just in-memory) would survive process restarts without re-connecting.
+
+GenUI schema compression in Pixel agent: The genui persona instruction is ~1.5K tokens of JSON examples. Consider: store schemas in a tool (e.g. get_genui_schema(type)) and have the agent call it before generating, rather than always in the system prompt.
+
+Tool schema truncation for MCPs with 100+ tools: When an MCP (like Zapier) exposes dozens of tools, ALL their schemas are injected into the agent's context. Consider a "top-K relevant tools" approach — use the user's query to select only the 5-10 most relevant tools per turn instead of all of them.
+
+Root agent instruction bloat: _build_root_instruction() lists ALL persona tools in the system prompt. With 6+ personas × 20+ tools each, this is 3-4K tokens just for tool names. Consider: only list persona names + descriptions (not individual tool names), and let the agent use get_capabilities() when it needs details.
+

@@ -1184,8 +1184,8 @@ async def _process_event(
     # tool execution and drained here when we see the corresponding
     # function_response event.
     #
-    from app.tools.image_gen import IMAGE_TOOL_NAMES, drain_pending_images
     from app.tools.desktop_tools import SCREENSHOT_TOOL_NAMES, drain_pending_screenshots
+    from app.tools.image_gen import IMAGE_TOOL_NAMES, drain_pending_images
 
     for fr in event.get_function_responses():
         # Skip transfer_to_agent responses (already handled above)
@@ -1502,6 +1502,13 @@ async def ws_live(websocket: WebSocket) -> None:
         selected_voice = personas[0].voice
     run_config = _build_run_config(voice=selected_voice)
 
+    # ── Warmup: start building the runner in the background while we
+    # handle auth response & session suggestion messages.  This overlaps
+    # the expensive MCP subprocess cold-starts with network I/O.
+    _runner_future = asyncio.ensure_future(
+        _get_runner(user.uid, session_service=active_session_service)
+    )
+
     # Build available tool names for auth response
     from app.services.tool_registry import get_tool_registry
 
@@ -1555,7 +1562,7 @@ async def ws_live(websocket: WebSocket) -> None:
     from google.adk.agents.live_request_queue import LiveRequestQueue
 
     queue = LiveRequestQueue()
-    runner = await _get_runner(user.uid, session_service=active_session_service)
+    runner = await _runner_future  # Await the pre-warmed runner
 
     # Register the queue so E2B desktop streaming tools can push frames
     from app.tools.desktop_tools import register_live_queue, unregister_live_queue

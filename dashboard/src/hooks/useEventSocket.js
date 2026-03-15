@@ -14,6 +14,7 @@ import { useTaskStore } from '@/stores/taskStore';
 import { useClientStore } from '@/stores/clientStore';
 import { useSessionSuggestionStore } from '@/stores/sessionSuggestionStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import { useChatStore } from '@/stores/chatStore';
 import { getClientType } from '@/lib/constants';
 
 /**
@@ -68,6 +69,11 @@ export function useEventSocket() {
 
                 // Route task events (planned tasks, steps, input requests, desktop status)
                 useTaskStore.getState().handleEvent(msg);
+
+                // Route tool activity events from ADK before/after callbacks
+                if (msg.type === 'tool_activity') {
+                    useChatStore.getState().updateToolActivity(msg);
+                }
 
                 // Route client status events
                 if (msg.type === 'client_status_update' && msg.clients) {

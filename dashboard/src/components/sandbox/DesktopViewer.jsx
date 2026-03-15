@@ -70,10 +70,12 @@ export default function DesktopViewer() {
     // No desktop state yet — show start button
     if (!desktop) {
         return (
-            <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border p-12">
-                <Monitor size={40} className="text-muted-foreground" />
+            <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-white/[0.08] bg-white/[0.02] p-12">
+                <div className="rounded-full border border-white/[0.08] bg-white/[0.03] p-4">
+                    <Monitor size={32} className="text-muted-foreground" />
+                </div>
                 <div className="text-center">
-                    <h3 className="font-medium">Cloud Desktop</h3>
+                    <h3 className="font-medium text-foreground/90">Cloud Desktop</h3>
                     <p className="mt-1 text-sm text-muted-foreground">
                         Start a cloud desktop to run apps, browse the web, and execute code in a sandboxed environment.
                     </p>
@@ -82,7 +84,7 @@ export default function DesktopViewer() {
                 <button
                     onClick={startDesktop}
                     disabled={loading}
-                    className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                    className="flex items-center gap-2 rounded-xl bg-foreground px-4 py-2 text-sm text-background hover:bg-foreground/90 disabled:opacity-50 transition-colors"
                 >
                     {loading ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
                     {loading ? 'Starting…' : 'Start Desktop'}
@@ -93,18 +95,18 @@ export default function DesktopViewer() {
 
     return (
         <div className={`flex flex-col gap-3 ${expanded ? 'fixed inset-0 z-50 bg-background p-4' : ''}`}>
-            {/* Header */}
-            <div className="flex items-center justify-between">
+            {/* Header — like screen share indicator */}
+            <div className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.03] px-3 py-2">
                 <div className="flex items-center gap-2">
-                    <Monitor size={16} className="text-primary" />
-                    <span className="text-sm font-medium">Cloud Desktop</span>
-                    <span className={`flex h-2 w-2 rounded-full ${isRunning ? 'bg-green-500' : 'bg-yellow-500'}`} />
-                    <span className="text-xs text-muted-foreground">{desktop.status}</span>
+                    <div className={`flex h-2 w-2 rounded-full ${isRunning ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                    <Monitor size={14} className="text-foreground/70" />
+                    <span className="text-xs font-medium text-foreground/80">Cloud Desktop</span>
+                    <span className="text-[10px] text-muted-foreground capitalize">{desktop.status}</span>
                 </div>
                 <div className="flex items-center gap-1">
                     <button
                         onClick={() => setExpanded((e) => !e)}
-                        className="rounded p-1 hover:bg-muted"
+                        className="rounded-lg p-1.5 hover:bg-white/[0.06] transition-colors"
                         aria-label={expanded ? 'Collapse' : 'Expand'}
                     >
                         {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
@@ -113,7 +115,7 @@ export default function DesktopViewer() {
                         <button
                             onClick={stopDesktop}
                             disabled={loading}
-                            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
+                            className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
                         >
                             <Square size={12} />
                             Stop
@@ -124,9 +126,9 @@ export default function DesktopViewer() {
 
             {error && <p className="text-sm text-destructive">{error}</p>}
 
-            {/* Desktop stream iframe */}
+            {/* Desktop stream — screen share style */}
             {isRunning && streamUrl ? (
-                <div className={`overflow-hidden rounded-lg border border-border bg-black ${expanded ? 'flex-1' : 'aspect-video'}`}>
+                <div className={`overflow-hidden rounded-2xl border border-white/[0.08] bg-black shadow-2xl ${expanded ? 'flex-1' : 'aspect-video'}`}>
                     <iframe
                         src={streamUrl}
                         title="Cloud Desktop"
@@ -136,14 +138,14 @@ export default function DesktopViewer() {
                     />
                 </div>
             ) : (
-                <div className="flex aspect-video items-center justify-center rounded-lg border border-border bg-muted/30">
+                <div className="flex aspect-video items-center justify-center rounded-2xl border border-white/[0.06] bg-white/[0.02]">
                     <div className="text-center text-sm text-muted-foreground">
                         {isRunning ? 'Stream URL not available' : 'Desktop is not running'}
                         {!isRunning && (
                             <button
                                 onClick={startDesktop}
                                 disabled={loading}
-                                className="mt-2 flex items-center gap-1 mx-auto rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                                className="mt-2 flex items-center gap-1 mx-auto rounded-xl bg-foreground px-3 py-1.5 text-sm text-background hover:bg-foreground/90 disabled:opacity-50 transition-colors"
                             >
                                 {loading ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />}
                                 Restart
@@ -165,7 +167,7 @@ export default function DesktopViewer() {
                     <button
                         onClick={() => fileInputRef.current?.click()}
                         disabled={uploadStatus === 'uploading'}
-                        className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/50 px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
+                        className="flex items-center gap-1.5 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-xs hover:bg-white/[0.06] disabled:opacity-50 transition-colors"
                     >
                         {uploadStatus === 'uploading' ? (
                             <RefreshCw size={12} className="animate-spin" />
@@ -175,7 +177,7 @@ export default function DesktopViewer() {
                         {uploadStatus === 'uploading' ? 'Uploading…' : 'Upload File'}
                     </button>
                     {uploadStatus && uploadStatus !== 'uploading' && (
-                        <span className="flex items-center gap-1 text-xs text-green-600">
+                        <span className="flex items-center gap-1 text-xs text-emerald-400">
                             <CheckCircle size={12} />
                             {uploadStatus.name} → {uploadStatus.path}
                         </span>

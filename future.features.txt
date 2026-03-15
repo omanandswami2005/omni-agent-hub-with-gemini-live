@@ -2,6 +2,6 @@ ok but it should be plugin and not tool, then if user enables it, its whole life
 
 
 MCP skills with adk (now in experimental so skipping)
-
+webMCP integration
 pip installable plugins
 documentation like adk docs

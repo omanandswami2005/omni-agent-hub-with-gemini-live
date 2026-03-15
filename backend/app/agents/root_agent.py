@@ -27,7 +27,8 @@ from app.middleware.agent_callbacks import (
     before_agent_callback,
     context_injection_callback,
     cost_estimation_callback,
-    permission_check_callback,
+    tool_activity_after_callback,
+    tool_activity_before_callback,
 )
 from app.models.persona import PersonaResponse
 from app.tools.capabilities_tool import get_capability_tools
@@ -231,7 +232,8 @@ def build_root_agent(
         tools=root_tools,
         before_model_callback=context_injection_callback,
         after_model_callback=cost_estimation_callback,
-        before_tool_callback=permission_check_callback,
+        before_tool_callback=tool_activity_before_callback,
+        after_tool_callback=tool_activity_after_callback,
         before_agent_callback=before_agent_callback,
         after_agent_callback=after_agent_callback,
     )

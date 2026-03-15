@@ -109,6 +109,77 @@ def file_info(path: str) -> dict:
 
         return {
             "name": p.name,
+            "size": stat.st_size,
+            "is_dir": p.is_dir(),
+            "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+        }
+    except PermissionError:
+        return {"error": f"Permission denied: {p}"}
+
+
+def search_files(
+    directory: str = ".",
+    pattern: str = "",
+    content: str = "",
+    max_results: int = 50,
+) -> list[dict] | dict:
+    """Search for files by name pattern and/or content.
+
+    Args:
+        directory: Root directory to search (recursively).
+        pattern: Glob pattern for filenames (e.g. ``*.csv``, ``report*``).
+        content: Text to search for inside files (case-insensitive grep).
+        max_results: Maximum number of results to return.
+
+    Returns:
+        A list of matching file dicts with ``path``, ``name``, ``size``,
+        and optionally ``match_line``, or an error dict.
+    """
+    import fnmatch  # noqa: PLC0415
+
+    root = Path(directory).expanduser().resolve()
+    if not _check_allowed(root):
+        return {"error": "Access denied — path outside allowed directories"}
+    if not root.is_dir():
+        return {"error": f"Not a directory: {root}"}
+
+    results: list[dict] = []
+    try:
+        for item in root.rglob("*"):
+            if len(results) >= max_results:
+                break
+            if not item.is_file():
+                continue
+            # Name-pattern filter
+            if pattern and not fnmatch.fnmatch(item.name, pattern):
+                continue
+            entry: dict = {
+                "path": str(item),
+                "name": item.name,
+                "size": item.stat().st_size,
+            }
+            # Content filter
+            if content:
+                try:
+                    text = item.read_text(encoding="utf-8", errors="ignore")
+                    lower_content = content.lower()
+                    for i, line in enumerate(text.splitlines(), 1):
+                        if lower_content in line.lower():
+                            entry["match_line"] = i
+                            entry["match_preview"] = line.strip()[:200]
+                            break
+                    else:
+                        continue  # no content match — skip file
+                except (PermissionError, OSError):
+                    continue
+            results.append(entry)
+    except PermissionError:
+        return {"error": f"Permission denied while searching: {root}"}
+
+    return results
+
+        return {
+            "name": p.name,
             "path": str(p),
             "size": stat.st_size,
             "is_dir": p.is_dir(),

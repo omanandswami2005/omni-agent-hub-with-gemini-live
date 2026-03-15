@@ -268,3 +268,132 @@ def before_agent_callback(callback_context=None, **kwargs) -> Content | None:
     state = _get_state(ctx)
     state["_agent_start_ts"] = time.monotonic()
     return None
+
+
+# ---------------------------------------------------------------------------
+# 5. Tool activity callbacks — real-time transparency for dashboard
+# ---------------------------------------------------------------------------
+
+
+def tool_activity_before_callback(
+    tool=None,
+    args=None,
+    tool_context=None,
+    **kwargs,
+) -> dict | None:
+    """Emit a ``tool_started`` event to the EventBus so the dashboard can
+    show real-time tool activity (elapsed timer, arguments preview).
+
+    Also runs ``permission_check_callback`` so this can replace it as the
+    single ``before_tool_callback``.
+    """
+    ctx = tool_context
+    tool_name = getattr(tool, "name", "")
+    state = _get_state(ctx)
+
+    # Record start time for elapsed calculation in after_tool
+    pending = state.get("_tool_starts", {})
+    pending[tool_name] = time.monotonic()
+    state["_tool_starts"] = pending
+
+    # Publish event
+    user_id = state.get("user_id")
+    agent_name = getattr(ctx, "agent_name", "unknown")
+    if user_id:
+        _publish_tool_event(user_id, {
+            "type": "tool_activity",
+            "event": "started",
+            "tool_name": tool_name,
+            "agent": agent_name,
+            "args_preview": _safe_args_preview(args),
+            "timestamp": time.time(),
+        })
+
+    # Delegate to permission check
+    return permission_check_callback(tool=tool, args=args, tool_context=ctx, **kwargs)
+
+
+def tool_activity_after_callback(
+    tool=None,
+    args=None,
+    tool_context=None,
+    tool_response=None,
+    **kwargs,
+) -> dict | None:
+    """Emit a ``tool_completed`` event with elapsed time and result preview."""
+    ctx = tool_context
+    tool_name = getattr(tool, "name", "")
+    state = _get_state(ctx)
+
+    # Calculate elapsed
+    starts = state.get("_tool_starts", {})
+    start_ts = starts.pop(tool_name, None)
+    elapsed = round(time.monotonic() - start_ts, 3) if start_ts else None
+    state["_tool_starts"] = starts
+
+    # Determine success
+    is_error = isinstance(tool_response, dict) and "error" in tool_response
+
+    user_id = state.get("user_id")
+    agent_name = getattr(ctx, "agent_name", "unknown")
+    if user_id:
+        _publish_tool_event(user_id, {
+            "type": "tool_activity",
+            "event": "completed",
+            "tool_name": tool_name,
+            "agent": agent_name,
+            "elapsed_s": elapsed,
+            "success": not is_error,
+            "result_preview": _safe_result_preview(tool_response),
+            "timestamp": time.time(),
+        })
+
+    logger.info(
+        "tool_completed",
+        tool=tool_name,
+        agent=agent_name,
+        elapsed_s=elapsed,
+        success=not is_error,
+    )
+    return None
+
+
+def _safe_args_preview(args: dict | None, max_len: int = 150) -> dict:
+    """Return a truncated copy of tool args safe for JSON serialization."""
+    if not args:
+        return {}
+    preview = {}
+    for k, v in args.items():
+        if k in ("user_id", "tool_context"):
+            continue
+        s = str(v)
+        preview[k] = s[:max_len] + "…" if len(s) > max_len else s
+    return preview
+
+
+def _safe_result_preview(result, max_len: int = 200) -> str:
+    """Return a truncated string preview of a tool result."""
+    if result is None:
+        return ""
+    s = str(result)
+    return s[:max_len] + "…" if len(s) > max_len else s
+
+
+def _publish_tool_event(user_id: str, payload: dict) -> None:
+    """Fire-and-forget publish to EventBus."""
+    try:
+        import asyncio
+        import json
+
+        from app.services.event_bus import get_event_bus
+
+        bus = get_event_bus()
+        msg = json.dumps(payload)
+        try:
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(bus.publish(user_id, msg))
+            task.add_done_callback(lambda t: None)  # prevent RUF006 & suppress unhandled
+        except RuntimeError:
+            pass  # No running loop — skip
+    except Exception:
+        pass  # EventBus not available is fine

@@ -152,19 +152,25 @@ class ToolRegistry:
         plugin_registry = get_plugin_registry()
 
         # ── T2: Collect tools per enabled plugin ──────────────────────
-        plugin_tools: dict[str, list] = {}  # plugin_id → tools
+        # ── T2: Collect tools per enabled plugin (parallel) ──────────
+        enabled_manifests: list[tuple[str, object]] = []
         for plugin_id in plugin_registry.get_enabled_ids(user_id):
             manifest = plugin_registry.get_manifest(plugin_id)
-            if manifest is None:
-                continue
+            if manifest is not None:
+                enabled_manifests.append((plugin_id, manifest))
+
+        async def _load(pid: str, m: object) -> tuple[str, list]:
             try:
-                tools = await plugin_registry._get_plugin_tools(user_id, plugin_id, manifest)
-                if tools:
-                    plugin_tools[plugin_id] = tools
+                tools = await plugin_registry._get_plugin_tools(user_id, pid, m)
+                return (pid, tools or [])
             except Exception:
-                logger.warning(
-                    "t2_tools_load_failed", user_id=user_id, plugin_id=plugin_id, exc_info=True
-                )
+                logger.warning("t2_tools_load_failed", user_id=user_id, plugin_id=pid, exc_info=True)
+                return (pid, [])
+
+        results = await asyncio.gather(
+            *(_load(pid, m) for pid, m in enabled_manifests)
+        )
+        plugin_tools: dict[str, list] = {pid: tools for pid, tools in results if tools}
 
         # ── Distribute T2 tools to personas by tag matching ───────────
         result: dict[str, list] = {}

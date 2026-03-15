@@ -1,0 +1,121 @@
+site_name: Omni Docs
+site_url: https://omni-docs.github.io
+site_description: "Speak anywhere. Act everywhere. — Documentation for Omni, the multi-client AI agent hub."
+site_author: Omanand Swami
+repo_url: https://github.com/omni-docs/omni-docs.github.io
+repo_name: omni-docs/omni-docs.github.io
+docs_dir: site-docs
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/robot-happy
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - def_list
+  - footnotes
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/omni-docs/omni-docs.github.io
+  generator: false
+
+extra_css:
+  - stylesheets/extra.css
+
+copyright: Copyright &copy; 2026 Omanand Swami
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Overview: getting-started/index.md
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quickstart.md
+  - Architecture:
+      - Overview: architecture/index.md
+      - Backend: architecture/backend.md
+      - Dashboard: architecture/dashboard.md
+      - Desktop Client: architecture/desktop-client.md
+      - Chrome Extension: architecture/chrome-extension.md
+      - Smart Glasses: architecture/smart-glasses.md
+  - Guides:
+      - Plugin Development: guides/plugin-development.md
+      - MCP Server Development: guides/mcp-server-development.md
+      - Client Development: guides/client-development.md
+      - Frontend Development: guides/frontend-development.md
+      - Agent Personas: guides/agent-personas.md
+      - GenUI Components: guides/genui-components.md
+  - API Reference:
+      - REST API: api/rest.md
+      - WebSocket API: api/websocket.md
+      - Desktop Tools: api/desktop-tools.md
+  - Deployment:
+      - GCP Setup: deployment/gcp-setup.md
+      - Docker: deployment/docker.md
+      - Terraform: deployment/terraform.md
+  - Contributing:
+      - Documentation Guide: contributing/documentation-guide.md
+      - Development Setup: contributing/development-setup.md
