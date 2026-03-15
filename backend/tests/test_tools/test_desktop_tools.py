@@ -1,122 +1,115 @@
-"""Tests for the desktop computer-use ADK tools."""
+"""Tests for the E2B desktop ADK tools."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.tools.desktop_tools import (
-    capture_screen,
-    click_at,
+    desktop_bash,
+    desktop_click,
+    desktop_hotkey,
+    desktop_launch,
+    desktop_screenshot,
+    desktop_type,
     get_desktop_tools,
-    manage_files,
-    open_application,
-    press_key,
-    type_text,
 )
 
-_SEND = "app.tools.desktop_tools._send_action"
+_SVC = "app.tools.desktop_tools.get_e2b_desktop_service"
 
 
-class TestCaptureScreen:
+def _mock_svc():
+    svc = MagicMock()
+    svc.screenshot = AsyncMock(return_value=b"\x89PNG fake")
+    svc.left_click = AsyncMock()
+    svc.right_click = AsyncMock()
+    svc.double_click = AsyncMock()
+    svc.write_text = AsyncMock()
+    svc.press_keys = AsyncMock()
+    svc.launch_app = AsyncMock()
+    svc.run_command = AsyncMock(return_value={"stdout": "hello", "stderr": "", "exit_code": 0})
+    return svc
+
+
+class TestDesktopScreenshot:
     @pytest.mark.asyncio
-    @patch(_SEND, new_callable=AsyncMock, return_value={"delivered": True})
-    async def test_sends_action(self, mock_send):
-        result = await capture_screen(user_id="u1")
-        assert result == {"delivered": True}
-        mock_send.assert_awaited_once()
-        assert mock_send.call_args[0][2] == "capture_screen"
+    @patch(_SVC)
+    async def test_returns_image(self, mock_get_svc):
+        svc = _mock_svc()
+        mock_get_svc.return_value = svc
+        result = await desktop_screenshot(user_id="u1")
+        assert "image_base64" in result
+        assert result["mime_type"] == "image/png"
+        svc.screenshot.assert_awaited_once_with("u1")
 
 
-class TestClickAt:
+class TestDesktopClick:
     @pytest.mark.asyncio
-    @patch(_SEND, new_callable=AsyncMock, return_value={"delivered": True})
-    async def test_sends_coordinates(self, mock_send):
-        result = await click_at(user_id="u1", x=100, y=200)
-        assert result["delivered"] is True
-        payload = mock_send.call_args[0][3]
-        assert "100" in payload
-        assert "200" in payload
+    @patch(_SVC)
+    async def test_sends_coordinates(self, mock_get_svc):
+        svc = _mock_svc()
+        mock_get_svc.return_value = svc
+        result = await desktop_click(x=100, y=200, user_id="u1")
+        assert result["clicked"] is True
+        assert result["x"] == 100 and result["y"] == 200
+        svc.left_click.assert_awaited_once_with("u1", 100, 200)
 
 
-class TestTypeText:
+class TestDesktopType:
     @pytest.mark.asyncio
-    @patch(_SEND, new_callable=AsyncMock, return_value={"delivered": True})
-    async def test_sends_text(self, mock_send):
-        result = await type_text(user_id="u1", text="hello")
-        assert result["delivered"] is True
-        payload = mock_send.call_args[0][3]
-        assert "hello" in payload
+    @patch(_SVC)
+    async def test_sends_text(self, mock_get_svc):
+        svc = _mock_svc()
+        mock_get_svc.return_value = svc
+        result = await desktop_type(text="hello", user_id="u1")
+        assert result["typed"] is True
+        svc.write_text.assert_awaited_once_with("u1", "hello")
 
 
-class TestOpenApplication:
+class TestDesktopHotkey:
     @pytest.mark.asyncio
-    @patch(_SEND, new_callable=AsyncMock, return_value={"delivered": True})
-    async def test_sends_app_name(self, mock_send):
-        result = await open_application(user_id="u1", app_name="notepad")
-        assert result["delivered"] is True
-        payload = mock_send.call_args[0][3]
-        assert "notepad" in payload
+    @patch(_SVC)
+    async def test_sends_key_combo(self, mock_get_svc):
+        svc = _mock_svc()
+        mock_get_svc.return_value = svc
+        result = await desktop_hotkey(keys=["ctrl", "c"], user_id="u1")
+        assert result["pressed"] is True
+        svc.press_keys.assert_awaited_once_with("u1", ["ctrl", "c"])
 
 
-class TestManageFiles:
+class TestDesktopLaunch:
     @pytest.mark.asyncio
-    @patch(_SEND, new_callable=AsyncMock, return_value={"delivered": True})
-    async def test_read_action(self, mock_send):
-        result = await manage_files(user_id="u1", action="read", path="/tmp/f.txt")
-        assert result["delivered"] is True
-        assert mock_send.call_args[0][2] == "manage_files"
+    @patch(_SVC)
+    async def test_sends_app_name(self, mock_get_svc):
+        svc = _mock_svc()
+        mock_get_svc.return_value = svc
+        result = await desktop_launch(app_name="firefox", user_id="u1")
+        assert result["launched"] is True
+        svc.launch_app.assert_awaited_once_with("u1", "firefox")
 
+
+class TestDesktopBash:
     @pytest.mark.asyncio
-    @patch(_SEND, new_callable=AsyncMock, return_value={"delivered": True})
-    async def test_write_action(self, mock_send):
-        result = await manage_files(user_id="u1", action="write", path="/tmp/f.txt", content="data")
-        assert result["delivered"] is True
-
-    @pytest.mark.asyncio
-    @patch(_SEND, new_callable=AsyncMock, return_value={"delivered": True})
-    async def test_list_action(self, mock_send):
-        result = await manage_files(user_id="u1", action="list", path="/tmp")
-        assert result["delivered"] is True
-
-    @pytest.mark.asyncio
-    @patch(_SEND, new_callable=AsyncMock, return_value={"delivered": True})
-    async def test_delete_action(self, mock_send):
-        result = await manage_files(user_id="u1", action="delete", path="/tmp/f.txt")
-        assert result["delivered"] is True
-
-    @pytest.mark.asyncio
-    async def test_invalid_action_rejected(self):
-        result = await manage_files(user_id="u1", action="hack", path="/etc/passwd")
-        assert result["delivered"] is False
-        assert "error" in result
-
-
-class TestPressKey:
-    @pytest.mark.asyncio
-    @patch(_SEND, new_callable=AsyncMock, return_value={"delivered": True})
-    async def test_sends_key_combo(self, mock_send):
-        result = await press_key(user_id="u1", key_combo="ctrl+c")
-        assert result["delivered"] is True
-        payload = mock_send.call_args[0][3]
-        assert "ctrl+c" in payload
-
-    @pytest.mark.asyncio
-    @patch(_SEND, new_callable=AsyncMock, return_value={"delivered": True})
-    async def test_single_key(self, mock_send):
-        result = await press_key(user_id="u1", key_combo="enter")
-        assert result["delivered"] is True
+    @patch(_SVC)
+    async def test_runs_command(self, mock_get_svc):
+        svc = _mock_svc()
+        mock_get_svc.return_value = svc
+        result = await desktop_bash(command="echo hi", user_id="u1")
+        assert result["stdout"] == "hello"
+        svc.run_command.assert_awaited_once_with("u1", "echo hi")
 
 
 class TestGetDesktopTools:
-    def test_returns_six_tools(self):
+    def test_returns_twenty_tools(self):
         tools = get_desktop_tools()
-        assert len(tools) == 6
+        assert len(tools) == 20
 
     def test_tool_names(self):
         tools = get_desktop_tools()
         names = {t.name for t in tools}
-        assert "capture_screen" in names
-        assert "manage_files" in names
-        assert "press_key" in names
+        assert "desktop_screenshot" in names
+        assert "desktop_click" in names
+        assert "desktop_bash" in names
+        assert "start_desktop" in names
+        assert "stop_desktop" in names

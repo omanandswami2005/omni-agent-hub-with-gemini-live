@@ -19,11 +19,11 @@ from app.tools.cross_client import (
     send_to_desktop,
 )
 from app.tools.desktop_tools import (
-    capture_screen,
-    click_at,
+    desktop_screenshot,
+    desktop_click,
+    desktop_type,
+    desktop_launch,
     get_desktop_tools,
-    open_application,
-    type_text,
 )
 
 _NOW = datetime.now(tz=UTC)
@@ -69,6 +69,13 @@ def _reset_cm_singleton():
     mod._manager = old
 
 
+def _fake_ctx(user_id: str = "u1") -> MagicMock:
+    """Create a mock ToolContext with a user_id."""
+    ctx = MagicMock()
+    ctx.user_id = user_id
+    return ctx
+
+
 # ── send_to_desktop ──────────────────────────────────────────────────
 
 
@@ -76,7 +83,7 @@ class TestSendToDesktop:
     @pytest.mark.asyncio
     async def test_delivers_when_online(self, mock_cm):
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            result = await send_to_desktop("u1", "open_app", '{"app": "calc"}')
+            result = await send_to_desktop("open_app", '{"app": "calc"}', tool_context=_fake_ctx())
         assert result["delivered"] is True
         mock_cm.send_to_client.assert_awaited_once()
 
@@ -84,7 +91,7 @@ class TestSendToDesktop:
     async def test_fails_when_offline(self, mock_cm):
         mock_cm.is_online.return_value = False
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            result = await send_to_desktop("u1", "open_app", "{}")
+            result = await send_to_desktop("open_app", "{}", tool_context=_fake_ctx())
         assert result["delivered"] is False
         assert "not connected" in result["error"]
 
@@ -93,13 +100,13 @@ class TestSendToChrome:
     @pytest.mark.asyncio
     async def test_delivers(self, mock_cm):
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            result = await send_to_chrome("u1", "open_tab", '{"url": "https://x.com"}')
+            result = await send_to_chrome("open_tab", '{"url": "https://x.com"}', tool_context=_fake_ctx())
         assert result["delivered"] is True
 
     @pytest.mark.asyncio
     async def test_sends_correct_client_type(self, mock_cm):
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            await send_to_chrome("u1", "get_page", "{}")
+            await send_to_chrome("get_page", "{}", tool_context=_fake_ctx())
         args = mock_cm.send_to_client.call_args
         assert args[0][1] == ClientType.CHROME
 
@@ -108,7 +115,7 @@ class TestSendToDashboard:
     @pytest.mark.asyncio
     async def test_delivers(self, mock_cm):
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            result = await send_to_dashboard("u1", "show_notification", '{"msg": "hi"}')
+            result = await send_to_dashboard("show_notification", '{"msg": "hi"}', tool_context=_fake_ctx())
         assert result["delivered"] is True
 
 
@@ -116,13 +123,13 @@ class TestNotifyClient:
     @pytest.mark.asyncio
     async def test_sends_notification(self, mock_cm):
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            result = await notify_client("u1", "Hello!", "web")
+            result = await notify_client("Hello!", "web", tool_context=_fake_ctx())
         assert result["delivered"] is True
 
     @pytest.mark.asyncio
     async def test_invalid_client_type(self, mock_cm):
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            result = await notify_client("u1", "Hello!", "invalid_type")
+            result = await notify_client("Hello!", "invalid_type", tool_context=_fake_ctx())
         assert result["delivered"] is False
         assert "Unknown client type" in result["error"]
 
@@ -131,7 +138,7 @@ class TestListConnectedClients:
     @pytest.mark.asyncio
     async def test_returns_clients(self, mock_cm):
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            result = await list_connected_clients("u1")
+            result = await list_connected_clients(tool_context=_fake_ctx())
         assert len(result["clients"]) == 2
         types = {c["client_type"] for c in result["clients"]}
         assert ClientType.WEB in types
@@ -145,7 +152,7 @@ class TestMessageFormat:
     @pytest.mark.asyncio
     async def test_message_has_correct_structure(self, mock_cm):
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            await send_to_desktop("u1", "capture_screen", '{"format": "png"}')
+            await send_to_desktop("capture_screen", '{"format": "png"}', tool_context=_fake_ctx())
         sent_msg = mock_cm.send_to_client.call_args[0][2]
         parsed = json.loads(sent_msg)
         assert parsed["type"] == "cross_client_action"
@@ -153,40 +160,17 @@ class TestMessageFormat:
         assert parsed["payload"]["format"] == "png"
 
 
-# ── Desktop tools ────────────────────────────────────────────────────
+# ── Desktop tools (E2B-based) ────────────────────────────────────────
 
 
 class TestDesktopTools:
-    @pytest.mark.asyncio
-    async def test_capture_screen(self, mock_cm):
-        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            result = await capture_screen("u1")
-        assert result["delivered"] is True
+    """Desktop tools now use E2B service, not cross-client relay."""
 
-    @pytest.mark.asyncio
-    async def test_click_at(self, mock_cm):
-        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            result = await click_at("u1", 100, 200)
-        assert result["delivered"] is True
-        sent = json.loads(mock_cm.send_to_client.call_args[0][2])
-        assert sent["payload"]["x"] == 100
-        assert sent["payload"]["y"] == 200
-
-    @pytest.mark.asyncio
-    async def test_type_text(self, mock_cm):
-        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            result = await type_text("u1", "hello world")
-        assert result["delivered"] is True
-        sent = json.loads(mock_cm.send_to_client.call_args[0][2])
-        assert sent["payload"]["text"] == "hello world"
-
-    @pytest.mark.asyncio
-    async def test_open_application(self, mock_cm):
-        with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            result = await open_application("u1", "calculator")
-        assert result["delivered"] is True
-        sent = json.loads(mock_cm.send_to_client.call_args[0][2])
-        assert sent["payload"]["app_name"] == "calculator"
+    def test_desktop_tools_are_importable(self):
+        assert callable(desktop_screenshot)
+        assert callable(desktop_click)
+        assert callable(desktop_type)
+        assert callable(desktop_launch)
 
 
 # ── FunctionTool instances ───────────────────────────────────────────
@@ -208,17 +192,17 @@ class TestFunctionToolInstances:
 
     def test_desktop_tools_count(self):
         tools = get_desktop_tools()
-        assert len(tools) == 6
+        assert len(tools) == 20
 
     def test_desktop_tool_names(self):
         tools = get_desktop_tools()
         names = {t.name for t in tools}
-        assert "capture_screen" in names
-        assert "click_at" in names
-        assert "type_text" in names
-        assert "open_application" in names
-        assert "manage_files" in names
-        assert "press_key" in names
+        assert "desktop_screenshot" in names
+        assert "desktop_click" in names
+        assert "desktop_type" in names
+        assert "desktop_launch" in names
+        assert "desktop_bash" in names
+        assert "start_desktop" in names
 
 
 # ── Agent factory integration ────────────────────────────────────────
