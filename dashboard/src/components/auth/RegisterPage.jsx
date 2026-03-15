@@ -18,7 +18,7 @@ export function RegisterPage() {
     // Redirect if already signed in
     useEffect(() => {
         if (user) {
-            navigate('/', { replace: true });
+            navigate('/dashboard', { replace: true });
         }
     }, [user, navigate]);
 
@@ -45,7 +45,7 @@ export function RegisterPage() {
         setLoading(true);
         try {
             await signUpWithEmail(email, password);
-            navigate('/');
+            navigate('/dashboard');
         } catch (err) {
             switch (err.code) {
                 case 'auth/email-already-in-use':

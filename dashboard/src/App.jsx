@@ -4,6 +4,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 
+const LandingPage = lazy(() => import('@/pages/LandingPage'));
 const LoginPage = lazy(() => import('@/components/auth/LoginPage'));
 const RegisterPage = lazy(() => import('@/components/auth/RegisterPage'));
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
@@ -28,11 +29,12 @@ export default function App() {
     <BrowserRouter>
       <Suspense fallback={<PageFallback />}>
         <Routes>
+          <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route element={<AuthGuard />}>
             <Route element={<AppShell />}>
-              <Route path="/" element={<DashboardPage />} />
+              <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/session/:sessionId" element={<DashboardPage />} />
               <Route path="/personas" element={<PersonasPage />} />
               <Route path="/mcp-store" element={<MCPStorePage />} />

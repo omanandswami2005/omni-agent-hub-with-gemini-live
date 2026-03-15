@@ -18,7 +18,7 @@ export function LoginPage() {
   // Redirect if already signed in
   useEffect(() => {
     if (user) {
-      navigate('/', { replace: true });
+      navigate('/dashboard', { replace: true });
     }
   }, [user, navigate]);
 
@@ -31,7 +31,7 @@ export function LoginPage() {
     setError(null);
     try {
       await signIn();
-      navigate('/');
+      navigate('/dashboard');
     } catch (err) {
       if (err.code !== 'auth/popup-closed-by-user') {
         setError('Sign-in failed. Please try again.');
@@ -47,7 +47,7 @@ export function LoginPage() {
     setError(null);
     try {
       await signInWithEmail(email, password);
-      navigate('/');
+      navigate('/dashboard');
     } catch (err) {
       switch (err.code) {
         case 'auth/invalid-email':
