@@ -22,6 +22,7 @@ dependencies = [
     "google-cloud-aiplatform[agent_engines]>=1.112.0",
     # --- E2B Sandbox ---
     "e2b-code-interpreter>=1.0.0",
+    "e2b-desktop>=2.3.0",
     # --- Utilities ---
     "python-dotenv>=1.0.0",
     "pydantic>=2.7.0",

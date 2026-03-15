@@ -29,9 +29,11 @@ from app.models.plugin import ToolCapability as TC
 from app.tools.capabilities_tool import get_capability_tools
 from app.tools.code_exec import get_code_exec_tools
 from app.tools.cross_client import get_cross_client_tools
+from app.tools.desktop_tools import get_desktop_tools
 from app.tools.email import get_email_tools
 from app.tools.image_gen import get_image_gen_tools
 from app.tools.search import get_search_tool
+from app.tools.task_tools import get_human_input_tools, get_planned_task_tools
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -49,7 +51,9 @@ T1_TOOL_REGISTRY: dict[str, Callable[[], list]] = {
     TC.MEDIA: get_image_gen_tools,
     TC.COMMUNICATION: get_email_tools,
     TC.DEVICE: lambda: get_cross_client_tools(),
-    TC.WILDCARD: get_capability_tools,  # capability introspection — every persona gets these
+    TC.DESKTOP: get_desktop_tools,
+    TC.TASK: get_planned_task_tools,
+    TC.WILDCARD: lambda: [*get_capability_tools(), *get_human_input_tools()],
 }
 
 # ── Built-in persona ID → capability mapping ─────────────────────────
@@ -59,11 +63,11 @@ T1_TOOL_REGISTRY: dict[str, Callable[[], list]] = {
 _CODE_EXEC_PERSONA_IDS: frozenset[str] = frozenset({"coder", "analyst"})
 
 _PERSONA_CAPABILITIES: dict[str, list[str]] = {
-    "assistant": [TC.COMMUNICATION, TC.DEVICE, TC.WILDCARD],
-    "coder": [TC.CODE_EXECUTION, TC.DEVICE, TC.WILDCARD],
-    "researcher": [TC.SEARCH, TC.DEVICE, TC.WILDCARD],
-    "analyst": [TC.SEARCH, TC.CODE_EXECUTION, TC.DEVICE, TC.WILDCARD],
-    "creative": [TC.MEDIA, TC.DEVICE, TC.WILDCARD],
+    "assistant": [TC.COMMUNICATION, TC.DEVICE, TC.TASK, TC.WILDCARD],
+    "coder": [TC.CODE_EXECUTION, TC.DESKTOP, TC.DEVICE, TC.TASK, TC.WILDCARD],
+    "researcher": [TC.SEARCH, TC.DEVICE, TC.TASK, TC.WILDCARD],
+    "analyst": [TC.SEARCH, TC.CODE_EXECUTION, TC.DESKTOP, TC.DEVICE, TC.TASK, TC.WILDCARD],
+    "creative": [TC.MEDIA, TC.DEVICE, TC.TASK, TC.WILDCARD],
 }
 
 

@@ -22,7 +22,6 @@ from google.adk.agents import Agent
 from app.agents.agent_factory import LIVE_MODEL, create_agent
 from app.agents.cross_client_agent import build_cross_client_agent
 from app.agents.personas import get_default_personas
-from app.agents.task_planner_tool import get_task_planner_tool
 from app.middleware.agent_callbacks import (
     after_agent_callback,
     before_agent_callback,
@@ -32,6 +31,7 @@ from app.middleware.agent_callbacks import (
 )
 from app.models.persona import PersonaResponse
 from app.tools.capabilities_tool import get_capability_tools
+from app.tools.task_tools import get_human_input_tools, get_planned_task_tools
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -98,33 +98,40 @@ def _build_root_instruction(
         f"{persona_text}\n"
         f"{device_section}"
         f"{plugin_section}\n\n"
-        "You also have a plan_task tool. Call it when the user request clearly "
-        "requires MULTIPLE specialists working together (e.g. 'research X, write code, "
-        "then make an image'). Pass only the `task` argument — the full user request. "
-        "The tool returns an ordered plan; then transfer to each "
-        "persona in order.\n\n"
-        "You have two capability introspection tools available to you AND all persona sub-agents:\n"
-        "- **get_capabilities()** — returns a live overview of ALL available tools across T1 (core), "
-        "T2 (plugins/MCPs), and T3 (client-local) tiers. Call this when the user asks "
-        "'what can you do?', 'what tools do you have?', or similar.\n"
-        "- **get_capabilities_of(plugin_name)** — returns the full function schemas (with parameters) "
-        "for a specific plugin, MCP, or tier (pass 'T1', 'T2', or 'T3'). Call this before invoking "
-        "a plugin you haven't used before, or when the user asks about a specific integration.\n\n"
+        "## Planned Task System\n"
+        "You have a TASK PLANNING system. Use it for complex multi-step requests:\n"
+        "- **create_planned_task(description, auto_execute=False)** — Decomposes a complex request into "
+        "a step-by-step plan, stores it in the database, and optionally auto-executes it. "
+        "Returns the plan with step IDs. The task runs ASYNCHRONOUSLY in the background.\n"
+        "- **execute_planned_task(task_id)** — Start executing a planned task after user confirms.\n"
+        "- **get_task_status(task_id)** — Check progress of a running task.\n"
+        "- **list_planned_tasks()** — Show all user's tasks.\n"
+        "- **pause_planned_task(task_id)** / **resume_planned_task(task_id)** / **cancel_planned_task(task_id)**\n\n"
+        "## Human-in-the-Loop\n"
+        "When you need user input during execution:\n"
+        "- **ask_user_confirmation(question)** — Yes/No questions\n"
+        "- **ask_user_choice(question, options)** — Multiple choice\n"
+        "- **ask_user_text(question)** — Free text input\n\n"
+        "## Capability Introspection\n"
+        "- **get_capabilities()** — Overview of ALL available tools (T1/T2/T3).\n"
+        "- **get_capabilities_of(plugin_name)** — Full schemas for a specific plugin/tier.\n\n"
         "Routing rules:\n"
         "0. Greetings, pleasantries, 'how are you?' — answer DIRECTLY, no transfer.\n"
         "0a. 'What can you do?' / 'What tools do you have?' — call get_capabilities() DIRECTLY, no transfer.\n"
         "1. If the user asks to use a specific tool, transfer to the persona that has that tool available!\n"
         "2. If the user names a persona explicitly, transfer to that persona.\n"
-        "3. For complex multi-step requests → call plan_task first.\n"
+        "3. For complex multi-step requests → call create_planned_task first. Show the plan to the user.\n"
+        "   If the user confirms, call execute_planned_task. The task runs in the background.\n"
         "4. For device control, sending to desktop/chrome/dashboard → transfer to device_agent.\n"
-        "5. For plugin/integration tasks (calendar, files, etc.) → transfer to the persona that has those tools, NOT device_agent.\n"
-        "6. For deep research, complex analysis, or when the user EXPLICITLY asks to search/look up something → transfer to researcher.\n"
+        "5. For plugin/integration tasks (calendar, files, etc.) → transfer to the persona with those tools.\n"
+        "6. For deep research → transfer to researcher.\n"
         "7. For code writing or execution → transfer to coder.\n"
         "8. For image generation → transfer to creative.\n"
         "9. For data/charts/analysis → transfer to analyst.\n"
-        "10. For scheduling, email drafts, reminders, calendar, and general tasks → transfer to assistant.\n\n"
-        "IMPORTANT: Do NOT use Google Search or any search for casual conversation, greetings, or questions you can answer from your training knowledge. "
-        "Do NOT invent tool names. You only have transfer_to_agent, plan_task, get_capabilities, and get_capabilities_of."
+        "10. For scheduling, email, general tasks → transfer to assistant.\n"
+        "11. When user asks about task status/progress → call get_task_status or list_planned_tasks.\n\n"
+        "IMPORTANT: Do NOT use Google Search for casual conversation. "
+        "Do NOT invent tool names."
     )
 
 
@@ -182,8 +189,12 @@ def build_root_agent(
     )
     sub_agents.append(device_agent)
 
-    # ── Layer 2: Task planner tool on the root ────────────────────────
-    root_tools = [get_task_planner_tool(), *get_capability_tools()]
+    # ── Layer 2: Task planner + capability tools on the root ─────────
+    root_tools = [
+        *get_planned_task_tools(),
+        *get_human_input_tools(),
+        *get_capability_tools(),
+    ]
 
     # ── Layer 0: Root router ──────────────────────────────────────────
     instruction = _build_root_instruction(persona_names, has_device, tools_map, plugin_summaries)

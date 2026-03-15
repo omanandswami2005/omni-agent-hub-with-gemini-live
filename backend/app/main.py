@@ -114,6 +114,12 @@ async def lifespan(app: FastAPI):
         await get_mcp_manager().shutdown()
     except Exception:
         pass
+    try:
+        from app.services.e2b_desktop_service import get_e2b_desktop_service
+
+        await get_e2b_desktop_service().destroy_all()
+    except Exception:
+        pass
     logger.info("backend_shutting_down")
     # Launch a delayed suicide sequence to avoid hanging on Windows thread pool teardown
     threading.Thread(target=_force_exit_delayed, daemon=True).start()

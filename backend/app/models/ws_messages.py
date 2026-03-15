@@ -287,6 +287,39 @@ class ToolResultMessage(BaseModel):
     error: str = ""
 
 
+# ── Planned Task Messages ────────────────────────────────────────────
+
+
+class TaskInputRequestMessage(BaseModel):
+    """Server → client: agent needs human input during task execution."""
+
+    type: Literal["task_input_request"] = "task_input_request"
+    task_id: str = ""
+    input_id: str
+    step_id: str = ""
+    input_type: str  # "confirmation" | "choice" | "text" | "file"
+    prompt: str
+    options: list[str] = []
+    default_value: str = ""
+
+
+class TaskInputResponseMessage(BaseModel):
+    """Client → server: user provides input for a task."""
+
+    type: Literal["task_input_response"] = "task_input_response"
+    task_id: str = ""
+    input_id: str
+    response: str
+
+
+class TaskActionMessage(BaseModel):
+    """Client → server: pause/resume/cancel/execute a task."""
+
+    type: Literal["task_action"] = "task_action"
+    task_id: str
+    action: str  # "pause" | "resume" | "cancel" | "execute"
+
+
 # ── Discriminated Union ──────────────────────────────────────────────
 
 ClientMessage = Annotated[
@@ -297,7 +330,9 @@ ClientMessage = Annotated[
     | MCPToggleMessage
     | ControlMessage
     | CapabilityUpdateMessage
-    | ToolResultMessage,
+    | ToolResultMessage
+    | TaskInputResponseMessage
+    | TaskActionMessage,
     Field(discriminator="type"),
 ]
 """Any JSON frame the **client** may send (excluding binary audio)."""
@@ -315,7 +350,8 @@ ServerMessage = Annotated[
     | ConnectedMessage
     | CrossClientMessage
     | ClientStatusUpdateMessage
-    | ToolInvocationMessage,
+    | ToolInvocationMessage
+    | TaskInputRequestMessage,
     Field(discriminator="type"),
 ]
 """Any JSON frame the **server** may send (excluding binary audio)."""
@@ -329,6 +365,8 @@ WSMessage = Annotated[
     | ControlMessage
     | CapabilityUpdateMessage
     | ToolResultMessage
+    | TaskInputResponseMessage
+    | TaskActionMessage
     | AuthResponse
     | AgentResponse
     | TranscriptionMessage
@@ -341,7 +379,8 @@ WSMessage = Annotated[
     | ConnectedMessage
     | CrossClientMessage
     | ClientStatusUpdateMessage
-    | ToolInvocationMessage,
+    | ToolInvocationMessage
+    | TaskInputRequestMessage,
     Field(discriminator="type"),
 ]
 """Parse any WS JSON frame: ``TypeAdapter(WSMessage).validate_json(raw)``."""

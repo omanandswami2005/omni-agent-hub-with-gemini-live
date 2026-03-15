@@ -10,6 +10,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { auth } from '@/lib/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { usePipelineStore } from '@/stores/pipelineStore';
+import { useTaskStore } from '@/stores/taskStore';
 import { useClientStore } from '@/stores/clientStore';
 import { useSessionSuggestionStore } from '@/stores/sessionSuggestionStore';
 import { useSessionStore } from '@/stores/sessionStore';
@@ -64,6 +65,9 @@ export function useEventSocket() {
 
                 // Route pipeline events
                 usePipelineStore.getState().handleEvent(msg);
+
+                // Route task events (planned tasks, steps, input requests, desktop status)
+                useTaskStore.getState().handleEvent(msg);
 
                 // Route client status events
                 if (msg.type === 'client_status_update' && msg.clients) {

@@ -47,6 +47,8 @@ class ToolCapability(StrEnum):
     DATA = "data"
     MEDIA = "media"
     DEVICE = "device"
+    DESKTOP = "desktop"
+    TASK = "task"
     WILDCARD = "*"
 
 
