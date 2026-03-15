@@ -10,6 +10,7 @@ from app.api.init import router as init_router
 from app.api.mcp import router as mcp_router
 from app.api.personas import router as personas_router
 from app.api.plugins import router as plugins_router
+from app.api.scheduler import router as scheduler_router
 from app.api.sessions import router as sessions_router
 from app.api.tasks import router as tasks_router
 
@@ -26,3 +27,4 @@ api_router.include_router(plugins_router, prefix="/plugins", tags=["plugins"])
 api_router.include_router(clients_router, prefix="/clients", tags=["clients"])
 api_router.include_router(gallery_router, prefix="/gallery", tags=["gallery"])
 api_router.include_router(tasks_router, prefix="/tasks", tags=["tasks"])
+api_router.include_router(scheduler_router, prefix="/internal/scheduler", tags=["scheduler"])

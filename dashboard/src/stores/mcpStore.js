@@ -25,13 +25,20 @@ export const useMcpStore = create((set, get) => ({
   },
 
   toggleMCP: async (mcpId, enabled) => {
-    await api.post('/plugins/toggle', { plugin_id: mcpId, enabled });
-    set((state) => ({
-      catalog: state.catalog.map((m) => (m.id === mcpId ? { ...m, state: enabled ? 'enabled' : 'available' } : m)),
-      installed: enabled
-        ? [...state.installed, mcpId]
-        : state.installed.filter((id) => id !== mcpId),
-    }));
+    try {
+      await api.post('/plugins/toggle', { plugin_id: mcpId, enabled });
+      set((state) => ({
+        catalog: state.catalog.map((m) => (m.id === mcpId ? { ...m, state: enabled ? 'enabled' : 'available' } : m)),
+        installed: enabled
+          ? [...state.installed, mcpId]
+          : state.installed.filter((id) => id !== mcpId),
+      }));
+    } catch (err) {
+      // Surface backend validation errors (e.g. missing API keys)
+      const detail = err?.response?.data?.detail || err?.message || 'Failed to toggle plugin';
+      set({ error: detail });
+      throw err;
+    }
   },
 
   /** Start OAuth flow for an MCP_OAUTH plugin — opens popup. */

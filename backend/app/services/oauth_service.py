@@ -473,17 +473,32 @@ class OAuthService:
             self._tokens.pop(key, None)
             return None
 
-        # Discover metadata (cached)
-        metadata = await self.discover_oauth_metadata(mcp_server_url)
+        # Use stored token_endpoint from Secret Manager if available (survives redeployment).
+        # Fall back to re-discovery only when Secret Manager data is unavailable.
+        token_endpoint = _sm_token_endpoint
+        issuer = _sm_issuer
+        client_creds: ClientCredentials | None = _sm_client_creds
+
+        if not token_endpoint:
+            try:
+                metadata = await self.discover_oauth_metadata(mcp_server_url)
+                token_endpoint = metadata.token_endpoint
+                issuer = metadata.issuer
+            except Exception:
+                logger.warning(
+                    "oauth_discovery_failed_no_stored_endpoint",
+                    plugin_id=plugin_id,
+                    user_id=user_id,
+                )
+                self._tokens.pop(key, None)
+                return None
 
         # Find client credentials (in-memory cache first, then Secret Manager fallback)
-        client_creds: ClientCredentials | None = None
-        for cache_key, creds in self._client_cache.items():
-            if cache_key[0] == metadata.issuer:
-                client_creds = creds
-                break
         if client_creds is None:
-            client_creds = _sm_client_creds  # restored from Secret Manager after restart
+            for cache_key, creds in self._client_cache.items():
+                if cache_key[0] == issuer:
+                    client_creds = creds
+                    break
         if client_creds is None:
             self._tokens.pop(key, None)
             return None
@@ -498,7 +513,7 @@ class OAuthService:
 
         async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
             resp = await client.post(
-                metadata.token_endpoint,
+                token_endpoint,
                 data=payload,
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
@@ -527,8 +542,8 @@ class OAuthService:
             plugin_id,
             new_tokens,
             client_creds,
-            metadata.token_endpoint,
-            metadata.issuer,
+            token_endpoint,
+            issuer,
         )
 
         logger.info("oauth_token_refreshed", plugin_id=plugin_id, user_id=user_id)

@@ -8,10 +8,10 @@
 
 import { useRef, useEffect, useState } from 'react';
 import { cn } from '@/lib/cn';
-import { Camera, Monitor, X, Maximize2, Minimize2 } from 'lucide-react';
+import { Camera, Monitor, X, Maximize2, Minimize2, RefreshCw } from 'lucide-react';
 import { useDraggable } from '@/hooks/useDraggable';
 
-export default function MediaPreviewOverlay({ stream, source, onClose }) {
+export default function MediaPreviewOverlay({ stream, source, onClose, onFlipCamera }) {
     const videoRef = useRef(null);
     const [isMinimised, setIsMinimised] = useState(false);
     const { containerRef, posStyle, dragHandleProps } = useDraggable();
@@ -74,6 +74,15 @@ export default function MediaPreviewOverlay({ stream, source, onClose }) {
                     </div>
 
                     <div className="flex items-center gap-1">
+                        {source === 'camera' && onFlipCamera && (
+                            <button
+                                onClick={onFlipCamera}
+                                className="rounded p-0.5 hover:bg-white/20"
+                                aria-label="Flip camera"
+                            >
+                                <RefreshCw size={12} className="text-white/80" />
+                            </button>
+                        )}
                         <button
                             onClick={() => setIsMinimised((m) => !m)}
                             className="rounded p-0.5 hover:bg-white/20"

@@ -38,8 +38,10 @@ export function VoiceProvider({ children }) {
     const {
         startCapture,
         stopCapture,
+        flipCamera,
         isCapturing: isVideoActive,
         source: videoSource,
+        facingMode: _facingMode,
         getPreviewStream,
         permissionError: videoError,
         clearError: clearVideoError,
@@ -217,6 +219,7 @@ export function VoiceProvider({ children }) {
             toggleVoice,
             toggleScreen,
             toggleCamera,
+            flipCamera,
             stopPlayback,
             stopCapture,
             stopAll,
@@ -228,7 +231,7 @@ export function VoiceProvider({ children }) {
             isScreenSharing, isCameraOn, isVideoActive, videoSource, getPreviewStream,
             permissionError, clearPermissionError,
             toggleRecording, toggleMute, toggleVoice, toggleScreen, toggleCamera,
-            stopPlayback, stopCapture, stopAll,
+            flipCamera, stopPlayback, stopCapture, stopAll,
         ],
     );
 

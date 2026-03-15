@@ -92,10 +92,9 @@ async def list_messages(
 
     messages = await _events_to_messages(session.events)
 
-    # Update message_count in Firestore to stay in sync with actual message count
-    if messages:
-        with contextlib.suppress(Exception):
-            await svc.update_message_count(session_id, len(messages))
+    # Always sync message_count to actual count (including 0 after redeploy)
+    with contextlib.suppress(Exception):
+        await svc.update_message_count(session_id, len(messages))
 
     return messages
 

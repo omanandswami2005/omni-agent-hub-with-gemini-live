@@ -90,7 +90,7 @@ function RenameSessionModal({ session, onConfirm, onCancel }) {
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: Home, shortcut: ['1'] },
   { to: '/personas', label: 'Personas', icon: Users, shortcut: ['2'] },
-  { to: '/mcp-store', label: 'MCP Store', icon: Store, shortcut: ['3'] },
+  { to: '/mcp-store', label: 'MCP & Plugins', icon: Store, shortcut: ['3'] },
   { id: 'sessions', to: '/sessions', label: 'Sessions', icon: Clock, shortcut: ['4'], hasSublist: true },
   { to: '/clients', label: 'Clients', icon: Monitor, shortcut: ['5'] },
   { to: '/gallery', label: 'Gallery', icon: ImageIcon, shortcut: ['6'] },

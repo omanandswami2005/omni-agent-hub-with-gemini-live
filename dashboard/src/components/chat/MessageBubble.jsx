@@ -5,8 +5,9 @@
 
 import { lazy, Suspense } from 'react';
 import { cn } from '@/lib/cn';
-import { Mic, Bot, Image, AlertCircle, Smartphone } from 'lucide-react';
+import { Mic, Bot, Image, AlertCircle, Smartphone, FileCode } from 'lucide-react';
 import ActionCard from '@/components/chat/ActionCard';
+import MarkdownContent from '@/components/chat/MarkdownContent';
 
 const GenUIRenderer = lazy(() => import('@/components/genui/GenUIRenderer'));
 
@@ -28,6 +29,20 @@ export default function MessageBubble({ message }) {
         <div className="flex items-start gap-2 max-w-[80%] rounded-2xl px-4 py-2.5 text-sm bg-destructive/10 border border-destructive/30 text-destructive">
           <AlertCircle size={15} className="mt-0.5 flex-shrink-0" />
           <span>{content}</span>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Companion card (rich content alongside voice — code, tables) ──
+  if (content_type === 'companion') {
+    return (
+      <div className="flex justify-start mb-3">
+        <div className="mr-2 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-blue-500">
+          <FileCode size={14} />
+        </div>
+        <div className="max-w-[85%] rounded-2xl border border-blue-500/20 bg-blue-500/5 px-4 py-3">
+          <MarkdownContent content={content} />
         </div>
       </div>
     );
@@ -63,7 +78,7 @@ export default function MessageBubble({ message }) {
           </span>
         )}
 
-        {/* Text content */}
+        {/* Text content — uses markdown rendering for code/tables/lists */}
         {content && content_type !== 'genui' && (
           <div
             className={cn(
@@ -75,7 +90,7 @@ export default function MessageBubble({ message }) {
                   : 'bg-muted/60 backdrop-blur-sm border border-border/40',
             )}
           >
-            {content}
+            {isUser ? content : <MarkdownContent content={content} />}
           </div>
         )}
 

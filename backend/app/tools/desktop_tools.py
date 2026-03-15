@@ -279,6 +279,192 @@ async def desktop_upload_file(path: str, content_base64: str, user_id: str = "de
     return {"uploaded": True, "path": result_path, "size": len(content)}
 
 
+async def desktop_download_file(path: str, user_id: str = "default") -> dict:
+    """Download a file from the virtual desktop filesystem.
+
+    Use this when the user asks to retrieve, export, or read a file from
+    the cloud desktop.
+
+    Args:
+        path: File path in the sandbox (e.g. '/home/user/report.pdf').
+        user_id: User identifier.
+
+    Returns:
+        Dict with base64-encoded content, filename and size.
+    """
+    svc = get_e2b_desktop_service()
+    content = await svc.download_file(user_id, path)
+    encoded = base64.b64encode(content).decode("utf-8")
+    filename = path.rsplit("/", 1)[-1] if "/" in path else path
+    return {
+        "filename": filename,
+        "path": path,
+        "content_base64": encoded,
+        "size": len(content),
+    }
+
+
+async def desktop_read_screen(user_id: str = "default") -> dict:
+    """Take a screenshot and describe what's visible on the desktop.
+
+    Perfect for voice interactions: the agent captures the screen and
+    uses vision to describe it back to the user. Use this when a user
+    asks "What's on the screen?" or "Read me what's there."
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        Dict with screenshot (base64) and a request for vision analysis.
+    """
+    svc = get_e2b_desktop_service()
+    raw = await svc.screenshot(user_id)
+    b64 = base64.b64encode(raw).decode("utf-8")
+    return {
+        "screenshot_base64": b64,
+        "instruction": (
+            "Describe the contents of this screenshot to the user. "
+            "Read any visible text, identify open windows, buttons, "
+            "and other UI elements. Be concise but thorough."
+        ),
+    }
+
+
+async def desktop_exec_and_show(
+    command: str,
+    user_id: str = "default",
+) -> dict:
+    """Run a shell command and capture a screenshot of the result.
+
+    Combines desktop_bash + desktop_screenshot in one call — ideal for
+    voice-driven workflows where the user says "run X and show me."
+
+    Args:
+        command: Shell command to execute.
+        user_id: User identifier.
+
+    Returns:
+        Dict with command output AND a screenshot of the desktop state.
+    """
+    svc = get_e2b_desktop_service()
+    cmd_result = await svc.run_command(user_id, command)
+    raw = await svc.screenshot(user_id)
+    b64 = base64.b64encode(raw).decode("utf-8")
+    return {
+        "stdout": cmd_result.get("stdout", ""),
+        "stderr": cmd_result.get("stderr", ""),
+        "exit_code": cmd_result.get("exit_code", -1),
+        "screenshot_base64": b64,
+        "message": "Command executed. Screenshot captured for visual confirmation.",
+    }
+
+
+async def desktop_find_and_click(
+    text_to_find: str,
+    user_id: str = "default",
+) -> dict:
+    """Take a screenshot, locate UI text, and ask the model to click it.
+
+    For voice-driven GUI automation: the user says "click the Submit
+    button" and the agent uses vision to find the element's coordinates
+    then clicks it.
+
+    Args:
+        text_to_find: The text label / button / link to locate on screen.
+        user_id: User identifier.
+
+    Returns:
+        Dict with screenshot and instruction to locate and click the element.
+    """
+    svc = get_e2b_desktop_service()
+    raw = await svc.screenshot(user_id)
+    b64 = base64.b64encode(raw).decode("utf-8")
+    return {
+        "screenshot_base64": b64,
+        "text_to_find": text_to_find,
+        "instruction": (
+            f"Look at this screenshot and find the UI element containing "
+            f"'{text_to_find}'. Determine its (x, y) center coordinates, "
+            f"then call desktop_click(x, y) to click it. If the element "
+            f"is not visible, tell the user."
+        ),
+    }
+
+
+async def desktop_list_files(
+    directory: str = "/home/user",
+    pattern: str = "",
+    user_id: str = "default",
+) -> dict:
+    """List files in a directory on the virtual desktop.
+
+    Voice-friendly: user says "what files are on the desktop?" or
+    "show me the CSV files in Downloads."
+
+    Args:
+        directory: Directory to list (default: /home/user).
+        pattern: Optional glob pattern to filter (e.g. '*.csv', '*.py').
+        user_id: User identifier.
+
+    Returns:
+        Dict with list of files and their sizes.
+    """
+    svc = get_e2b_desktop_service()
+    cmd = f"ls -la {directory}"
+    if pattern:
+        cmd = f"find {directory} -maxdepth 1 -name '{pattern}' -exec ls -la {{}} \\;"
+    result = await svc.run_command(user_id, cmd)
+    stdout = result.get("stdout", "")
+    lines = [line.strip() for line in stdout.strip().splitlines() if line.strip() and not line.startswith("total")]
+    return {
+        "directory": directory,
+        "pattern": pattern or "*",
+        "files": lines,
+        "count": len(lines),
+    }
+
+
+async def desktop_multi_step(
+    steps: list[str],
+    user_id: str = "default",
+) -> dict:
+    """Execute a sequence of shell commands on the desktop.
+
+    For complex voice instructions like "install pandas, create a script
+    that loads my CSV, and run it." Each step is a separate command.
+
+    Args:
+        steps: List of shell commands to execute in order.
+        user_id: User identifier.
+
+    Returns:
+        Dict with results for each step and a final screenshot.
+    """
+    svc = get_e2b_desktop_service()
+    results = []
+    for i, cmd in enumerate(steps):
+        r = await svc.run_command(user_id, cmd)
+        results.append({
+            "step": i + 1,
+            "command": cmd,
+            "stdout": r.get("stdout", ""),
+            "stderr": r.get("stderr", ""),
+            "exit_code": r.get("exit_code", -1),
+        })
+        if r.get("exit_code", -1) != 0:
+            break  # Stop on failure
+
+    raw = await svc.screenshot(user_id)
+    b64 = base64.b64encode(raw).decode("utf-8")
+    return {
+        "steps_completed": len(results),
+        "steps_total": len(steps),
+        "results": results,
+        "screenshot_base64": b64,
+        "all_success": all(r["exit_code"] == 0 for r in results),
+    }
+
+
 # ── Tool Registration ─────────────────────────────────────────────────
 
 _DESKTOP_TOOLS: list[FunctionTool] | None = None
@@ -303,5 +489,12 @@ def get_desktop_tools() -> list[FunctionTool]:
             FunctionTool(desktop_get_windows),
             FunctionTool(desktop_bash),
             FunctionTool(desktop_upload_file),
+            # New voice-enhanced tools
+            FunctionTool(desktop_download_file),
+            FunctionTool(desktop_read_screen),
+            FunctionTool(desktop_exec_and_show),
+            FunctionTool(desktop_find_and_click),
+            FunctionTool(desktop_list_files),
+            FunctionTool(desktop_multi_step),
         ]
     return _DESKTOP_TOOLS

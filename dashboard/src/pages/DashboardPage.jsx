@@ -10,12 +10,14 @@ import GenUIRenderer from '@/components/genui/GenUIRenderer';
 import PersonaCard from '@/components/persona/PersonaCard';
 import ClientStatusBar from '@/components/clients/ClientStatusBar';
 import PipelineMonitor from '@/components/chat/PipelineMonitor';
+import DesktopViewer from '@/components/sandbox/DesktopViewer';
 import { useVoice } from '@/hooks/useVoiceProvider';
 import { useChatStore } from '@/stores/chatStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { usePersonaStore } from '@/stores/personaStore';
 import { useClientStore } from '@/stores/clientStore';
 import { usePipelineStore } from '@/stores/pipelineStore';
+import { useTaskStore } from '@/stores/taskStore';
 
 export default function DashboardPage() {
     useDocumentTitle('Dashboard');
@@ -87,6 +89,7 @@ export default function DashboardPage() {
     const activePipeline = usePipelineStore((s) => s.pipeline);
     const pipelineHistory = usePipelineStore((s) => s.history);
     const hasPipeline = !!activePipeline || pipelineHistory.length > 0;
+    const desktop = useTaskStore((s) => s.desktop);
 
     // Auto-switch to pipeline tab when a pipeline starts
     useEffect(() => {
@@ -145,6 +148,18 @@ export default function DashboardPage() {
                         )}
                         {activePipeline && (
                             <span className="ml-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-green-400" />
+                        )}
+                    </button>
+                    <button
+                        onClick={() => setSidebarTab('desktop')}
+                        className={`relative flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${sidebarTab === 'desktop'
+                            ? 'bg-primary text-primary-foreground'
+                            : 'text-muted-foreground hover:bg-muted'
+                            }`}
+                    >
+                        Desktop
+                        {desktop?.status === 'running' && (
+                            <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-green-400" />
                         )}
                     </button>
                 </div>
@@ -217,6 +232,10 @@ export default function DashboardPage() {
                                 <GenUIRenderer type={lastGenUI.genui_type} data={lastGenUI.genui_data} />
                             </div>
                         )}
+                    </div>
+                ) : sidebarTab === 'desktop' ? (
+                    <div className="overflow-y-auto p-4">
+                        <DesktopViewer />
                     </div>
                 ) : (
                     <div className="overflow-y-auto p-4">

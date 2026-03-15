@@ -5,14 +5,12 @@
 import { useState, useEffect } from 'react';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import MCPStoreGrid from '@/components/mcp/MCPStoreGrid';
-import MCPCategoryNav from '@/components/mcp/MCPCategoryNav';
 import MCPDetail from '@/components/mcp/MCPDetail';
 import { useMcpStore } from '@/stores/mcpStore';
 
 export default function MCPStorePage() {
-  useDocumentTitle('MCP Store');
-  const { catalog, loading, fetchCatalog, fetchEnabled, toggleMCP } = useMcpStore();
-  const [category, setCategory] = useState('All');
+  useDocumentTitle('MCP & Plugins');
+  const { catalog, loading, error, fetchCatalog, fetchEnabled, toggleMCP } = useMcpStore();
   const [selected, setSelected] = useState(null);
   const [search, setSearch] = useState('');
 
@@ -22,15 +20,18 @@ export default function MCPStorePage() {
   }, [fetchCatalog, fetchEnabled]);
 
   const filtered = catalog.filter((s) => {
-    if (category !== 'All' && s.category !== category) return false;
     if (search && !s.name.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
 
   const handleToggle = async (mcpId, enabled) => {
-    await toggleMCP(mcpId, enabled);
-    // update selected detail if open
-    if (selected?.id === mcpId) setSelected((prev) => ({ ...prev, state: enabled ? 'enabled' : 'available' }));
+    try {
+      await toggleMCP(mcpId, enabled);
+      if (selected?.id === mcpId) setSelected((prev) => ({ ...prev, state: enabled ? 'enabled' : 'available' }));
+    } catch {
+      // Re-fetch catalog to reset UI state after failed toggle
+      fetchCatalog();
+    }
   };
 
   if (selected) {
@@ -44,15 +45,19 @@ export default function MCPStorePage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">MCP Store</h1>
+        <h1 className="text-2xl font-bold">MCP &amp; Plugins</h1>
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search servers…"
+          placeholder="Search…"
           className="w-64 rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
         />
       </div>
-      <MCPCategoryNav active={category} onChange={setCategory} />
+      {error && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+          {error}
+        </div>
+      )}
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : filtered.length === 0 ? (

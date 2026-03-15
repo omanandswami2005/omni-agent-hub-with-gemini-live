@@ -61,6 +61,7 @@ function ShellLayout() {
           stream={voice.getPreviewStream()}
           source={voice.videoSource}
           onClose={voice.videoSource === 'screen' ? voice.toggleScreen : voice.toggleCamera}
+          onFlipCamera={voice.videoSource === 'camera' ? voice.flipCamera : undefined}
         />
       )}
 

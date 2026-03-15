@@ -34,6 +34,7 @@ class ContentType(StrEnum):
     AUDIO = "audio"
     GENUI = "genui"
     TRANSCRIPTION = "transcription"
+    COMPANION = "companion"  # Rich text sent alongside voice (code, tables, etc.)
 
 
 class TranscriptionDirection(StrEnum):

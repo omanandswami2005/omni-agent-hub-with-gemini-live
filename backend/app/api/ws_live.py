@@ -943,6 +943,26 @@ def _classify_tool(tool_name: str) -> tuple[ActionKind, str]:
 _call_id_counter = 0
 
 
+_RICH_CONTENT_PATTERNS = (
+    re.compile(r"```[\w]*\n", re.MULTILINE),  # fenced code blocks
+    re.compile(r"^\|.+\|.+\|$", re.MULTILINE),  # markdown tables
+    re.compile(r"^#{1,3} ", re.MULTILINE),  # markdown headings
+    re.compile(r"^\d+\.\s.+\n\d+\.\s", re.MULTILINE),  # numbered lists (3+ items)
+    re.compile(r"^- .+\n- .+\n- ", re.MULTILINE),  # bullet lists (3+ items)
+)
+
+
+def _has_rich_content(text: str) -> bool:
+    """Return True if *text* contains content that should be rendered
+    with markdown formatting (code blocks, tables, long lists, etc.).
+
+    Used to decide whether to emit a COMPANION card alongside voice.
+    """
+    if len(text) < 20:
+        return False
+    return any(p.search(text) for p in _RICH_CONTENT_PATTERNS)
+
+
 def _try_parse_genui(text: str) -> dict | None:
     """Detect structured GenUI JSON in agent text output.
 
@@ -1029,6 +1049,19 @@ async def _process_event(
                 json_str = msg.model_dump_json()
                 await websocket.send_text(json_str)
                 await _publish(bus, user_id, json_str)
+
+                # Companion card: when text contains code blocks, tables,
+                # or other rich content that can't be conveyed by voice alone,
+                # send an additional COMPANION message so the dashboard can
+                # render it with syntax highlighting / markdown.
+                if not genui_payload and _has_rich_content(part.text):
+                    companion = AgentResponse(
+                        content_type=ContentType.COMPANION,
+                        data=part.text,
+                    )
+                    cjson = companion.model_dump_json()
+                    await websocket.send_text(cjson)
+                    await _publish(bus, user_id, cjson)
 
     # ── Transcription ─────────────────────────────────────────────
     if event.input_transcription and event.input_transcription.text:

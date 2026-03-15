@@ -49,14 +49,23 @@ async def list_enabled(user: CurrentUser):
 
 @router.post("/toggle")
 async def toggle_plugin(body: PluginToggle, user: CurrentUser):
-    """Enable or disable a plugin for the user.
-
-    .. todo:: Add per-user ownership / admin check for multi-tenant deployment.
-    """
+    """Enable or disable a plugin for the user."""
     registry = get_plugin_registry()
     manifest = registry.get_manifest(body.plugin_id)
     if manifest is None:
         raise HTTPException(status_code=404, detail=f"Plugin '{body.plugin_id}' not found")
+
+    # Block activation when required API keys are missing
+    if body.enabled and manifest.requires_auth and manifest.env_keys:
+        user_secrets = registry._user_secrets.get(user.uid, {}).get(body.plugin_id) or {}
+        missing = [k for k in manifest.env_keys if not user_secrets.get(k)]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required API keys for {manifest.name}: {missing}. "
+                f"Please add them in the plugin settings first.",
+            )
+
     enabled = await registry.toggle_plugin(user.uid, body)
     return {"plugin_id": body.plugin_id, "enabled": enabled}
 

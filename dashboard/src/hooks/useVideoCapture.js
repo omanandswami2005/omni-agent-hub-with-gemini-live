@@ -93,11 +93,13 @@ export function useVideoCapture({ onFrameData, fps = DEFAULT_FPS, quality = DEFA
     const [source, setSource] = useState(null);
     const [isCapturing, setIsCapturing] = useState(false);
     const [permissionError, setPermissionError] = useState(null); // { type, device, title, message }
+    const [facingMode, setFacingMode] = useState('user'); // 'user' (front) or 'environment' (back)
     const streamRef = useRef(null);
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
     const intervalRef = useRef(null);
     const onFrameDataRef = useRef(onFrameData);
+    const facingModeRef = useRef('user');
 
     useEffect(() => { onFrameDataRef.current = onFrameData; }, [onFrameData]);
 
@@ -124,7 +126,7 @@ export function useVideoCapture({ onFrameData, fps = DEFAULT_FPS, quality = DEFA
             const stream = src === 'screen'
                 ? await navigator.mediaDevices.getDisplayMedia({ video: true })
                 : await navigator.mediaDevices.getUserMedia({
-                    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+                    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: facingModeRef.current },
                 });
 
             streamRef.current = stream;
@@ -206,9 +208,20 @@ export function useVideoCapture({ onFrameData, fps = DEFAULT_FPS, quality = DEFA
 
     const getPreviewStream = useCallback(() => streamRef.current, []);
 
+    // ── Flip Camera (front ↔ back) ────────────────────────────────
+    const flipCamera = useCallback(async () => {
+        if (source !== 'camera' || !isCapturing) return;
+        const next = facingModeRef.current === 'user' ? 'environment' : 'user';
+        facingModeRef.current = next;
+        setFacingMode(next);
+        // Restart capture with new facing mode
+        stopCapture();
+        await startCapture('camera');
+    }, [source, isCapturing, stopCapture, startCapture]);
+
     useEffect(() => {
         return () => stopCapture();
     }, [stopCapture]);
 
-    return { startCapture, stopCapture, isCapturing, source, getPreviewStream, permissionError, clearError };
+    return { startCapture, stopCapture, flipCamera, isCapturing, source, facingMode, getPreviewStream, permissionError, clearError };
 }

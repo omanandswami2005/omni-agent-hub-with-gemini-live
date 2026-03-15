@@ -28,6 +28,14 @@ export const useChatStore = create((set, get) => ({
    */
   addAction: (action) => {
     if (get()._isLoadingHistory) return null;
+    // Deduplicate by call_id — prevents double-render when both /ws/live
+    // and /ws/chat deliver the same tool_call event.
+    if (action.call_id) {
+      const existing = get().messages.find(
+        (m) => m.type === 'action' && m.call_id === action.call_id,
+      );
+      if (existing) return existing.id;
+    }
     const id = nextId();
     set((s) => ({
       messages: [
