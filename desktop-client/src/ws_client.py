@@ -32,6 +32,7 @@ class DesktopWSClient:
         self.ws: websockets.WebSocketClientProtocol | None = None
         self.connected = False
         self._should_run = False
+        self._run_task = None
 
         self.gui = None
         self.audio_streamer = AudioStreamer(self)
@@ -55,6 +56,10 @@ class DesktopWSClient:
             self.gui.toggle_mic_signal.connect(self._on_gui_toggle_mic)
         if hasattr(self.gui, "send_screen_signal"):
             self.gui.send_screen_signal.connect(self._on_gui_send_screen)
+        if hasattr(self.gui, "connect_signal"):
+            self.gui.connect_signal.connect(self._on_gui_connect_toggled)
+        if hasattr(self.gui, "interrupt_signal"):
+            self.gui.interrupt_signal.connect(self._on_gui_interrupt)
 
     def _on_gui_send_text(self, text: str):
         """Handle text sent from GUI."""
@@ -71,11 +76,6 @@ class DesktopWSClient:
     def _on_gui_send_screen(self, b64_img: str):
         """Handle periodic screen sharing from GUI."""
         if self.connected:
-            # Send it as a tool result or specialized message type.
-            # In a full multimodal setup we could send a specialized message,
-            # here we'll send a text message with the image attached, or
-            # a specific 'screen_frame' cross client event.
-            # Using 'user_message'/'text' format to stream image to agent.
             msg = {
                 "type": "text",
                 "content": "[Screen Frame Update]",
@@ -88,6 +88,20 @@ class DesktopWSClient:
             }
             asyncio.create_task(self.send_json(msg))
 
+    def _on_gui_connect_toggled(self, connect: bool):
+        """Handle connection toggle from GUI."""
+        if connect and not self.connected:
+            self.start()
+        elif not connect and self.connected:
+            asyncio.create_task(self.disconnect())
+
+    def _on_gui_interrupt(self):
+        """Handle interrupt signal from GUI to stop ongoing agent tasks/audio."""
+        if self.connected:
+            # Tell server to interrupt ongoing text/audio generation
+            asyncio.create_task(self.send_json({"type": "client_message", "action": "interrupt"}))
+            # Also cancel local ongoing tasks locally
+            asyncio.create_task(self.cancel_all())
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -128,9 +142,14 @@ class DesktopWSClient:
 
         await self.send_json(auth_msg)
 
+    def start(self):
+        """Starts the run loop via asyncio task if not running."""
+        if not self._should_run:
+             self._should_run = True
+             self._run_task = asyncio.create_task(self.run())
+
     async def run(self) -> None:
         """Connect and listen with auto-reconnect on failure."""
-        self._should_run = True
         backoff = _INITIAL_BACKOFF
 
         while self._should_run:
@@ -195,6 +214,9 @@ class DesktopWSClient:
             await self.ws.close()
             self.ws = None
         logger.info("Disconnected from server")
+
+        if self._run_task and not self._run_task.done():
+            self._run_task.cancel()
 
     # ── Cancellation ──────────────────────────────────────────────────
 

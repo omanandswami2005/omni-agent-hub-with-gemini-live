@@ -90,6 +90,8 @@ class AudioStreamer:
             )
             self.output_stream.start()
 
+            loop = asyncio.get_running_loop()
+
             while True:
                 # Wait for next audio chunk
                 audio_bytes = await self.playback_queue.get()
@@ -97,9 +99,9 @@ class AudioStreamer:
                 # Convert bytes to numpy array
                 data = np.frombuffer(audio_bytes, dtype=self.dtype)
 
-                # Write to stream
+                # Write to stream (offloaded to thread executor to prevent blocking)
                 if self.output_stream and not self.output_stream.closed:
-                    self.output_stream.write(data)
+                    await loop.run_in_executor(None, self.output_stream.write, data)
 
                 self.playback_queue.task_done()
 

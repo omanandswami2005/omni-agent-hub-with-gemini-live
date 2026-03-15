@@ -14,6 +14,8 @@ class MainWindow(QMainWindow):
     toggle_mic_signal = pyqtSignal(bool)
     toggle_screen_signal = pyqtSignal(bool)
     send_screen_signal = pyqtSignal(str) # For sending base64 image
+    connect_signal = pyqtSignal(bool) # True for connect, False for disconnect
+    interrupt_signal = pyqtSignal()
 
     # Signal to prompt for confirmation from background thread
     security_prompt_signal = pyqtSignal(str, str, object)
@@ -21,16 +23,24 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Omni Desktop Agent")
-        self.resize(500, 600)
+        self.resize(500, 650)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout(self.central_widget)
 
-        # Status Label
+        # Connection / Status Area
+        self.status_layout = QHBoxLayout()
         self.status_label = QLabel("Status: Disconnected")
         self.status_label.setStyleSheet("color: red; font-weight: bold;")
-        self.layout.addWidget(self.status_label)
+        self.status_layout.addWidget(self.status_label)
+
+        self.connect_button = QPushButton("Connect")
+        self.connect_button.setCheckable(True)
+        self.connect_button.clicked.connect(self._on_connect_toggled)
+        self.status_layout.addWidget(self.connect_button)
+
+        self.layout.addLayout(self.status_layout)
 
         # Chat Area
         self.chat_display = QTextEdit()
@@ -62,6 +72,10 @@ class MainWindow(QMainWindow):
         self.screen_button.clicked.connect(self._on_screen_toggled)
         self.controls_layout.addWidget(self.screen_button)
 
+        self.interrupt_button = QPushButton("Interrupt Agent")
+        self.interrupt_button.clicked.connect(self._on_interrupt_clicked)
+        self.controls_layout.addWidget(self.interrupt_button)
+
         self.layout.addLayout(self.controls_layout)
 
         # Connect internal signal
@@ -72,6 +86,14 @@ class MainWindow(QMainWindow):
         self.screen_timer.timeout.connect(self._capture_and_send_screen)
         # Capture screen every 3 seconds when active
         self.screen_interval_ms = 3000
+
+    def _on_connect_toggled(self, checked):
+        if checked:
+            self.connect_button.setText("Disconnect")
+            self.connect_signal.emit(True)
+        else:
+            self.connect_button.setText("Connect")
+            self.connect_signal.emit(False)
 
     def _on_send_clicked(self):
         text = self.text_input.text().strip()
@@ -100,6 +122,10 @@ class MainWindow(QMainWindow):
             self.screen_timer.stop()
         self.toggle_screen_signal.emit(checked)
 
+    def _on_interrupt_clicked(self):
+        self.append_chat("System: Interrupting agent...")
+        self.interrupt_signal.emit()
+
     def _capture_and_send_screen(self):
         try:
             # Capture full screen using screen_plugin utility
@@ -115,13 +141,20 @@ class MainWindow(QMainWindow):
         if connected:
             self.status_label.setText("Status: Connected")
             self.status_label.setStyleSheet("color: green; font-weight: bold;")
+            self.connect_button.setChecked(True)
+            self.connect_button.setText("Disconnect")
         else:
             self.status_label.setText("Status: Disconnected")
             self.status_label.setStyleSheet("color: red; font-weight: bold;")
-            # Stop screen share on disconnect
+            self.connect_button.setChecked(False)
+            self.connect_button.setText("Connect")
+            # Stop screen share and mic on disconnect
             if self.screen_timer.isActive():
                 self.screen_button.setChecked(False)
                 self._on_screen_toggled(False)
+            if self.mic_button.isChecked():
+                self.mic_button.setChecked(False)
+                self._on_mic_toggled(False)
 
     def append_chat(self, text: str):
         self.chat_display.append(text)

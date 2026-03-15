@@ -102,9 +102,12 @@ def connect(
     _client.set_gui(main_window) # Inject GUI to client
     main_window.show()
 
-    # Create run task
+    # We do NOT automatically start the client connection here.
+    # The user should press the 'Connect' button in the GUI to start the session.
+    # We just run an idle watcher to keep the Qt loop alive and handle closing.
+
     with loop:
-        task = loop.create_task(_run_client(_client, main_window))
+        task = loop.create_task(_run_app_watcher(_client, main_window))
         try:
             loop.run_forever()
         except KeyboardInterrupt:
@@ -114,24 +117,16 @@ def connect(
             _client._should_run = False
 
 
-async def _run_client(client: DesktopWSClient, window: MainWindow) -> None:
-    """Run WS client"""
-    # Create the task for running client loop
-    run_task = asyncio.create_task(client.run())
-
-    # Wait a tiny bit for the run loop to start and set _should_run
-    await asyncio.sleep(0.1)
-
-    while client._should_run or not run_task.done():
+async def _run_app_watcher(client: DesktopWSClient, window: MainWindow) -> None:
+    """Run watcher for app lifetime."""
+    while True:
          # Need to break when window is closed
          if window.isHidden():
               client._should_run = False
+              await client.disconnect()
               break
          await asyncio.sleep(0.5)
 
-    await client.disconnect()
-    if not run_task.done():
-        run_task.cancel()
     QApplication.instance().quit()
 
 
