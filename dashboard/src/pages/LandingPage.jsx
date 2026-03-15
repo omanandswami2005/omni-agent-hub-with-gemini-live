@@ -130,7 +130,7 @@ const LandingPage = () => {
               { icon: <Monitor className="w-10 h-10" />, name: "Web Dashboard", desc: "GenUI & Analytics" },
               { icon: <Smartphone className="w-10 h-10" />, name: "Mobile PWA", desc: "Vision & Voice" },
               { icon: <Box className="w-10 h-10" />, name: "Desktop App", desc: "Local Execution" },
-              { icon: <Settings className="w-10 h-10" />, name: "Smart Glasses", desc: "AR Overlay" }
+              { icon: <Settings className="w-10 h-10" />, name: "Protocol Ready", desc: "WebSokets Based" }
             ].map((device, i) => (
               <div key={i} className="relative z-10 flex flex-col items-center p-8 rounded-2xl bg-zinc-900/50 border border-white/10 backdrop-blur-sm hover:border-purple-500/50 transition-colors group">
                 <div className="w-20 h-20 rounded-full bg-black border border-white/10 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-500 group-hover:shadow-[0_0_30px_rgba(168,85,247,0.3)] text-zinc-300 group-hover:text-white">

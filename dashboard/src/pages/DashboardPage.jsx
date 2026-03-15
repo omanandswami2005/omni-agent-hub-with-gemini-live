@@ -2,7 +2,7 @@
  * Page: DashboardPage — Main dashboard with chat panel and activity overview.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import ChatPanel from '@/components/chat/ChatPanel';
@@ -91,8 +91,9 @@ export default function DashboardPage() {
     const pipelineHistory = usePipelineStore((s) => s.history);
     const hasPipeline = !!activePipeline || pipelineHistory.length > 0;
     const desktop = useTaskStore((s) => s.desktop);
-    const taskList = useTaskStore((s) => s.getTaskList());
-    const hasRunningTask = useTaskStore((s) => s.hasRunningTask());
+    const tasks = useTaskStore((s) => s.tasks);
+    const taskList = useMemo(() => Object.values(tasks).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')), [tasks]);
+    const hasRunningTask = useMemo(() => Object.values(tasks).some((t) => t.status === 'running'), [tasks]);
     const hasTasks = taskList.length > 0;
     const hasActivity = hasPipeline || hasTasks;
 

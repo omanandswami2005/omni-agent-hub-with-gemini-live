@@ -10,7 +10,7 @@ import { api } from '@/lib/api';
 import { useTaskStore } from '@/stores/taskStore';
 import { ListTodo, Play, Pause, X, ChevronRight, ChevronLeft, Clock, CheckCircle2, AlertCircle, Loader2, User, Zap, RefreshCw } from 'lucide-react';
 import HumanInputCard from './HumanInputCard';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 const STATUS_CONFIG = {
     pending: { icon: Clock, color: 'text-muted-foreground', bg: 'bg-muted/30', label: 'Pending', ring: 'ring-muted-foreground/30' },
@@ -133,7 +133,8 @@ function TaskCard({ task, isActive, onClick }) {
 }
 
 function TaskDetail({ task }) {
-    const pendingInputs = useTaskStore((s) => s.getInputsForTask(task.id));
+    const allPendingInputs = useTaskStore((s) => s.pendingInputs);
+    const pendingInputs = useMemo(() => Object.values(allPendingInputs).filter((i) => i.taskId === task.id), [allPendingInputs, task.id]);
     const [expanded, setExpanded] = useState(true);
 
     const handleAction = useCallback(async (action) => {
@@ -263,7 +264,8 @@ function TaskDetail({ task }) {
 }
 
 export default function TaskPanel() {
-    const tasks = useTaskStore((s) => s.getTaskList());
+    const rawTasks = useTaskStore((s) => s.tasks);
+    const tasks = useMemo(() => Object.values(rawTasks).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')), [rawTasks]);
     const activeTaskId = useTaskStore((s) => s.activeTaskId);
     const setActiveTask = useTaskStore((s) => s.setActiveTask);
 
