@@ -2,6 +2,7 @@
 
 Provides FunctionTools for agents to interact with a virtual desktop:
   - Create/destroy desktop sandbox
+  - Start/stop screen streaming to Live API (agent vision)
   - Screenshots, mouse, keyboard
   - App launching, URL browsing
   - File operations, shell commands
@@ -11,6 +12,7 @@ These tools are registered under the 'desktop' capability tag.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 
 from google.adk.tools import FunctionTool
@@ -19,6 +21,89 @@ from app.services.e2b_desktop_service import get_e2b_desktop_service
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Pending-screenshot queue (drained by ws_live._process_event)
+# ---------------------------------------------------------------------------
+_pending_screenshots: dict[str, list[dict]] = {}
+
+SCREENSHOT_TOOL_NAMES = frozenset({
+    "desktop_screenshot",
+    "desktop_exec_and_show",
+    "desktop_multi_step",
+})
+
+
+def _queue_screenshot(user_id: str, b64: str, mime_type: str = "image/png", description: str = "") -> None:
+    _pending_screenshots.setdefault(user_id, []).append({
+        "tool_name": "desktop_screenshot",
+        "image_base64": b64,
+        "mime_type": mime_type,
+        "description": description,
+    })
+
+
+def drain_pending_screenshots(user_id: str) -> list[dict]:
+    return _pending_screenshots.pop(user_id, [])
+
+
+# ---------------------------------------------------------------------------
+# E2B → Live API screen streaming (server-side screenshot polling)
+# ---------------------------------------------------------------------------
+# When streaming is active, a background task captures E2B screenshots at
+# ~1 FPS and pushes them into the Gemini Live session via the queue's
+# send_realtime(). This gives the agent real-time vision of the cloud desktop
+# so tools like desktop_click(x, y) become usable.
+#
+# The queue reference is stored per-user by ws_live.py when it creates the
+# LiveRequestQueue for the session.
+_active_streams: dict[str, asyncio.Task] = {}  # user_id → task
+_stream_queues: dict[str, object] = {}  # user_id → LiveRequestQueue
+
+
+def register_live_queue(user_id: str, queue: object) -> None:
+    """Called by ws_live.py to register the LiveRequestQueue for a user."""
+    _stream_queues[user_id] = queue
+
+
+def unregister_live_queue(user_id: str) -> None:
+    """Called by ws_live.py on disconnect to clean up."""
+    _stream_queues.pop(user_id, None)
+    _stop_streaming(user_id)
+
+
+def _stop_streaming(user_id: str) -> bool:
+    task = _active_streams.pop(user_id, None)
+    if task and not task.done():
+        task.cancel()
+        return True
+    return False
+
+
+async def _stream_loop(user_id: str, fps: float = 1.0) -> None:
+    """Background coroutine: screenshot E2B desktop → send_realtime to Live API."""
+    from google.genai import types
+
+    interval = 1.0 / fps
+    svc = get_e2b_desktop_service()
+    logger.info("e2b_stream_started", user_id=user_id, fps=fps)
+    try:
+        while True:
+            queue = _stream_queues.get(user_id)
+            if queue is None:
+                logger.info("e2b_stream_no_queue", user_id=user_id)
+                break
+            try:
+                img_bytes = await svc.screenshot(user_id)
+                blob = types.Blob(mime_type="image/png", data=img_bytes)
+                queue.send_realtime(blob)
+            except Exception:
+                logger.warning("e2b_stream_frame_error", user_id=user_id, exc_info=True)
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        logger.info("e2b_stream_stopped", user_id=user_id)
 
 
 # ── Desktop Lifecycle ─────────────────────────────────────────────────
@@ -49,12 +134,15 @@ async def start_desktop(user_id: str = "default") -> dict:
 async def stop_desktop(user_id: str = "default") -> dict:
     """Stop and destroy the user's cloud desktop sandbox.
 
+    Also stops screen streaming if active.
+
     Args:
         user_id: User identifier.
 
     Returns:
         Confirmation of destruction.
     """
+    _stop_streaming(user_id)
     svc = get_e2b_desktop_service()
     destroyed = await svc.destroy_desktop(user_id)
     return {"destroyed": destroyed, "message": "Desktop sandbox destroyed." if destroyed else "No active desktop."}
@@ -80,6 +168,68 @@ async def desktop_status(user_id: str = "default") -> dict:
     }
 
 
+# ── Screen Streaming (E2B → Gemini Live API vision) ──────────────────
+
+
+async def desktop_start_streaming(fps: float = 1.0, user_id: str = "default") -> dict:
+    """Start streaming the cloud desktop screen to the AI agent (vision).
+
+    This captures screenshots at the specified FPS and feeds them directly
+    into the Gemini Live API as video input. Once streaming, the agent can
+    SEE the desktop in real-time and perform actions like desktop_click(x, y)
+    accurately.
+
+    Call this after start_desktop() so there is an active sandbox.
+
+    Args:
+        fps: Frames per second (0.5–2.0 recommended). Default 1.0.
+        user_id: User identifier.
+
+    Returns:
+        Streaming status.
+    """
+    fps = max(0.5, min(fps, 2.0))
+    queue = _stream_queues.get(user_id)
+    if queue is None:
+        return {"streaming": False, "error": "No active Live API session. Connect via voice first."}
+
+    svc = get_e2b_desktop_service()
+    info = await svc.get_desktop_info(user_id)
+    if not info:
+        return {"streaming": False, "error": "No active desktop. Call start_desktop() first."}
+
+    _stop_streaming(user_id)
+    task = asyncio.create_task(_stream_loop(user_id, fps=fps), name=f"e2b_stream_{user_id}")
+    _active_streams[user_id] = task
+    return {
+        "streaming": True,
+        "fps": fps,
+        "message": (
+            f"Desktop screen streaming started at {fps} FPS. "
+            "You can now SEE the desktop. Use desktop_click(x, y) to interact. "
+            "Call desktop_stop_streaming() when done."
+        ),
+    }
+
+
+async def desktop_stop_streaming(user_id: str = "default") -> dict:
+    """Stop streaming the cloud desktop screen to the AI agent.
+
+    Saves resources when the agent doesn't need to see the desktop.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        Confirmation.
+    """
+    stopped = _stop_streaming(user_id)
+    return {
+        "streaming": False,
+        "message": "Desktop streaming stopped." if stopped else "No active stream.",
+    }
+
+
 # ── Screenshot ────────────────────────────────────────────────────────
 
 
@@ -95,11 +245,8 @@ async def desktop_screenshot(user_id: str = "default") -> dict:
     svc = get_e2b_desktop_service()
     img_bytes = await svc.screenshot(user_id)
     b64 = base64.b64encode(img_bytes).decode()
-    return {
-        "image_base64": b64,
-        "mime_type": "image/png",
-        "message": "Screenshot captured.",
-    }
+    _queue_screenshot(user_id, b64, description="Desktop screenshot")
+    return {"message": "Screenshot captured and sent to dashboard for display."}
 
 
 # ── Mouse Actions ─────────────────────────────────────────────────────
@@ -305,28 +452,35 @@ async def desktop_download_file(path: str, user_id: str = "default") -> dict:
 
 
 async def desktop_read_screen(user_id: str = "default") -> dict:
-    """Take a screenshot and describe what's visible on the desktop.
+    """Take a screenshot and send it to the dashboard for display.
 
-    Perfect for voice interactions: the agent captures the screen and
-    uses vision to describe it back to the user. Use this when a user
-    asks "What's on the screen?" or "Read me what's there."
+    Use when the user asks "What's on the screen?" — the screenshot is
+    sent to the dashboard. If desktop streaming is active, the agent
+    already has vision and can describe what it sees directly.
 
     Args:
         user_id: User identifier.
 
     Returns:
-        Dict with screenshot (base64) and a request for vision analysis.
+        Confirmation.
     """
     svc = get_e2b_desktop_service()
     raw = await svc.screenshot(user_id)
     b64 = base64.b64encode(raw).decode("utf-8")
+    _queue_screenshot(user_id, b64, description="Desktop screen contents")
+    is_streaming = user_id in _active_streams
+    if is_streaming:
+        return {
+            "message": (
+                "Screenshot sent to dashboard. You have active vision streaming — "
+                "describe what you see on the desktop."
+            )
+        }
     return {
-        "screenshot_base64": b64,
-        "instruction": (
-            "Describe the contents of this screenshot to the user. "
-            "Read any visible text, identify open windows, buttons, "
-            "and other UI elements. Be concise but thorough."
-        ),
+        "message": (
+            "Screenshot sent to dashboard. "
+            "Consider calling desktop_start_streaming() for continuous vision."
+        )
     }
 
 
@@ -350,12 +504,12 @@ async def desktop_exec_and_show(
     cmd_result = await svc.run_command(user_id, command)
     raw = await svc.screenshot(user_id)
     b64 = base64.b64encode(raw).decode("utf-8")
+    _queue_screenshot(user_id, b64, description=f"Result of: {command}")
     return {
         "stdout": cmd_result.get("stdout", ""),
         "stderr": cmd_result.get("stderr", ""),
         "exit_code": cmd_result.get("exit_code", -1),
-        "screenshot_base64": b64,
-        "message": "Command executed. Screenshot captured for visual confirmation.",
+        "message": "Command executed. Screenshot sent to dashboard for visual confirmation.",
     }
 
 
@@ -363,30 +517,43 @@ async def desktop_find_and_click(
     text_to_find: str,
     user_id: str = "default",
 ) -> dict:
-    """Take a screenshot, locate UI text, and ask the model to click it.
+    """Find a UI element by text label and click it.
 
-    For voice-driven GUI automation: the user says "click the Submit
-    button" and the agent uses vision to find the element's coordinates
-    then clicks it.
+    Requires desktop_start_streaming() to be active so the agent has vision.
+    The agent should look at the current stream, identify the element's
+    coordinates, and call desktop_click(x, y).
+
+    If streaming is NOT active, takes a screenshot and sends to dashboard,
+    then asks the user for help.
 
     Args:
         text_to_find: The text label / button / link to locate on screen.
         user_id: User identifier.
 
     Returns:
-        Dict with screenshot and instruction to locate and click the element.
+        Guidance on how to proceed.
     """
+    is_streaming = user_id in _active_streams
+    if is_streaming:
+        return {
+            "text_to_find": text_to_find,
+            "message": (
+                f"You have active desktop vision. Look at the stream and find "
+                f"'{text_to_find}'. Determine its (x, y) center coordinates, "
+                f"then call desktop_click(x, y) to click it."
+            ),
+        }
+    # No streaming — take a screenshot for the dashboard and ask the user
     svc = get_e2b_desktop_service()
     raw = await svc.screenshot(user_id)
     b64 = base64.b64encode(raw).decode("utf-8")
+    _queue_screenshot(user_id, b64, description=f"Finding: {text_to_find}")
     return {
-        "screenshot_base64": b64,
         "text_to_find": text_to_find,
-        "instruction": (
-            f"Look at this screenshot and find the UI element containing "
-            f"'{text_to_find}'. Determine its (x, y) center coordinates, "
-            f"then call desktop_click(x, y) to click it. If the element "
-            f"is not visible, tell the user."
+        "message": (
+            f"Screenshot sent to dashboard. Without active streaming I cannot see the screen. "
+            f"Please call desktop_start_streaming() first, or ask the user to "
+            f"identify where '{text_to_find}' is on screen."
         ),
     }
 
@@ -456,12 +623,13 @@ async def desktop_multi_step(
 
     raw = await svc.screenshot(user_id)
     b64 = base64.b64encode(raw).decode("utf-8")
+    _queue_screenshot(user_id, b64, description="Final desktop state after multi-step execution")
     return {
         "steps_completed": len(results),
         "steps_total": len(steps),
         "results": results,
-        "screenshot_base64": b64,
         "all_success": all(r["exit_code"] == 0 for r in results),
+        "message": "All steps completed. Final screenshot sent to dashboard.",
     }
 
 
@@ -475,22 +643,30 @@ def get_desktop_tools() -> list[FunctionTool]:
     global _DESKTOP_TOOLS
     if _DESKTOP_TOOLS is None:
         _DESKTOP_TOOLS = [
+            # Lifecycle
             FunctionTool(start_desktop),
             FunctionTool(stop_desktop),
             FunctionTool(desktop_status),
+            # Streaming (agent vision)
+            FunctionTool(desktop_start_streaming),
+            FunctionTool(desktop_stop_streaming),
+            # Screenshot (send to dashboard)
             FunctionTool(desktop_screenshot),
+            # Mouse & keyboard
             FunctionTool(desktop_click),
             FunctionTool(desktop_scroll),
             FunctionTool(desktop_drag),
             FunctionTool(desktop_type),
             FunctionTool(desktop_hotkey),
+            # Apps & browser
             FunctionTool(desktop_launch),
             FunctionTool(desktop_open_url),
             FunctionTool(desktop_get_windows),
+            # Shell & files
             FunctionTool(desktop_bash),
             FunctionTool(desktop_upload_file),
-            # New voice-enhanced tools
             FunctionTool(desktop_download_file),
+            # Voice-enhanced combos
             FunctionTool(desktop_read_screen),
             FunctionTool(desktop_exec_and_show),
             FunctionTool(desktop_find_and_click),

@@ -12,7 +12,7 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 
-function CodeBlock({ children, className, ...rest }) {
+function CodeBlock({ children, className, node, ...rest }) {
     const [copied, setCopied] = useState(false);
     const match = /language-(\w+)/.exec(className || '');
     const lang = match ? match[1] : '';
@@ -25,7 +25,9 @@ function CodeBlock({ children, className, ...rest }) {
     };
 
     if (!match) {
-        return <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono" {...rest}>{children}</code>;
+        // node is excluded from rest intentionally — it's a react-markdown AST object,
+        // not a valid DOM prop, and would cause an unknown prop React warning.
+        return <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono text-foreground/90">{children}</code>;
     }
 
     return (
@@ -52,10 +54,14 @@ export default function MarkdownContent({ content }) {
     if (!content) return null;
 
     return (
-        <div className="prose prose-sm dark:prose-invert max-w-none break-words [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+        <div className="prose prose-sm dark:prose-invert max-w-none break-words prose-pre:p-0 prose-pre:bg-transparent prose-pre:my-1 prose-code:before:content-none prose-code:after:content-none prose-code:bg-transparent prose-code:p-0 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
+                    // Strip the outer <pre> wrapper react-markdown adds around fenced code.
+                    // Without this: <pre><div>SyntaxHighlighter</div></pre> — the pre's
+                    // white-space:pre and monospace styles clash with our custom block div.
+                    pre: ({ children }) => <>{children}</>,
                     code: CodeBlock,
                     // Style tables
                     table: ({ children }) => (

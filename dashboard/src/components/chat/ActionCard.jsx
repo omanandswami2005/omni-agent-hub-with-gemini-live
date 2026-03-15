@@ -20,6 +20,7 @@ import {
   Loader2,
   ChevronRight,
   Cpu,
+  Cloud,
 } from 'lucide-react';
 
 const KIND_CONFIG = {
@@ -31,6 +32,12 @@ const KIND_CONFIG = {
     color: 'text-orange-500',
     bg: 'bg-orange-500/10',
     label: 'Device',
+  },
+  e2b_desktop: {
+    icon: Cloud,
+    color: 'text-cyan-500',
+    bg: 'bg-cyan-500/10',
+    label: 'E2B Desktop',
   },
   agent_transfer: {
     icon: ArrowRightLeft,

@@ -1,0 +1,30 @@
+{
+    "id": "zapier",
+    "name": "Zapier",
+    "description": "Connect to 8,000+ apps via Zapier MCP. Send Slack messages, create tasks, manage calendars, update spreadsheets, and more — all through natural language.",
+    "kind": "mcp_http",
+    "category": "productivity",
+    "url": "",
+    "env_keys": [
+        "ZAPIER_MCP_URL"
+    ],
+    "requires_auth": true,
+    "tags": [
+        "communication",
+        "knowledge",
+        "data",
+        "*"
+    ],
+    "icon": "zapier",
+    "version": "1.0.0",
+    "author": "Zapier",
+    "tools_summary": [
+        {
+            "name": "zapier_action",
+            "description": "Zapier actions are dynamic — enable specific actions at mcp.zapier.com. Common: send Slack message, create Google Sheet row, send email via Gmail, create Jira issue, etc."
+        }
+    ],
+    "lazy": true,
+    "singleton": false,
+    "max_context_tokens": 0
+}

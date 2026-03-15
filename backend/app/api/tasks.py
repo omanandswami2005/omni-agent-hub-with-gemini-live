@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import base64
+
+from fastapi import APIRouter, Depends, UploadFile, File, Form
 
 from app.middleware.auth_middleware import AuthenticatedUser, get_current_user
 from app.models.planned_task import TaskActionRequest, TaskCreateRequest, TaskEditRequest, TaskInputResponse
@@ -241,3 +243,32 @@ async def stop_desktop(user: AuthenticatedUser = Depends(get_current_user)):  # 
     svc = get_e2b_desktop_service()
     destroyed = await svc.destroy_desktop(user.uid)
     return {"destroyed": destroyed}
+
+
+@router.post("/desktop/upload")
+async def upload_to_desktop(
+    file: UploadFile = File(...),  # noqa: B008
+    path: str = Form("/home/user"),  # noqa: B008
+    user: AuthenticatedUser = Depends(get_current_user),  # noqa: B008
+):
+    """Upload a file from the user's machine to the E2B Desktop sandbox.
+
+    Accepts multipart form data with a file and an optional destination path.
+    """
+    from app.services.e2b_desktop_service import get_e2b_desktop_service
+
+    svc = get_e2b_desktop_service()
+    info = await svc.get_desktop_info(user.uid)
+    if not info:
+        return {"error": "No active desktop. Start a desktop first.", "uploaded": False}
+
+    content = await file.read()
+    filename = file.filename or "uploaded_file"
+    dest = f"{path.rstrip('/')}/{filename}"
+    result_path = await svc.upload_file(user.uid, dest, content)
+    return {
+        "uploaded": True,
+        "filename": filename,
+        "path": result_path,
+        "size": len(content),
+    }

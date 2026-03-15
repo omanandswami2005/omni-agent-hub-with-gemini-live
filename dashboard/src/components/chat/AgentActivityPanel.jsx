@@ -16,6 +16,8 @@ const ACTIVITY_ICONS = {
   reasoning: '🧠',
   mcp_call: '🔌',
   tool_call: '⚙️',
+  e2b_desktop: '☁️',
+  cross_device: '📱',
   waiting: '⏳',
   completed: '✅',
   failed: '❌',
@@ -68,7 +70,7 @@ export function AgentActivityPanel({ activities = [], className }) {
 function ActivityItem({ activity }) {
   const icon = ACTIVITY_ICONS[activity.activity_type] || '📋';
   const colorClass = ACTIVITY_COLORS[activity.status] || 'border-gray-500';
-  
+
   return (
     <div className={cn(
       "mb-2 rounded border-l-4 p-3",
@@ -93,7 +95,7 @@ function ActivityItem({ activity }) {
           )}
           {activity.progress > 0 && activity.progress < 1 && (
             <div className="mt-2 h-1 w-full rounded-full bg-muted">
-              <div 
+              <div
                 className="h-1 rounded-full bg-primary transition-all"
                 style={{ width: `${activity.progress * 100}%` }}
               />
@@ -113,7 +115,7 @@ function StatusBadge({ status }) {
     completed: 'bg-green-100 text-green-700',
     failed: 'bg-red-100 text-red-700',
   };
-  
+
   return (
     <span className={cn(
       "rounded px-1.5 py-0.5 text-xs font-medium",
@@ -129,13 +131,13 @@ function StatusBadge({ status }) {
  */
 export function AgentActivityInline({ activities = [], showInChat = true }) {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  
+
   if (!showInChat || activities.length === 0) {
     return null;
   }
 
   const latestActivity = activities[activities.length - 1];
-  
+
   return (
     <div className="my-2 rounded-md border border-amber-200 bg-amber-50 p-2">
       <button
@@ -155,7 +157,7 @@ export function AgentActivityInline({ activities = [], showInChat = true }) {
         </div>
         <span>{isCollapsed ? 'Show' : 'Hide'}</span>
       </button>
-      
+
       {!isCollapsed && activities.length > 1 && (
         <div className="mt-2 pl-4 border-l border-amber-300 space-y-1">
           {activities.slice(0, -1).map((a, i) => (

@@ -55,6 +55,7 @@ class ActionKind(StrEnum):
     MCP = "mcp"  # MCP server tool
     NATIVE_PLUGIN = "native_plugin"  # Native plugin (e.g. Google Calendar)
     CROSS_DEVICE = "cross_device"  # T3 reverse-RPC to another client
+    E2B_DESKTOP = "e2b_desktop"  # E2B cloud sandbox desktop tools
     AGENT_TRANSFER = "agent_transfer"  # Sub-agent routing
     IMAGE_GEN = "image_gen"  # Image generation tool
 

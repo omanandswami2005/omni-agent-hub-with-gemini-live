@@ -308,6 +308,8 @@ class SchedulerService:
             return await self._action_fetch_and_summarize(task)
         elif action == "run_shell_command":
             return await self._action_run_shell_command(task)
+        elif action == "run_plugin_tool":
+            return await self._action_run_plugin_tool(task)
         else:
             return f"Unknown action: {action}. Task description: {task.description}"
 
@@ -406,6 +408,70 @@ class SchedulerService:
             return result.get("stdout", "") or result.get("stderr", "Command completed")
         except Exception as exc:
             return f"Command failed: {exc}"
+
+    async def _action_run_plugin_tool(self, task: ScheduledTask) -> str:
+        """Run a server-side plugin tool (T2: native plugin or MCP).
+
+        T3 (client-local) tools CANNOT be used by scheduled tasks because
+        they require a live device connection.  This handler supports:
+          - Native plugins (e.g. Courier): calls the Python function directly
+          - MCP STDIO/HTTP/OAuth plugins: connects to the server, calls the
+            tool, and returns the result
+
+        Required action_params:
+          - plugin_id: ID of the plugin (e.g. "courier", "brave-search")
+          - tool_name: Name of the tool to call
+          - tool_args: Dict of arguments to pass to the tool
+        """
+        import importlib
+
+        from app.models.plugin import PluginKind
+        from app.services.plugin_registry import get_plugin_registry
+
+        params = task.action_params
+        plugin_id = params.get("plugin_id", "")
+        tool_name = params.get("tool_name", "")
+        tool_args = params.get("tool_args", {})
+
+        if not plugin_id or not tool_name:
+            return "Missing plugin_id or tool_name in action_params"
+
+        registry = get_plugin_registry()
+        manifest = registry.get_manifest(plugin_id)
+        if manifest is None:
+            return f"Plugin '{plugin_id}' not found in catalog"
+
+        # Native plugins — call the underlying function directly
+        if manifest.kind == PluginKind.NATIVE:
+            try:
+                module = importlib.import_module(manifest.module)
+                factory = getattr(module, manifest.factory)
+                tools = factory()
+                for t in tools:
+                    if getattr(t, "name", "") == tool_name:
+                        fn = getattr(t, "_function", None) or t.func
+                        result = await fn(**tool_args)
+                        return json.dumps(result) if isinstance(result, dict) else str(result)
+                return f"Tool '{tool_name}' not found in native plugin '{plugin_id}'"
+            except Exception as exc:
+                return f"Native plugin call failed: {exc}"
+
+        # MCP plugins — connect and call via McpToolset
+        if manifest.kind in (PluginKind.MCP_STDIO, PluginKind.MCP_HTTP, PluginKind.MCP_OAUTH):
+            try:
+                tools = await registry._get_plugin_tools(task.user_id, plugin_id, manifest)
+                if not tools:
+                    return f"No tools available from MCP plugin '{plugin_id}'"
+                for t in tools:
+                    if getattr(t, "name", "") == tool_name:
+                        # ADK MCP tools expose run_async; pass args directly
+                        result = await t.run_async(args=tool_args, tool_context=None)
+                        return json.dumps(result) if isinstance(result, dict) else str(result)
+                return f"Tool '{tool_name}' not found in MCP plugin '{plugin_id}'"
+            except Exception as exc:
+                return f"MCP tool call failed: {exc}"
+
+        return f"Plugin kind '{manifest.kind}' not supported for scheduled tasks"
 
     # ── Notification delivery after task execution ────────────────────
 

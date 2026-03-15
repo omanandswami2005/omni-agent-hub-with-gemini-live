@@ -30,7 +30,6 @@ from app.tools.capabilities_tool import get_capability_tools
 from app.tools.code_exec import get_code_exec_tools
 from app.tools.cross_client import get_cross_client_tools
 from app.tools.desktop_tools import get_desktop_tools
-from app.tools.email import get_email_tools
 from app.tools.image_gen import get_image_gen_tools
 from app.tools.search import get_search_tool
 from app.tools.task_tools import get_human_input_tools, get_planned_task_tools
@@ -49,7 +48,6 @@ T1_TOOL_REGISTRY: dict[str, Callable[[], list]] = {
     TC.SEARCH: lambda: [get_search_tool()],
     TC.CODE_EXECUTION: get_code_exec_tools,
     TC.MEDIA: get_image_gen_tools,
-    TC.COMMUNICATION: get_email_tools,
     TC.DEVICE: lambda: get_cross_client_tools(),
     TC.DESKTOP: get_desktop_tools,
     TC.TASK: get_planned_task_tools,
@@ -62,12 +60,21 @@ T1_TOOL_REGISTRY: dict[str, Callable[[], list]] = {
 
 _CODE_EXEC_PERSONA_IDS: frozenset[str] = frozenset({"coder", "analyst"})
 
+# ── Per-persona model overrides (for REST / non-live sessions) ────────
+# In live (streaming) sessions, the runner's live model takes precedence
+# and these overrides are ignored.  For REST / text sessions, the agent
+# uses the override model for better specialization.
+_MODEL_OVERRIDES: dict[str, str] = {
+    "genui": "gemini-3.1-pro-preview-customtools",
+}
+
 _PERSONA_CAPABILITIES: dict[str, list[str]] = {
-    "assistant": [TC.COMMUNICATION, TC.DEVICE, TC.TASK, TC.WILDCARD],
-    "coder": [TC.CODE_EXECUTION, TC.DESKTOP, TC.DEVICE, TC.TASK, TC.WILDCARD],
-    "researcher": [TC.SEARCH, TC.DEVICE, TC.TASK, TC.WILDCARD],
-    "analyst": [TC.SEARCH, TC.CODE_EXECUTION, TC.DESKTOP, TC.DEVICE, TC.TASK, TC.WILDCARD],
-    "creative": [TC.MEDIA, TC.DEVICE, TC.TASK, TC.WILDCARD],
+    "assistant": [TC.COMMUNICATION, TC.TASK, TC.WILDCARD],
+    "coder": [TC.CODE_EXECUTION, TC.DESKTOP, TC.TASK, TC.WILDCARD],
+    "researcher": [TC.SEARCH, TC.TASK, TC.WILDCARD],
+    "analyst": [TC.SEARCH, TC.CODE_EXECUTION, TC.DESKTOP, TC.TASK, TC.WILDCARD],
+    "creative": [TC.MEDIA, TC.TASK, TC.WILDCARD],
+    "genui": [TC.CODE_EXECUTION, TC.TASK, TC.WILDCARD],
 }
 
 
@@ -101,11 +108,18 @@ def _default_tools_for_persona(persona: PersonaResponse | str) -> list:
 
     Accepts a :class:`PersonaResponse` or a string persona ID (resolved
     via ``_PERSONA_CAPABILITIES``).
+
+    Always prefers the authoritative ``_PERSONA_CAPABILITIES`` mapping
+    over the persona's own ``capabilities`` field (which is for UI
+    categorization, not tool assignment).
     """
     if isinstance(persona, str):
         caps = _PERSONA_CAPABILITIES.get(persona, [])
     else:
-        caps = persona.capabilities or _PERSONA_CAPABILITIES.get(persona.id, [])
+        # Always use _PERSONA_CAPABILITIES for known personas to avoid
+        # UI category labels (like "knowledge", "productivity") being
+        # misinterpreted as tool capability tags.
+        caps = _PERSONA_CAPABILITIES.get(persona.id, persona.capabilities or [])
     return get_tools_for_capabilities(caps)
 
 
@@ -136,6 +150,13 @@ def create_agent(
     if extra_tools:
         tools.extend(extra_tools)
 
+    # Use persona-specific model override when no explicit model is passed,
+    # or when the passed model is the LIVE_MODEL (streaming sessions will
+    # override this anyway at the runner level).
+    effective_model = model or LIVE_MODEL
+    if persona.id in _MODEL_OVERRIDES:
+        effective_model = _MODEL_OVERRIDES[persona.id]
+
     # Build a strict tool list addendum so the persona never hallucinates tool names
     tool_names = sorted({getattr(t, "name", str(t)) for t in tools})
     # Escape curly braces so ADK's template engine doesn't treat them as variables
@@ -151,7 +172,7 @@ def create_agent(
 
     agent = Agent(
         name=persona.id,
-        model=model or LIVE_MODEL,
+        model=effective_model,
         instruction=base_instruction + tool_guard,
         tools=tools,
         before_model_callback=context_injection_callback,

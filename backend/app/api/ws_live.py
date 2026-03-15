@@ -943,6 +943,20 @@ _CROSS_DEVICE_TOOLS = frozenset(
     }
 )
 
+# E2B cloud sandbox desktop tool names (from app.tools.desktop_tools)
+_E2B_DESKTOP_TOOLS = frozenset(
+    {
+        "start_desktop", "stop_desktop", "desktop_status",
+        "desktop_start_streaming", "desktop_stop_streaming",
+        "desktop_screenshot",
+        "desktop_click", "desktop_scroll", "desktop_drag", "desktop_type",
+        "desktop_hotkey", "desktop_launch", "desktop_open_url", "desktop_get_windows",
+        "desktop_bash", "desktop_upload_file", "desktop_download_file",
+        "desktop_read_screen", "desktop_exec_and_show", "desktop_find_and_click",
+        "desktop_list_files", "desktop_multi_step",
+    }
+)
+
 # Native plugin tool names (from app.plugins.*)
 _NATIVE_PLUGIN_TOOLS: dict[str, str] = {
     "list_calendar_events": "Google Calendar",
@@ -962,6 +976,8 @@ def _classify_tool(tool_name: str) -> tuple[ActionKind, str]:
         return ActionKind.IMAGE_GEN, "Image Generation"
     if tool_name in _CROSS_DEVICE_TOOLS:
         return ActionKind.CROSS_DEVICE, "Cross-Device"
+    if tool_name in _E2B_DESKTOP_TOOLS:
+        return ActionKind.E2B_DESKTOP, "E2B Cloud Desktop"
     if tool_name in _NATIVE_PLUGIN_TOOLS:
         return ActionKind.NATIVE_PLUGIN, _NATIVE_PLUGIN_TOOLS[tool_name]
 
@@ -1169,6 +1185,7 @@ async def _process_event(
     # function_response event.
     #
     from app.tools.image_gen import IMAGE_TOOL_NAMES, drain_pending_images
+    from app.tools.desktop_tools import SCREENSHOT_TOOL_NAMES, drain_pending_screenshots
 
     for fr in event.get_function_responses():
         # Skip transfer_to_agent responses (already handled above)
@@ -1180,6 +1197,14 @@ async def _process_event(
             for img_data in drain_pending_images(user_id):
                 img_msg = ImageResponseMessage(**img_data)
                 json_str = img_msg.model_dump_json()
+                await websocket.send_text(json_str)
+                await _publish(bus, user_id, json_str)
+
+        # Drain pending E2B desktop screenshots queued by the tool
+        if fr.name in SCREENSHOT_TOOL_NAMES and user_id:
+            for sc_data in drain_pending_screenshots(user_id):
+                sc_msg = ImageResponseMessage(**sc_data)
+                json_str = sc_msg.model_dump_json()
                 await websocket.send_text(json_str)
                 await _publish(bus, user_id, json_str)
 
@@ -1532,6 +1557,10 @@ async def ws_live(websocket: WebSocket) -> None:
     queue = LiveRequestQueue()
     runner = await _get_runner(user.uid, session_service=active_session_service)
 
+    # Register the queue so E2B desktop streaming tools can push frames
+    from app.tools.desktop_tools import register_live_queue, unregister_live_queue
+    register_live_queue(user.uid, queue)
+
     # Subscribe to EventBus so events from other sessions (e.g. /ws/chat or another /ws/live)
     # are forwarded to this connection in real-time.
     bus = get_event_bus()
@@ -1612,6 +1641,7 @@ async def ws_live(websocket: WebSocket) -> None:
         bus.unsubscribe(user.uid, cross_queue)
 
         # Phase 4 — Cleanup
+        unregister_live_queue(user.uid)  # Stop E2B streaming + remove queue ref
         queue.close()  # Ensure queue is closed (upstream also closes, but be safe)
 
         # Persist session to Vertex AI first so memory sync can reference it.

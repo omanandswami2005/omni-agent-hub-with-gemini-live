@@ -225,7 +225,8 @@ async def _events_to_messages(events: list) -> list[ChatMessage]:
                 )
             )
 
-        # Tool responses
+        # Tool responses — merge into the matching tool_call entry above
+        # instead of creating a second ActionCard for the same invocation.
         for fr in event.get_function_responses():
             if fr.name == "transfer_to_agent":
                 continue
@@ -243,8 +244,17 @@ async def _events_to_messages(events: list) -> list[ChatMessage]:
 
             result_str = str(fr.response) if fr.response else f"Tool {fr.name} completed"
 
-            # For image tools, emit an image message with URL so the UI can show the image
+            # For image tools, emit a separate image message (not an action)
             if is_image_tool and response_dict:
+                # Mark the matching tool_call entry as responded so it
+                # doesn't render as an infinite-spinner dangling card.
+                for i in range(len(messages) - 1, -1, -1):
+                    m = messages[i]
+                    if m.type == "action" and m.tool_name == fr.name and not m.responded:
+                        m.responded = True
+                        m.success = True
+                        m.result = "Image generated — see below"
+                        break
                 # generate_image: {"image_url": "gs://...", "description": "...", "mime_type": "..."}
                 # generate_rich_image: {"text_summary": "...", "image_parts": [{"gcs_uri": ..., "mime_type": ...}]}
                 if fr.name == "generate_rich_image":
@@ -289,20 +299,36 @@ async def _events_to_messages(events: list) -> list[ChatMessage]:
                         )
                     )
             else:
-                # For non-image tools, emit action message
-                messages.append(
-                    ChatMessage(
-                        role="system",
-                        content=result_str,
-                        type="action",
-                        tool_name=fr.name,
-                        result=result_str,
-                        success=True,
-                        responded=True,
-                        action_kind=kind,
-                        source_label=label,
+                # Non-image tool: merge result into the matching tool_call entry
+                # (walk backwards to find the unresponded action for this tool)
+                merged = False
+                for i in range(len(messages) - 1, -1, -1):
+                    m = messages[i]
+                    if (
+                        m.type == "action"
+                        and m.tool_name == fr.name
+                        and not m.responded
+                    ):
+                        m.result = result_str
+                        m.success = True
+                        m.responded = True
+                        merged = True
+                        break
+                # Fallback: no matching call found (shouldn't happen in practice)
+                if not merged:
+                    messages.append(
+                        ChatMessage(
+                            role="system",
+                            content=result_str,
+                            type="action",
+                            tool_name=fr.name,
+                            result=result_str,
+                            success=True,
+                            responded=True,
+                            action_kind=kind,
+                            source_label=label,
+                        )
                     )
-                )
 
     return messages
 

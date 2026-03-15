@@ -5,16 +5,18 @@
  * start/stop controls, and the live stream when available.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useTaskStore } from '@/stores/taskStore';
 import { api } from '@/lib/api';
-import { Monitor, Play, Square, RefreshCw, Maximize2, Minimize2 } from 'lucide-react';
+import { Monitor, Play, Square, RefreshCw, Maximize2, Minimize2, Upload, CheckCircle } from 'lucide-react';
 
 export default function DesktopViewer() {
     const desktop = useTaskStore((s) => s.desktop);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [expanded, setExpanded] = useState(false);
+    const [uploadStatus, setUploadStatus] = useState(null); // null | 'uploading' | {name, path}
+    const fileInputRef = useRef(null);
 
     const startDesktop = useCallback(async () => {
         setLoading(true);
@@ -39,6 +41,25 @@ export default function DesktopViewer() {
             setError(err?.message || 'Failed to stop desktop');
         } finally {
             setLoading(false);
+        }
+    }, []);
+
+    const handleFileUpload = useCallback(async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setUploadStatus('uploading');
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('path', '/home/user');
+            await api.postForm('/tasks/desktop/upload', formData);
+            setUploadStatus({ name: file.name, path: `/home/user/${file.name}` });
+            setTimeout(() => setUploadStatus(null), 4000);
+        } catch (err) {
+            setError(err?.message || 'Upload failed');
+            setUploadStatus(null);
+        } finally {
+            if (fileInputRef.current) fileInputRef.current.value = '';
         }
     }, []);
 
@@ -129,6 +150,36 @@ export default function DesktopViewer() {
                             </button>
                         )}
                     </div>
+                </div>
+            )}
+
+            {/* File upload */}
+            {isRunning && (
+                <div className="flex items-center gap-2">
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                    />
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploadStatus === 'uploading'}
+                        className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/50 px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
+                    >
+                        {uploadStatus === 'uploading' ? (
+                            <RefreshCw size={12} className="animate-spin" />
+                        ) : (
+                            <Upload size={12} />
+                        )}
+                        {uploadStatus === 'uploading' ? 'Uploading…' : 'Upload File'}
+                    </button>
+                    {uploadStatus && uploadStatus !== 'uploading' && (
+                        <span className="flex items-center gap-1 text-xs text-green-600">
+                            <CheckCircle size={12} />
+                            {uploadStatus.name} → {uploadStatus.path}
+                        </span>
+                    )}
                 </div>
             )}
 

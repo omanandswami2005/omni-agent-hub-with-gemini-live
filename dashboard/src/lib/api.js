@@ -11,11 +11,14 @@ const BASE_URL = (import.meta.env.VITE_API_URL || '') + '/api/v1';
 async function request(path, options = {}) {
     const { token: explicitToken, ...fetchOptions } = options;
     const token = explicitToken || useAuthStore.getState().token;
+    const isFormData = fetchOptions.body instanceof FormData;
     const headers = {
-        'Content-Type': 'application/json',
+        ...(!isFormData && { 'Content-Type': 'application/json' }),
         ...(token && { Authorization: `Bearer ${token}` }),
         ...options.headers,
     };
+    // Remove undefined header values (e.g. explicit Content-Type: undefined)
+    Object.keys(headers).forEach(k => { if (headers[k] === undefined) delete headers[k]; });
 
     let res = await fetch(`${BASE_URL}${path}`, { ...fetchOptions, headers });
 
@@ -47,4 +50,6 @@ export const api = {
     post: (path, data, opts) => request(path, { method: 'POST', body: JSON.stringify(data), ...opts }),
     put: (path, data, opts) => request(path, { method: 'PUT', body: JSON.stringify(data), ...opts }),
     delete: (path, opts) => request(path, { method: 'DELETE', ...opts }),
+    /** POST with FormData body (multipart) */
+    postForm: (path, formData, opts) => request(path, { method: 'POST', body: formData, ...opts }),
 };

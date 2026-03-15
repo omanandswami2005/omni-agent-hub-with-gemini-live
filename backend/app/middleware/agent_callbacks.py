@@ -34,7 +34,6 @@ _DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "delete_file",
         "remove_file",
         "manage_files",
-        "send_email",
         "send_gmail",
         "file_delete",
         "drop_table",

@@ -351,7 +351,20 @@ class PluginRegistry:
                 headers=oauth_headers,
             )
         if manifest.kind == PluginKind.MCP_HTTP:
-            return SseConnectionParams(url=manifest.url)
+            # Support dynamic URLs: if manifest.url is empty, resolve from env.
+            # This allows per-user MCP URLs (e.g. Zapier MCP where each user
+            # has a unique server URL provided via their secrets/env).
+            url = manifest.url
+            if not url and env:
+                # Look for a *_URL key in env_keys
+                for key in manifest.env_keys:
+                    if key.endswith("_URL") and env.get(key):
+                        url = env[key]
+                        break
+            if not url:
+                msg = f"No URL configured for HTTP MCP '{manifest.id}'"
+                raise ValueError(msg)
+            return StreamableHTTPConnectionParams(url=url)
         return StdioConnectionParams(
             server_params=StdioServerParameters(
                 command=manifest.command,
