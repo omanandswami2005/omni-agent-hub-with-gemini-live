@@ -150,16 +150,15 @@ const LandingPage = () => {
           <div className="flex flex-col md:flex-row gap-12 items-center">
             {/* Feature List */}
             <div className="w-full md:w-1/2 space-y-2">
-              <h2 className="text-3xl md:text-4xl font-bold mb-8">Infinite capabilities.<br/>Zero friction.</h2>
+              <h2 className="text-3xl md:text-4xl font-bold mb-8">Infinite capabilities.<br />Zero friction.</h2>
 
               {features.map((feature, idx) => (
                 <div
                   key={idx}
-                  className={`p-6 rounded-2xl cursor-pointer transition-all duration-300 border ${
-                    activeFeature === idx
+                  className={`p-6 rounded-2xl cursor-pointer transition-all duration-300 border ${activeFeature === idx
                       ? 'bg-white/5 border-white/10 shadow-lg'
                       : 'border-transparent hover:bg-white/[0.02]'
-                  }`}
+                    }`}
                   onClick={() => setActiveFeature(idx)}
                 >
                   <div className="flex items-start gap-4">
@@ -276,9 +275,9 @@ const LandingPage = () => {
             Built for the Gemini Live Agent Challenge.
           </p>
           <div className="flex gap-4 text-sm text-zinc-400">
-            <a href="#" className="hover:text-white transition-colors">GitHub</a>
+            <a href="https://github.com/omanandswami2005/omni-agent-hub-with-gemini-live" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">GitHub</a>
             <a href="#" className="hover:text-white transition-colors">Documentation</a>
-            <a href="#" className="hover:text-white transition-colors">Twitter</a>
+            <a href="https://youtube.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">YouTube</a>
           </div>
         </div>
       </footer>
@@ -298,11 +297,11 @@ const SparklesIcon = (props) => (
     strokeLinejoin="round"
     {...props}
   >
-    <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
-    <path d="M5 3v4"/>
-    <path d="M19 17v4"/>
-    <path d="M3 5h4"/>
-    <path d="M17 19h4"/>
+    <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+    <path d="M5 3v4" />
+    <path d="M19 17v4" />
+    <path d="M3 5h4" />
+    <path d="M17 19h4" />
   </svg>
 );
 
