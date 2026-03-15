@@ -1,9 +1,9 @@
 site_name: Omni Docs
-site_url: https://omni-docs.github.io
+site_url: https://omanandswami2005.github.io
 site_description: "Speak anywhere. Act everywhere. — Documentation for Omni, the multi-client AI agent hub."
 site_author: Omanand Swami
-repo_url: https://github.com/omni-docs/omni-docs.github.io
-repo_name: omni-docs/omni-docs.github.io
+repo_url: https://github.com/omanandswami2005/omni-docs.github.io
+repo_name: omanandswami2005/omni-docs.github.io
 docs_dir: site-docs
 
 theme:
@@ -80,7 +80,7 @@ markdown_extensions:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/omni-docs/omni-docs.github.io
+      link: https://github.com/omanandswami2005/omni-docs.github.io
   generator: false
 
 extra_css:
