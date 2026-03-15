@@ -86,8 +86,24 @@ def _get_capabilities_data(user_id: str) -> dict:
         manifest = registry.get_manifest(plugin_id)
         if manifest is None:
             continue
-        summaries = registry._discovered_summaries.get(plugin_id, manifest.tools_summary)
-        for s in summaries:
+        # ONLY use discovered summaries (populated by actual MCP connection).
+        # Never fall back to manifest.tools_summary — those are guessed names
+        # that may not match real MCP tool names and cause hallucination.
+        discovered = registry._discovered_summaries.get(plugin_id)
+        if discovered is None:
+            # MCP not connected yet — show plugin as enabled but tools pending
+            t2_entries.append(
+                {
+                    "plugin": manifest.name,
+                    "plugin_id": plugin_id,
+                    "kind": str(manifest.kind),
+                    "tool": "(not connected yet)",
+                    "description": f"{manifest.name} is enabled but not yet connected. Tools will appear after authorization is complete.",
+                    "parameters": {},
+                }
+            )
+            continue
+        for s in discovered:
             t2_entries.append(
                 {
                     "plugin": manifest.name,
@@ -341,15 +357,26 @@ async def get_capabilities_of(
         return json.dumps({"error": f"Failed to load schemas: {exc}"}, indent=2)
 
     if not schemas:
-        # Fallback: summaries only
-        summaries = registry._discovered_summaries.get(target_id, target_manifest.tools_summary)
+        # Only show discovered summaries (verified tool names), never guessed manifest names
+        discovered = registry._discovered_summaries.get(target_id)
+        if discovered:
+            return json.dumps(
+                {
+                    "plugin": target_manifest.name,
+                    "plugin_id": target_id,
+                    "kind": str(target_manifest.kind),
+                    "tools": [{"name": s.name, "description": s.description} for s in discovered],
+                    "note": "Full parameter schemas not yet available (connect plugin first).",
+                },
+                indent=2,
+            )
         return json.dumps(
             {
                 "plugin": target_manifest.name,
                 "plugin_id": target_id,
                 "kind": str(target_manifest.kind),
-                "tools": [{"name": s.name, "description": s.description} for s in summaries],
-                "note": "Full parameter schemas not yet available (connect plugin first).",
+                "tools": [],
+                "note": f"{target_manifest.name} is enabled but not yet connected. Complete authorization in the Integrations page first.",
             },
             indent=2,
         )
@@ -427,7 +454,7 @@ def _get_tier1_schemas_filtered(query: str) -> str:
 
 def _get_tier2_schemas(user_id: str) -> str:
     """Return summary schemas for all enabled T2 plugins."""
-    from app.services.plugin_registry import get_plugin_registry
+    from app.services.plugin_registry import PluginKind, get_plugin_registry
 
     registry = get_plugin_registry()
     plugins_out: list[dict] = []
@@ -435,13 +462,23 @@ def _get_tier2_schemas(user_id: str) -> str:
         manifest = registry.get_manifest(plugin_id)
         if manifest is None:
             continue
-        summaries = registry._discovered_summaries.get(plugin_id, manifest.tools_summary)
+        # Only use verified discovered summaries for MCP plugins
+        discovered = registry._discovered_summaries.get(plugin_id)
+        if discovered is not None:
+            summaries = discovered
+        elif manifest.kind in (PluginKind.MCP_STDIO, PluginKind.MCP_HTTP, PluginKind.MCP_OAUTH):
+            summaries = []  # MCP not connected — don't leak guessed names
+        else:
+            summaries = manifest.tools_summary  # Native plugins: names match Python functions
+        tools_list = [{"name": s.name, "description": s.description} for s in summaries]
+        if not tools_list and manifest.kind in (PluginKind.MCP_STDIO, PluginKind.MCP_HTTP, PluginKind.MCP_OAUTH):
+            tools_list = [{"name": "(not connected)", "description": f"{manifest.name} is enabled but not yet connected. Complete authorization first."}]
         plugins_out.append(
             {
                 "plugin": manifest.name,
                 "plugin_id": plugin_id,
                 "kind": str(manifest.kind),
-                "tools": [{"name": s.name, "description": s.description} for s in summaries],
+                "tools": tools_list,
             }
         )
     return json.dumps(

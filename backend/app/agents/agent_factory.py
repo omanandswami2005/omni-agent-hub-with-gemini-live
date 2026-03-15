@@ -136,10 +136,23 @@ def create_agent(
     if extra_tools:
         tools.extend(extra_tools)
 
+    # Build a strict tool list addendum so the persona never hallucinates tool names
+    tool_names = sorted({getattr(t, "name", str(t)) for t in tools})
+    # Escape curly braces so ADK's template engine doesn't treat them as variables
+    safe_tool_names = [n.replace("{", "{{").replace("}", "}}") for n in tool_names]
+    tool_guard = (
+        "\n\nSTRICT TOOL REGISTRY: You can ONLY call these tools: "
+        + ", ".join(safe_tool_names)
+        + ". Do NOT call any tool name not in this list — if a tool is missing, "
+        "tell the user to enable the relevant plugin."
+    ) if tool_names else ""
+
+    base_instruction = persona.system_instruction or f"You are {persona.name}."
+
     agent = Agent(
         name=persona.id,
         model=model or LIVE_MODEL,
-        instruction=persona.system_instruction or f"You are {persona.name}.",
+        instruction=base_instruction + tool_guard,
         tools=tools,
         before_model_callback=context_injection_callback,
         after_model_callback=cost_estimation_callback,

@@ -227,6 +227,12 @@ class TaskActionRequest(BaseModel):
     action: str  # "pause" | "resume" | "cancel"
 
 
+class TaskEditRequest(BaseModel):
+    """REST request to edit a task description and replan."""
+
+    description: str
+
+
 class TaskSummary(BaseModel):
     """Lightweight task listing item."""
 

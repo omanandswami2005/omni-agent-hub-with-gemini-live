@@ -73,7 +73,7 @@ export default function MobileSessionDrawer({ open, onClose }) {
         clearMessages();
         useSessionStore.getState().setActiveSession(null);
         useSessionStore.getState().setWantsNewSession(true);
-        navigate('/');
+        navigate('/dashboard');
         voice.reconnect?.();
         onClose();
     };
@@ -86,7 +86,7 @@ export default function MobileSessionDrawer({ open, onClose }) {
             setConfirmDeleteId(null);
             if (wasActive) {
                 clearMessages();
-                navigate('/');
+                navigate('/dashboard');
                 voice.reconnect?.();
             }
         } else {

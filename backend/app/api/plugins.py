@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from app.middleware.auth_middleware import CurrentUser
+from app.api.ws_live import invalidate_runner
 from app.models.plugin import (
     PluginKind,
     PluginManifest,
@@ -67,6 +68,7 @@ async def toggle_plugin(body: PluginToggle, user: CurrentUser):
             )
 
     enabled = await registry.toggle_plugin(user.uid, body)
+    invalidate_runner(user.uid)
     return {"plugin_id": body.plugin_id, "enabled": enabled}
 
 
@@ -279,6 +281,11 @@ async def oauth_callback(request: Request):
         # Auto-connect the plugin now that we have tokens
         registry = get_plugin_registry()
         await registry.connect_plugin(user_id, plugin_id)
+
+        # Invalidate the runner cache so the next WS connection picks up the
+        # new plugin's tools (tools are baked into the runner at build time).
+        from app.api.ws_live import invalidate_runner
+        invalidate_runner(user_id)
 
         return HTMLResponse(
             _oauth_result_page(

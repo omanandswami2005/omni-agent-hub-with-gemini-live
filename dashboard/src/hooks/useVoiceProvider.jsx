@@ -83,6 +83,9 @@ export function VoiceProvider({ children }) {
             }
             // Stop playback when disconnected
             stopPlayback();
+            // Reset agent state so the UI never gets stuck in "processing"
+            useChatStore.getState().setAgentState('idle');
+            useChatStore.getState().cancelAllActions();
         }
         prevConnectedRef.current = isConnected;
     }, [isConnected, stopCapture, stopRecordingAndRelease, stopPlayback, isRecording]);

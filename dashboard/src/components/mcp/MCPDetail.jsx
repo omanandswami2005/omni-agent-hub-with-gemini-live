@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import MCPToggle from './MCPToggle';
 import MCPIcon from './MCPIcon';
 import { useMcpStore } from '@/stores/mcpStore';
+import { useVoice } from '@/hooks/useVoiceProvider';
 
 export default function MCPDetail({ server, onToggle, onClose }) {
   const [oauthLoading, setOauthLoading] = useState(false);
@@ -20,6 +21,7 @@ export default function MCPDetail({ server, onToggle, onClose }) {
   const saveSecrets = useMcpStore((s) => s.saveSecrets);
   const startGoogleOAuth = useMcpStore((s) => s.startGoogleOAuth);
   const disconnectGoogleOAuth = useMcpStore((s) => s.disconnectGoogleOAuth);
+  const voice = useVoice();
 
   const isOAuth = server?.kind === 'mcp_oauth';
   const isGoogleOAuth = server?.google_oauth_scopes?.length > 0;
@@ -42,6 +44,9 @@ export default function MCPDetail({ server, onToggle, onClose }) {
       fetchCatalog();
       if (event.data.status === 'success') {
         refreshAfterOAuth(event.data.plugin_id);
+        // Reconnect the WebSocket so the backend rebuilds the runner with
+        // the newly connected plugin's tools loaded.
+        setTimeout(() => voice.reconnect?.(), 1500);
       }
     }
   }, [server?.id, handleOAuthCallback, fetchCatalog, refreshAfterOAuth]);

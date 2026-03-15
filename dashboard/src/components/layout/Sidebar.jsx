@@ -88,7 +88,7 @@ function RenameSessionModal({ session, onConfirm, onCancel }) {
 }
 
 const NAV_ITEMS = [
-  { to: '/', label: 'Dashboard', icon: Home, shortcut: ['1'] },
+  { to: '/dashboard', label: 'Dashboard', icon: Home, shortcut: ['1'] },
   { to: '/personas', label: 'Personas', icon: Users, shortcut: ['2'] },
   { to: '/mcp-store', label: 'MCP & Plugins', icon: Store, shortcut: ['3'] },
   { id: 'sessions', to: '/sessions', label: 'Sessions', icon: Clock, shortcut: ['4'], hasSublist: true },
@@ -133,7 +133,7 @@ function SidebarSessionList() {
     setDeleteTarget(null);
     if (wasActive) {
       clearMessages();
-      navigate('/');
+      navigate('/dashboard');
       voice.reconnect?.();
     }
   };
@@ -228,7 +228,7 @@ export default function Sidebar() {
     clearMessages();
     useSessionStore.getState().setActiveSession(null);
     useSessionStore.getState().setWantsNewSession(true);
-    navigate('/');
+    navigate('/dashboard');
     // Reconnect to create a new session
     voice.reconnect?.();
   };
@@ -267,8 +267,8 @@ export default function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
         {NAV_ITEMS.map(({ to, label, icon: Icon, shortcut, hasSublist }) => {
-          const isActive = to === '/'
-            ? location.pathname === '/' || location.pathname.startsWith('/session/')
+          const isActive = to === '/dashboard'
+            ? location.pathname === '/dashboard' || location.pathname.startsWith('/session/')
             : location.pathname.startsWith(to);
 
           if (hasSublist && sidebarOpen) {

@@ -45,7 +45,7 @@ export function getClientType() {
 }
 
 export const ROUTES = {
-  HOME: '/',
+  HOME: '/dashboard',
   PERSONAS: '/personas',
   MCP_STORE: '/mcp-store',
   SESSIONS: '/sessions',

@@ -73,7 +73,7 @@ export default function DashboardPage() {
             }));
         }).catch((err) => {
             if (loadGenRef.current !== gen) return;
-            if (err?.status === 404) navigate('/');
+            if (err?.status === 404) navigate('/dashboard');
         }).finally(() => {
             if (loadGenRef.current === gen) setLoadingHistory(false);
         });

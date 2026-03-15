@@ -36,6 +36,11 @@ export function useWebSocket() {
     // Bump generation so any older in-flight connect() bails after its await
     const gen = ++connectGenRef.current;
 
+    // Clear stale session ID immediately (synchronously, before the await below)
+    // so DashboardPage doesn't see the old serverSessionId and redirect to the
+    // old session while the new WS connection is being established.
+    setServerSessionId(null);
+
     // Close any existing connection synchronously (before the await gap).
     // Null out onclose FIRST so the backoff-reconnect handler never fires for
     // this intentional tear-down (the callback is always async — clearing the
@@ -327,6 +332,7 @@ export function useWebSocket() {
             error_code: msg.code,
           });
           useChatStore.getState().setAgentState('idle');
+          useChatStore.getState().cancelAllActions();
           break;
         }
         default:
@@ -336,6 +342,9 @@ export function useWebSocket() {
 
     ws.onclose = (e) => {
       setIsConnected(false);
+      // Reset UI state so the frontend never gets stuck in "processing" after a disconnect
+      useChatStore.getState().setAgentState('idle');
+      useChatStore.getState().cancelAllActions();
       // 4000 = replaced by new connection, 4003 = auth failure — don't reconnect for either
       const noReconnect = e.code === 4000 || e.code === 4003;
       if (e.code === 4003) {
@@ -442,6 +451,28 @@ export function useWebSocket() {
   const releaseMic = useCallback(() => {
     micGrantedRef.current = false;
     sendJsonMessage(wsRef.current, { type: 'mic_release' });
+  }, []);
+
+  // ── Watchdog: auto-reset if agentState stays "processing" for >30s ──
+  const watchdogRef = useRef(null);
+  useEffect(() => {
+    let prev = useChatStore.getState().agentState;
+    const unsub = useChatStore.subscribe((state) => {
+      if (state.agentState !== prev) {
+        prev = state.agentState;
+        clearTimeout(watchdogRef.current);
+        if (state.agentState === 'processing') {
+          watchdogRef.current = setTimeout(() => {
+            const current = useChatStore.getState().agentState;
+            if (current === 'processing') {
+              useChatStore.getState().setAgentState('idle');
+              useChatStore.getState().cancelAllActions();
+            }
+          }, 30_000);
+        }
+      }
+    });
+    return () => { clearTimeout(watchdogRef.current); unsub(); };
   }, []);
 
   return { sendText, sendAudio, sendImage, sendControl, acquireMic, releaseMic, isConnected, disconnect, reconnect, serverSessionId };

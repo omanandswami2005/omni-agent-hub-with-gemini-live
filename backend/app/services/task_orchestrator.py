@@ -512,6 +512,35 @@ class TaskOrchestrator:
         logger.info("task_cancelled", task_id=task_id)
         return True
 
+    async def delete_task(self, user_id: str, task_id: str) -> bool:
+        """Permanently delete a task. Running tasks are cancelled first."""
+        task = await self.get_task(user_id, task_id)
+        if not task:
+            return False
+        # Cancel if running
+        if task.status in (TaskStatus.RUNNING, TaskStatus.PAUSED):
+            await self.cancel_task(user_id, task_id)
+        self.db.collection(COLLECTION).document(task_id).delete()
+        logger.info("task_deleted", task_id=task_id)
+        return True
+
+    async def edit_task(self, user_id: str, task_id: str, description: str) -> PlannedTask | None:
+        """Edit a task description and re-plan it. Only non-running tasks can be edited."""
+        task = await self.get_task(user_id, task_id)
+        if not task:
+            return None
+        if task.status in (TaskStatus.RUNNING,):
+            return None
+        task.description = description
+        task.steps = []
+        task.status = TaskStatus.PENDING
+        task.result_summary = ""
+        await self._save_task(task)
+        await self._publish_event(task, "task_updated")
+        # Re-plan
+        task = await self.plan_task(task)
+        return task
+
     # ── Event Publishing ──────────────────────────────────────────────
 
     async def _publish_event(self, task: PlannedTask, event_type: str) -> None:

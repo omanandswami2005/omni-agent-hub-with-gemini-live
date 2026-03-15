@@ -43,6 +43,12 @@ def _build_root_instruction(
 ) -> str:
     """Dynamically build the root instruction from active personas and their available tools."""
 
+    # Collect ALL actually-loaded tool names across all personas for validation
+    all_real_tool_names: set[str] = set()
+    for tools in tools_map.values():
+        for t in tools:
+            all_real_tool_names.add(getattr(t, "name", str(t)))
+
     # Build detailed persona list with their tools
     persona_lines = []
     for pid, pname in persona_names:
@@ -69,25 +75,34 @@ def _build_root_instruction(
         else ""
     )
 
-    # Build plugin/integration awareness section
+    # Build plugin/integration awareness section — ONLY include tools that
+    # are actually loaded (present in tools_map).  This prevents the agent
+    # from seeing tool names from tools_summary that were never fetched
+    # from the MCP server (guessed names that cause hallucination).
     plugin_section = ""
     if plugin_summaries:
         plugin_lines = []
-        # Group by plugin
         plugins_grouped: dict[str, list[str]] = {}
         for s in plugin_summaries:
             pname = s.get("plugin", "")
             tname = s.get("tool", "")
             tdesc = s.get("description", "")
-            plugins_grouped.setdefault(pname, []).append(f"{tname} ({tdesc})" if tdesc else tname)
+            # Only include tools that are ACTUALLY loaded into some persona
+            if tname not in all_real_tool_names:
+                continue
+            # Escape curly braces in descriptions so ADK's template engine
+            # doesn't mistake them for session-state variables (e.g. "{property}")
+            safe_desc = tdesc.replace("{", "{{").replace("}", "}}") if tdesc else ""
+            plugins_grouped.setdefault(pname, []).append(f"{tname} ({safe_desc})" if safe_desc else tname)
         for pname, tools in plugins_grouped.items():
             plugin_lines.append(f"- {pname}: {', '.join(tools)}")
-        plugin_section = (
-            "\n\nEnabled integrations/plugins (use these via the persona that has the tools):\n"
-            + "\n".join(plugin_lines)
-            + "\nWhen the user asks about calendar, files, or any integration-related task, "
-            "transfer to the persona that has the relevant plugin tools — do NOT use device_agent for plugin tasks."
-        )
+        if plugin_lines:
+            plugin_section = (
+                "\n\nEnabled integrations/plugins (use these via the persona that has the tools):\n"
+                + "\n".join(plugin_lines)
+                + "\nWhen the user asks about calendar, files, or any integration-related task, "
+                "transfer to the persona that has the relevant plugin tools — do NOT use device_agent for plugin tasks."
+            )
 
     return (
         "You are Omni, a friendly and capable AI hub designed for continuous voice-first interaction. "
@@ -182,8 +197,16 @@ def _build_root_instruction(
         "11. When user asks about task status/progress → call get_task_status or list_planned_tasks.\n"
         "12. For E2B desktop tasks → transfer to coder or the persona with sandbox tools.\n\n"
         "IMPORTANT: Do NOT use Google Search for casual conversation. "
-        "Do NOT invent tool names. "
-        "Always give verbal feedback before calling a tool."
+        "Do NOT invent tool names — ONLY call tools that are explicitly listed in your tools list or in the persona's tools above. "
+        "If a user asks for a capability (like calendar, email, etc.) but no matching tool/plugin is listed above, "
+        "tell the user to enable the relevant plugin in the MCP Store first. "
+        "Always give verbal feedback before calling a tool.\n\n"
+        "## STRICT TOOL REGISTRY — ONLY these tool names exist\n"
+        "The following is the AUTHORITATIVE and COMPLETE list of callable tool names. "
+        "Do NOT call ANY function name that is not in this list. "
+        "If a tool you expect is missing, it means the plugin failed to load or is not enabled — "
+        "tell the user instead of guessing a tool name.\n"
+        f"Callable tools: {', '.join(sorted(all_real_tool_names)) if all_real_tool_names else '(none loaded)'}"
     )
 
 

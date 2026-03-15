@@ -1,16 +1,22 @@
 /**
- * TaskPanel — Live task planning progress sidebar panel.
+ * TaskPanel — Full task lifecycle sidebar panel.
  *
- * Shows planned tasks with step-by-step timeline progress, status badges,
- * and human-in-the-loop input cards. Primary task UI for the sidebar.
+ * Features: step timeline, Review Plan modal, edit/delete, lazy loading,
+ * task categories, abort/restart support.
  */
 
 import { cn } from '@/lib/cn';
 import { api } from '@/lib/api';
 import { useTaskStore } from '@/stores/taskStore';
-import { ListTodo, Play, Pause, X, ChevronRight, ChevronLeft, Clock, CheckCircle2, AlertCircle, Loader2, User, Zap, RefreshCw } from 'lucide-react';
+import {
+    ListTodo, Play, Pause, X, ChevronRight, ChevronLeft, Clock, CheckCircle2,
+    AlertCircle, Loader2, Zap, RefreshCw, Trash2, Pencil, Eye,
+    Calendar, Repeat, MoreVertical, ChevronDown,
+} from 'lucide-react';
 import HumanInputCard from './HumanInputCard';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+// ── Constants ────────────────────────────────────────────────────────
 
 const STATUS_CONFIG = {
     pending: { icon: Clock, color: 'text-muted-foreground', bg: 'bg-muted/30', label: 'Pending', ring: 'ring-muted-foreground/30' },
@@ -40,23 +46,40 @@ const PERSONA_LABELS = {
     creative: { label: 'Creative', color: 'bg-pink-100 text-pink-700 dark:bg-pink-700 dark:text-pink-300' },
 };
 
+const CATEGORIES = {
+    all: { label: 'All', icon: ListTodo },
+    running: { label: 'Active', icon: Loader2 },
+    scheduled: { label: 'Scheduled', icon: Calendar },
+    recurring: { label: 'Recurring', icon: Repeat },
+    completed: { label: 'Completed', icon: CheckCircle2 },
+    failed: { label: 'Failed', icon: AlertCircle },
+};
+
+const PAGE_SIZE = 10;
+
+function categorizeTask(task) {
+    if (task.status === 'running' || task.status === 'paused') return 'running';
+    if (task.status === 'completed') return 'completed';
+    if (task.status === 'failed') return 'failed';
+    if (task.context?.scheduled || task.context?.cron_expression) return 'scheduled';
+    if (task.context?.recurring) return 'recurring';
+    return 'all';
+}
+
+// ── Step Timeline ────────────────────────────────────────────────────
+
 function StepTimeline({ step, isLast }) {
     const status = STEP_STATUS[step.status] || STEP_STATUS.pending;
     const persona = PERSONA_LABELS[step.persona_id] || { label: step.persona_id, color: 'bg-muted text-muted-foreground' };
 
     return (
         <div className="flex gap-3 group">
-            {/* Timeline connector */}
             <div className="flex flex-col items-center">
                 <div className={cn('h-2.5 w-2.5 rounded-full shrink-0 mt-1.5 ring-2 ring-offset-1 ring-offset-background transition-all', status.dot,
                     step.status === 'completed' ? 'ring-green-500/20' : step.status === 'running' ? 'ring-blue-500/30' : 'ring-transparent'
                 )} />
-                {!isLast && (
-                    <div className={cn('w-0.5 flex-1 min-h-6 mt-1 transition-colors', status.line)} />
-                )}
+                {!isLast && <div className={cn('w-0.5 flex-1 min-h-6 mt-1 transition-colors', status.line)} />}
             </div>
-
-            {/* Step content */}
             <div className="flex-1 min-w-0 pb-3">
                 <div className="flex items-start gap-2">
                     <p className={cn('text-sm font-medium leading-tight flex-1',
@@ -69,6 +92,7 @@ function StepTimeline({ step, isLast }) {
                         {persona.label}
                     </span>
                 </div>
+                {step.description && <p className="text-xs text-muted-foreground mt-0.5">{step.description}</p>}
                 {step.status === 'running' && (
                     <p className="text-xs text-blue-500 mt-0.5 flex items-center gap-1">
                         <Loader2 className="h-3 w-3 animate-spin" /> Executing...
@@ -90,25 +114,195 @@ function StepTimeline({ step, isLast }) {
     );
 }
 
-function TaskCard({ task, isActive, onClick }) {
+// ── Review Plan Modal ────────────────────────────────────────────────
+
+function ReviewPlanModal({ task, onClose, onExecute, onEdit, onDelete }) {
+    const [editMode, setEditMode] = useState(false);
+    const [editText, setEditText] = useState(task.description);
+    const [saving, setSaving] = useState(false);
+
+    const handleSaveEdit = async () => {
+        if (!editText.trim() || editText === task.description) {
+            setEditMode(false);
+            return;
+        }
+        setSaving(true);
+        await onEdit(editText.trim());
+        setSaving(false);
+        setEditMode(false);
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
+            <div
+                className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[80vh] overflow-hidden flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+                    <h3 className="text-sm font-semibold">Review Plan</h3>
+                    <button onClick={onClose} className="rounded-md p-1 hover:bg-muted"><X className="h-4 w-4" /></button>
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                    {/* Task description */}
+                    <div>
+                        <label className="text-xs font-medium text-muted-foreground mb-1 block">Task Description</label>
+                        {editMode ? (
+                            <div className="space-y-2">
+                                <textarea
+                                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+                                    rows={4}
+                                    value={editText}
+                                    onChange={(e) => setEditText(e.target.value)}
+                                    autoFocus
+                                />
+                                <div className="flex gap-2 justify-end">
+                                    <button
+                                        onClick={() => { setEditMode(false); setEditText(task.description); }}
+                                        className="text-xs px-3 py-1.5 rounded-md bg-muted hover:bg-muted/80 transition-colors"
+                                    >Cancel</button>
+                                    <button
+                                        onClick={handleSaveEdit}
+                                        disabled={saving}
+                                        className="text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1"
+                                    >
+                                        {saving && <Loader2 className="h-3 w-3 animate-spin" />}
+                                        Save & Re-plan
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="flex items-start gap-2">
+                                <p className="text-sm flex-1 bg-muted/30 rounded-lg px-3 py-2">{task.description}</p>
+                                {task.status !== 'running' && (
+                                    <button onClick={() => setEditMode(true)} className="rounded-md p-1.5 hover:bg-muted shrink-0" title="Edit">
+                                        <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Title */}
+                    {task.title && (
+                        <div>
+                            <label className="text-xs font-medium text-muted-foreground mb-1 block">Generated Title</label>
+                            <p className="text-sm font-medium">{task.title}</p>
+                        </div>
+                    )}
+
+                    {/* Steps */}
+                    {(task.steps || []).length > 0 && (
+                        <div>
+                            <label className="text-xs font-medium text-muted-foreground mb-2 block">
+                                Planned Steps ({task.steps.length})
+                            </label>
+                            <div className="pl-1">
+                                {task.steps.map((step, i) => (
+                                    <StepTimeline key={step.id} step={step} isLast={i === task.steps.length - 1} />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Metadata */}
+                    <div className="flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+                        {task.created_at && <span>Created: {new Date(task.created_at).toLocaleString()}</span>}
+                        {task.updated_at && <span> · Updated: {new Date(task.updated_at).toLocaleString()}</span>}
+                    </div>
+                </div>
+
+                {/* Footer actions */}
+                <div className="flex items-center justify-between px-5 py-3 border-t border-border bg-muted/20">
+                    <button
+                        onClick={onDelete}
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md text-red-500 hover:bg-red-500/10 transition-colors"
+                    >
+                        <Trash2 className="h-3 w-3" /> Delete
+                    </button>
+                    <div className="flex gap-2">
+                        <button onClick={onClose} className="text-xs px-3 py-1.5 rounded-md bg-muted hover:bg-muted/80 transition-colors">
+                            Close
+                        </button>
+                        {task.status === 'awaiting_confirmation' && (
+                            <button
+                                onClick={onExecute}
+                                className="flex items-center gap-1.5 text-xs px-4 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                            >
+                                <Play className="h-3 w-3" /> Execute Plan
+                            </button>
+                        )}
+                        {(task.status === 'failed' || task.status === 'cancelled') && (
+                            <button
+                                onClick={() => { setEditMode(true); }}
+                                className="flex items-center gap-1.5 text-xs px-4 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                            >
+                                <RefreshCw className="h-3 w-3" /> Edit & Retry
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ── Task Card ────────────────────────────────────────────────────────
+
+function TaskCard({ task, isActive, onClick, onReview, onDelete }) {
     const config = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
     const Icon = config.icon;
     const progress = task.progress ?? 0;
     const stepCount = (task.steps || []).length;
     const completedSteps = (task.steps || []).filter((s) => s.status === 'completed').length;
+    const [showMenu, setShowMenu] = useState(false);
+    const menuRef = useRef(null);
+
+    useEffect(() => {
+        if (!showMenu) return;
+        const handler = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setShowMenu(false); };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [showMenu]);
 
     return (
-        <button
-            onClick={onClick}
+        <div
             className={cn(
-                'w-full text-left rounded-lg border p-3 transition-all duration-200',
+                'w-full text-left rounded-lg border p-3 transition-all duration-200 relative group',
                 isActive ? 'border-primary bg-primary/5 shadow-sm' : 'border-border hover:bg-muted/50 hover:border-muted-foreground/20',
             )}
         >
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 cursor-pointer" onClick={onClick}>
                 <Icon className={cn('h-4 w-4 shrink-0', config.color, config.icon === Loader2 && 'animate-spin')} />
                 <p className="text-sm font-medium truncate flex-1">{task.title || task.description?.slice(0, 60)}</p>
-                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+
+                {/* Context menu */}
+                <div className="relative shrink-0" ref={menuRef}>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
+                        className="rounded p-0.5 hover:bg-muted opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                        <MoreVertical className="h-3.5 w-3.5 text-muted-foreground" />
+                    </button>
+                    {showMenu && (
+                        <div className="absolute right-0 top-5 z-10 rounded-lg border border-border bg-card shadow-lg py-1 w-32">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setShowMenu(false); onReview(); }}
+                                className="flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-muted"
+                            >
+                                <Eye className="h-3 w-3" /> View Plan
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setShowMenu(false); onDelete(); }}
+                                className="flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-muted text-red-500"
+                            >
+                                <Trash2 className="h-3 w-3" /> Delete
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
             <div className="flex items-center gap-2 mt-2">
                 <span className={cn('text-[10px] px-2 py-0.5 rounded-full font-medium', config.bg, config.color)}>
@@ -117,6 +311,11 @@ function TaskCard({ task, isActive, onClick }) {
                 {stepCount > 0 && (
                     <span className="text-xs text-muted-foreground">
                         {completedSteps}/{stepCount} steps
+                    </span>
+                )}
+                {task.created_at && (
+                    <span className="text-[10px] text-muted-foreground/60 ml-auto">
+                        {new Date(task.created_at).toLocaleDateString()}
                     </span>
                 )}
             </div>
@@ -128,11 +327,22 @@ function TaskCard({ task, isActive, onClick }) {
                     />
                 </div>
             )}
-        </button>
+            {/* Quick action: Review Plan button for awaiting_confirmation */}
+            {task.status === 'awaiting_confirmation' && (
+                <button
+                    onClick={(e) => { e.stopPropagation(); onReview(); }}
+                    className="mt-2 w-full flex items-center justify-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-colors font-medium"
+                >
+                    <Eye className="h-3 w-3" /> Review Plan
+                </button>
+            )}
+        </div>
     );
 }
 
-function TaskDetail({ task }) {
+// ── Task Detail (shown when clicking into a task) ────────────────────
+
+function TaskDetail({ task, onOpenReview }) {
     const allPendingInputs = useTaskStore((s) => s.pendingInputs);
     const pendingInputs = useMemo(() => Object.values(allPendingInputs).filter((i) => i.taskId === task.id), [allPendingInputs, task.id]);
     const [expanded, setExpanded] = useState(true);
@@ -158,7 +368,7 @@ function TaskDetail({ task }) {
 
     return (
         <div className="space-y-3">
-            {/* Header with status */}
+            {/* Header */}
             <div className="rounded-lg border border-border p-3">
                 <div className="flex items-start gap-2">
                     <Icon className={cn('h-5 w-5 shrink-0 mt-0.5', config.color, config.icon === Loader2 && 'animate-spin')} />
@@ -177,60 +387,64 @@ function TaskDetail({ task }) {
                 </div>
                 {(task.status === 'running' || task.status === 'planning') && (
                     <div className="mt-2 h-1.5 w-full rounded-full bg-muted overflow-hidden">
-                        <div
-                            className="h-full rounded-full bg-blue-500 transition-all duration-700 ease-out"
-                            style={{ width: `${Math.max(task.progress ?? 0, 5)}%` }}
-                        />
+                        <div className="h-full rounded-full bg-blue-500 transition-all duration-700 ease-out"
+                            style={{ width: `${Math.max(task.progress ?? 0, 5)}%` }} />
                     </div>
                 )}
             </div>
 
-            {/* Action buttons */}
+            {/* Actions */}
             <div className="flex gap-2 flex-wrap">
                 {task.status === 'awaiting_confirmation' && (
-                    <button
-                        onClick={handleExecute}
-                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-                    >
-                        <Play className="h-3 w-3" /> Execute Plan
-                    </button>
+                    <>
+                        <button
+                            onClick={onOpenReview}
+                            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-colors"
+                        >
+                            <Eye className="h-3 w-3" /> Review Plan
+                        </button>
+                        <button
+                            onClick={handleExecute}
+                            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                        >
+                            <Play className="h-3 w-3" /> Execute
+                        </button>
+                    </>
                 )}
                 {task.status === 'running' && (
-                    <button
-                        onClick={() => handleAction('pause')}
-                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-amber-500 text-white hover:bg-amber-600 transition-colors"
-                    >
+                    <button onClick={() => handleAction('pause')}
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-amber-500 text-white hover:bg-amber-600 transition-colors">
                         <Pause className="h-3 w-3" /> Pause
                     </button>
                 )}
                 {task.status === 'paused' && (
-                    <button
-                        onClick={() => handleAction('resume')}
-                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-blue-500 text-white hover:bg-blue-600 transition-colors"
-                    >
+                    <button onClick={() => handleAction('resume')}
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-blue-500 text-white hover:bg-blue-600 transition-colors">
                         <Play className="h-3 w-3" /> Resume
                     </button>
                 )}
                 {['running', 'paused', 'awaiting_confirmation'].includes(task.status) && (
-                    <button
-                        onClick={() => handleAction('cancel')}
-                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-colors"
-                    >
+                    <button onClick={() => handleAction('cancel')}
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-colors">
                         <X className="h-3 w-3" /> Cancel
+                    </button>
+                )}
+                {(task.status === 'failed' || task.status === 'cancelled') && (
+                    <button onClick={onOpenReview}
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+                        <RefreshCw className="h-3 w-3" /> Edit & Retry
                     </button>
                 )}
             </div>
 
-            {/* Pending Input Requests */}
+            {/* Pending Inputs */}
             {pendingInputs.length > 0 && (
                 <div className="space-y-2">
-                    {pendingInputs.map((input) => (
-                        <HumanInputCard key={input.id} input={input} taskId={task.id} />
-                    ))}
+                    {pendingInputs.map((input) => <HumanInputCard key={input.id} input={input} taskId={task.id} />)}
                 </div>
             )}
 
-            {/* Step Timeline */}
+            {/* Steps */}
             {(task.steps || []).length > 0 && (
                 <div>
                     <button
@@ -250,7 +464,7 @@ function TaskDetail({ task }) {
                 </div>
             )}
 
-            {/* Result summary */}
+            {/* Result */}
             {task.result_summary && (
                 <div className="rounded-lg border border-green-200 dark:border-green-500/20 bg-green-50 dark:bg-green-500/5 p-3">
                     <p className="text-xs font-medium text-green-700 dark:text-green-400 mb-1 flex items-center gap-1">
@@ -263,26 +477,120 @@ function TaskDetail({ task }) {
     );
 }
 
+// ── Category Filter Tabs ─────────────────────────────────────────────
+
+function CategoryTabs({ active, counts, onChange }) {
+    return (
+        <div className="flex gap-1 overflow-x-auto scrollbar-none pb-1">
+            {Object.entries(CATEGORIES).map(([key, { label, icon: CatIcon }]) => {
+                const count = counts[key] || 0;
+                if (key !== 'all' && count === 0) return null;
+                return (
+                    <button
+                        key={key}
+                        onClick={() => onChange(key)}
+                        className={cn(
+                            'flex items-center gap-1 text-[10px] px-2 py-1 rounded-full whitespace-nowrap transition-colors font-medium',
+                            active === key ? 'bg-primary text-primary-foreground' : 'bg-muted/50 text-muted-foreground hover:bg-muted',
+                        )}
+                    >
+                        <CatIcon className="h-2.5 w-2.5" />
+                        {label} {count > 0 && `(${count})`}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
+// ── Main Panel ───────────────────────────────────────────────────────
+
 export default function TaskPanel() {
     const rawTasks = useTaskStore((s) => s.tasks);
     const tasks = useMemo(() => Object.values(rawTasks).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')), [rawTasks]);
     const activeTaskId = useTaskStore((s) => s.activeTaskId);
     const setActiveTask = useTaskStore((s) => s.setActiveTask);
 
+    const [reviewTask, setReviewTask] = useState(null);
+    const [category, setCategory] = useState('all');
+    const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+    const [loading, setLoading] = useState(false);
+
     const activeTask = tasks.find((t) => t.id === activeTaskId);
     const runningCount = tasks.filter((t) => t.status === 'running').length;
     const pendingInputCount = Object.keys(useTaskStore.getState().pendingInputs).length;
 
-    // Auto-load tasks on mount
+    // Category counts
+    const categoryCounts = useMemo(() => {
+        const counts = { all: tasks.length, running: 0, scheduled: 0, recurring: 0, completed: 0, failed: 0 };
+        tasks.forEach((t) => {
+            const cat = categorizeTask(t);
+            if (cat !== 'all') counts[cat] = (counts[cat] || 0) + 1;
+        });
+        return counts;
+    }, [tasks]);
+
+    // Filtered + paginated
+    const filteredTasks = useMemo(() => {
+        if (category === 'all') return tasks;
+        return tasks.filter((t) => categorizeTask(t) === category);
+    }, [tasks, category]);
+    const visibleTasks = filteredTasks.slice(0, visibleCount);
+    const hasMore = filteredTasks.length > visibleCount;
+
+    // Load tasks on mount
     useEffect(() => {
+        setLoading(true);
         api.get('/tasks').then((data) => {
             if (data?.tasks) {
                 data.tasks.forEach((t) => useTaskStore.getState().setTask(t));
             }
-        }).catch(() => { });
+        }).catch(() => { }).finally(() => setLoading(false));
     }, []);
 
-    if (tasks.length === 0) return null;
+    // Reset pagination when category changes
+    useEffect(() => { setVisibleCount(PAGE_SIZE); }, [category]);
+
+    // Keep reviewTask in sync with store updates
+    useEffect(() => {
+        if (reviewTask) {
+            const updated = rawTasks[reviewTask.id];
+            if (updated) setReviewTask(updated);
+        }
+    }, [rawTasks, reviewTask?.id]);
+
+    const handleDelete = useCallback(async (taskId) => {
+        try {
+            await api.delete(`/tasks/${taskId}`);
+            useTaskStore.getState().removeTask(taskId);
+            if (reviewTask?.id === taskId) setReviewTask(null);
+            if (activeTaskId === taskId) useTaskStore.getState().setActiveTask(null);
+        } catch (err) {
+            console.error('Delete failed:', err);
+        }
+    }, [reviewTask, activeTaskId]);
+
+    const handleEdit = useCallback(async (taskId, newDescription) => {
+        try {
+            const result = await api.put(`/tasks/${taskId}`, { description: newDescription });
+            if (result) {
+                useTaskStore.getState().setTask(result);
+            }
+        } catch (err) {
+            console.error('Edit failed:', err);
+        }
+    }, []);
+
+    const handleExecute = useCallback(async (taskId) => {
+        try {
+            await api.post(`/tasks/${taskId}/execute`);
+            setReviewTask(null);
+        } catch (err) {
+            console.error('Execute failed:', err);
+        }
+    }, []);
+
+    if (tasks.length === 0 && !loading) return null;
 
     return (
         <div className="rounded-lg border border-border bg-card">
@@ -290,12 +598,12 @@ export default function TaskPanel() {
             <div className="flex items-center justify-between px-3 py-2 border-b border-border">
                 <div className="flex items-center gap-1.5">
                     <ListTodo className="h-4 w-4 text-muted-foreground" />
-                    <p className="text-xs font-semibold text-foreground">Planned Tasks</p>
+                    <p className="text-xs font-semibold text-foreground">Tasks</p>
                 </div>
                 <div className="flex items-center gap-2">
                     {pendingInputCount > 0 && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-500 font-medium">
-                            {pendingInputCount} input{pendingInputCount > 1 ? 's' : ''} needed
+                            {pendingInputCount} input{pendingInputCount > 1 ? 's' : ''}
                         </span>
                     )}
                     {runningCount > 0 && (
@@ -307,8 +615,19 @@ export default function TaskPanel() {
                 </div>
             </div>
 
+            {/* Categories */}
+            {tasks.length > 3 && (
+                <div className="px-3 pt-2">
+                    <CategoryTabs active={category} counts={categoryCounts} onChange={setCategory} />
+                </div>
+            )}
+
             <div className="p-3">
-                {activeTask ? (
+                {loading && tasks.length === 0 ? (
+                    <div className="flex items-center justify-center py-6">
+                        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                    </div>
+                ) : activeTask ? (
                     <div>
                         <button
                             onClick={() => useTaskStore.getState().setActiveTask(null)}
@@ -316,26 +635,47 @@ export default function TaskPanel() {
                         >
                             <ChevronLeft className="h-3 w-3" /> All tasks
                         </button>
-                        <TaskDetail task={activeTask} />
+                        <TaskDetail
+                            task={activeTask}
+                            onOpenReview={() => setReviewTask(activeTask)}
+                        />
                     </div>
                 ) : (
                     <div className="space-y-2">
-                        {tasks.slice(0, 10).map((task) => (
+                        {visibleTasks.map((task) => (
                             <TaskCard
                                 key={task.id}
                                 task={task}
                                 isActive={task.id === activeTaskId}
                                 onClick={() => setActiveTask(task.id)}
+                                onReview={() => setReviewTask(task)}
+                                onDelete={() => handleDelete(task.id)}
                             />
                         ))}
-                        {tasks.length > 10 && (
-                            <p className="text-xs text-muted-foreground text-center pt-1">
-                                +{tasks.length - 10} more tasks
-                            </p>
+                        {hasMore && (
+                            <button
+                                onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+                                className="w-full text-xs text-primary hover:underline text-center py-2 flex items-center justify-center gap-1"
+                            >
+                                <ChevronDown className="h-3 w-3" />
+                                Show {Math.min(PAGE_SIZE, filteredTasks.length - visibleCount)} more
+                                ({filteredTasks.length - visibleCount} remaining)
+                            </button>
                         )}
                     </div>
                 )}
             </div>
+
+            {/* Review Plan Modal */}
+            {reviewTask && (
+                <ReviewPlanModal
+                    task={reviewTask}
+                    onClose={() => setReviewTask(null)}
+                    onExecute={() => handleExecute(reviewTask.id)}
+                    onEdit={(desc) => handleEdit(reviewTask.id, desc)}
+                    onDelete={() => handleDelete(reviewTask.id)}
+                />
+            )}
         </div>
     );
 }

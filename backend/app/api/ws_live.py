@@ -822,72 +822,112 @@ async def _downstream(
     """
     bus = get_event_bus()
     first_event = True
-    try:
-        async for event in runner.run_live(
-            user_id=user_id,
-            session_id=session_id,
-            live_request_queue=queue,
-            run_config=run_config,
-        ):
-            if first_event:
-                logger.info("live_connection_established", user_id=user_id, session_id=session_id)
-                first_event = False
-            await _process_event(websocket, event, bus, user_id, conn_tag=str(id(websocket)), client_type=client_type)
-    except (WebSocketDisconnect, RuntimeError):
-        logger.info("ws_downstream_disconnected", user_id=user_id)
-    except Exception as exc:
-        # Classify expected WebSocket closure conditions as info, not errors.
-        exc_str = str(exc)
-        exc_str_lower = exc_str.lower()
+    _MAX_TOOL_RETRIES = 3  # Max consecutive tool-not-found errors before giving up
+    _tool_error_count = 0
+    while True:
+        try:
+            async for event in runner.run_live(
+                user_id=user_id,
+                session_id=session_id,
+                live_request_queue=queue,
+                run_config=run_config,
+            ):
+                if first_event:
+                    logger.info("live_connection_established", user_id=user_id, session_id=session_id)
+                    first_event = False
+                _tool_error_count = 0  # Reset on successful event
+                await _process_event(websocket, event, bus, user_id, conn_tag=str(id(websocket)), client_type=client_type)
+            break  # Generator exhausted normally
+        except (WebSocketDisconnect, RuntimeError):
+            logger.info("ws_downstream_disconnected", user_id=user_id)
+            break
+        except ValueError as exc:
+            exc_str = str(exc)
+            # LLM hallucinated a tool name that doesn't exist — send error to client,
+            # reset state to idle, and restart the live loop so the session stays alive.
+            if "not found" in exc_str.lower() and "tool" in exc_str.lower():
+                _tool_error_count += 1
+                logger.warning("ws_downstream_tool_not_found", user_id=user_id, error=exc_str, attempt=_tool_error_count)
+                # Invalidate ADK session so the retry starts fresh
+                _adk_session_id_cache.pop(user_id, None)
+                with contextlib.suppress(Exception):
+                    err = ErrorMessage(
+                        code="tool_error",
+                        description=f"The AI tried to use a tool that doesn't exist. Please try rephrasing your request. ({exc_str.split(chr(10))[0]})",
+                    )
+                    await websocket.send_text(err.model_dump_json())
+                # Always send IDLE status so the frontend unblocks
+                with contextlib.suppress(Exception):
+                    idle_msg = StatusMessage(state=AgentState.IDLE)
+                    await websocket.send_text(idle_msg.model_dump_json())
+                if _tool_error_count >= _MAX_TOOL_RETRIES:
+                    logger.error("ws_downstream_tool_not_found_max_retries", user_id=user_id)
+                    break
+                # Restart the run_live loop — session was invalidated so a fresh one is created
+                continue
+            else:
+                logger.exception("ws_downstream_error", user_id=user_id)
+                break
+        except Exception as exc:
+            # Classify expected WebSocket closure conditions as info, not errors.
+            exc_str = str(exc)
+            exc_str_lower = exc_str.lower()
 
-        # ADK session lost (Cloud Run cold start / new instance)
-        if (
-            "sessionnotfounderror" in type(exc).__name__.lower()
-            or "session not found" in exc_str_lower
-        ):
-            logger.warning("ws_downstream_session_lost", user_id=user_id, session_id=session_id)
-            # Invalidate the cache so the next reconnect creates a fresh session
-            _adk_session_id_cache.pop(user_id, None)
-            with contextlib.suppress(Exception):
-                err = ErrorMessage(
-                    code="session_expired",
-                    description="Your session expired. Reconnecting…",
-                )
-                await websocket.send_text(err.model_dump_json())
-            return  # Let the client reconnect cleanly
+            # ADK session lost (Cloud Run cold start / new instance)
+            if (
+                "sessionnotfounderror" in type(exc).__name__.lower()
+                or "session not found" in exc_str_lower
+            ):
+                logger.warning("ws_downstream_session_lost", user_id=user_id, session_id=session_id)
+                # Invalidate the cache so the next reconnect creates a fresh session
+                _adk_session_id_cache.pop(user_id, None)
+                with contextlib.suppress(Exception):
+                    err = ErrorMessage(
+                        code="session_expired",
+                        description="Your session expired. Reconnecting…",
+                    )
+                    await websocket.send_text(err.model_dump_json())
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(StatusMessage(state=AgentState.IDLE).model_dump_json())
+                return  # Let the client reconnect cleanly
 
-        normal_closure = (
-            # Graceful cancel from Gemini side
-            ("1000" in exc_str and "cancelled" in exc_str_lower)
-            # Keepalive ping timeout — network drop between backend and Gemini
-            or "keepalive ping timeout" in exc_str_lower
-            # Any other normal close (1001 going away, 1006 abnormal)
-            or "connection closed" in exc_str_lower
-        )
-        if normal_closure:
-            logger.info("ws_downstream_session_ended", user_id=user_id, reason=exc_str)
-        elif (
-            isinstance(exc, TimeoutError)
-            or "timed out" in exc_str_lower
-            or "opening handshake" in exc_str_lower
-        ):
-            logger.warning("ws_downstream_live_timeout", user_id=user_id, error=exc_str)
+            normal_closure = (
+                # Graceful cancel from Gemini side
+                ("1000" in exc_str and "cancelled" in exc_str_lower)
+                # Keepalive ping timeout — network drop between backend and Gemini
+                or "keepalive ping timeout" in exc_str_lower
+                # Any other normal close (1001 going away, 1006 abnormal)
+                or "connection closed" in exc_str_lower
+            )
+            if normal_closure:
+                logger.info("ws_downstream_session_ended", user_id=user_id, reason=exc_str)
+            elif (
+                isinstance(exc, TimeoutError)
+                or "timed out" in exc_str_lower
+                or "opening handshake" in exc_str_lower
+            ):
+                logger.warning("ws_downstream_live_timeout", user_id=user_id, error=exc_str)
+                with contextlib.suppress(Exception):
+                    err = ErrorMessage(
+                        code="live_connection_timeout",
+                        description="Could not connect to the live voice service — the connection timed out. Please try again.",
+                    )
+                    await websocket.send_text(err.model_dump_json())
+            elif "429" in exc_str or "resource_exhausted" in exc_str_lower:
+                logger.warning("ws_downstream_rate_limited", user_id=user_id)
+                with contextlib.suppress(Exception):
+                    err = ErrorMessage(
+                        code="rate_limited",
+                        description="The AI service is temporarily overloaded (rate limit). Please wait a moment and try again.",
+                    )
+                    await websocket.send_text(err.model_dump_json())
+            else:
+                logger.exception("ws_downstream_error", user_id=user_id)
+            # Always send IDLE status on any exception path so the frontend
+            # never gets stuck in a permanent "processing" state.
             with contextlib.suppress(Exception):
-                err = ErrorMessage(
-                    code="live_connection_timeout",
-                    description="Could not connect to the live voice service — the connection timed out. Please try again.",
-                )
-                await websocket.send_text(err.model_dump_json())
-        elif "429" in exc_str or "resource_exhausted" in exc_str_lower:
-            logger.warning("ws_downstream_rate_limited", user_id=user_id)
-            with contextlib.suppress(Exception):
-                err = ErrorMessage(
-                    code="rate_limited",
-                    description="The AI service is temporarily overloaded (rate limit). Please wait a moment and try again.",
-                )
-                await websocket.send_text(err.model_dump_json())
-        else:
-            logger.exception("ws_downstream_error", user_id=user_id)
+                await websocket.send_text(StatusMessage(state=AgentState.IDLE).model_dump_json())
+            break  # Exit the while-True retry loop on non-recoverable errors
 
 
 # ── Tool classification ──────────────────────────────────────────────

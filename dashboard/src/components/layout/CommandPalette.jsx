@@ -8,10 +8,10 @@ import { Search, X, MessageSquare, Users, FolderOpen, Settings, Zap } from 'luci
 import { useUiStore } from '@/stores/uiStore';
 
 const commands = [
-    { id: 'chat', label: 'New Chat', icon: MessageSquare, path: '/' },
+    { id: 'chat', label: 'New Chat', icon: MessageSquare, path: '/dashboard' },
     { id: 'sessions', label: 'Sessions', icon: FolderOpen, path: '/sessions' },
     { id: 'personas', label: 'Personas', icon: Users, path: '/personas' },
-    { id: 'plugins', label: 'Plugins', icon: Zap, path: '/plugins' },
+    { id: 'plugins', label: 'Plugins', icon: Zap, path: '/mcp-store' },
     { id: 'settings', label: 'Settings', icon: Settings, path: '/settings' },
 ];
 

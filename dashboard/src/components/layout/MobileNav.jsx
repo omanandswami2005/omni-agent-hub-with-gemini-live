@@ -10,7 +10,7 @@ import { cn } from '@/lib/cn';
 import MobileSessionDrawer from '@/components/layout/MobileSessionDrawer';
 
 const TABS = [
-  { to: '/', icon: Home, label: 'Home' },
+  { to: '/dashboard', icon: Home, label: 'Home' },
   { to: '/personas', icon: Users, label: 'Personas' },
   { to: '/mcp-store', icon: Store, label: 'MCP' },
   { id: 'sessions-drawer', icon: Clock, label: 'Sessions' },

@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.middleware.auth_middleware import AuthenticatedUser, get_current_user
-from app.models.planned_task import TaskActionRequest, TaskCreateRequest, TaskInputResponse
+from app.models.planned_task import TaskActionRequest, TaskCreateRequest, TaskEditRequest, TaskInputResponse
 from app.services.task_orchestrator import get_task_orchestrator
 from app.utils.logging import get_logger
 
@@ -139,6 +139,48 @@ async def task_action(
         raise HTTPException(status_code=400, detail=f"Unknown action: {body.action}")
 
     return {"success": ok, "action": body.action}
+
+
+@router.delete("/{task_id}")
+async def delete_task(task_id: str, user: AuthenticatedUser = Depends(get_current_user)):  # noqa: B008
+    """Delete a planned task. Running tasks are cancelled first."""
+    orchestrator = get_task_orchestrator()
+    ok = await orchestrator.delete_task(user.uid, task_id)
+    if not ok:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"success": True}
+
+
+@router.put("/{task_id}")
+async def edit_task(
+    task_id: str,
+    body: TaskEditRequest,
+    user: AuthenticatedUser = Depends(get_current_user),  # noqa: B008
+):
+    """Edit task description and re-plan it. Running tasks cannot be edited."""
+    orchestrator = get_task_orchestrator()
+    task = await orchestrator.edit_task(user.uid, task_id, body.description)
+    if not task:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="Task not found or cannot be edited while running")
+    return {
+        "id": task.id,
+        "title": task.title,
+        "status": task.status.value,
+        "steps": [
+            {
+                "id": s.id,
+                "title": s.title,
+                "description": s.description,
+                "persona_id": s.persona_id,
+                "status": s.status.value,
+            }
+            for s in task.steps
+        ],
+    }
 
 
 @router.post("/{task_id}/input/{input_id}")

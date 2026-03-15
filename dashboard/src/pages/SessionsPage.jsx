@@ -32,7 +32,7 @@ export default function SessionsPage() {
     await deleteSession(session.id);
     if (wasActive) {
       clearMessages();
-      navigate('/');
+      navigate('/dashboard');
       voice.reconnect?.();
     }
   };
@@ -41,7 +41,7 @@ export default function SessionsPage() {
     clearMessages();
     useSessionStore.getState().setActiveSession(null);
     useSessionStore.getState().setWantsNewSession(true);
-    navigate('/');
+    navigate('/dashboard');
     voice.reconnect?.();
   };
 

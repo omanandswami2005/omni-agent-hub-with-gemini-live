@@ -82,7 +82,7 @@ function ShellLayout() {
         onToggleMute={voice.toggleMute}
         onToggleScreen={voice.toggleScreen}
         onToggleCamera={voice.toggleCamera}
-        onOpenChat={() => navigate('/')}
+        onOpenChat={() => navigate('/dashboard')}
         isConnected={voice.isConnected}
       />
     </div>

@@ -610,7 +610,21 @@ class PluginRegistry:
 
             toolset, _ = entry
             self._mcp_toolsets[key] = (toolset, time.monotonic())
-            return await toolset.get_tools()
+            try:
+                return await toolset.get_tools()
+            except Exception:
+                # Connection/token may be stale — evict and reconnect once
+                logger.warning("mcp_get_tools_stale", plugin_id=plugin_id, exc_info=True)
+                with contextlib.suppress(Exception):
+                    await toolset.close()
+                self._mcp_toolsets.pop(key, None)
+                success = await self.connect_plugin(user_id, plugin_id)
+                if not success:
+                    return []
+                entry = self._mcp_toolsets.get(key)
+                if entry is None:
+                    return []
+                return await entry[0].get_tools()
 
         return []
 
@@ -621,15 +635,32 @@ class PluginRegistry:
     def get_tool_summaries(self, user_id: str) -> list[dict[str, Any]]:
         """Return lightweight tool summaries for all enabled plugins.
 
-        The agent instruction can reference these summaries so it knows
-        what capabilities exist without loading full schemas.
+        Only includes tools from ``_discovered_summaries`` (verified by
+        actually connecting to the MCP server / loading the native plugin).
+        Falls back to ``manifest.tools_summary`` ONLY for native plugins
+        whose factory function defines the tool names directly.  For MCP
+        servers, unverified summaries are excluded to prevent the agent
+        from hallucinating tool names that don't match the real MCP tools.
         """
         result = []
         for plugin_id in self.get_enabled_ids(user_id):
             manifest = self._catalog.get(plugin_id)
             if manifest is None:
                 continue
-            summaries = self._discovered_summaries.get(plugin_id, manifest.tools_summary)
+            discovered = self._discovered_summaries.get(plugin_id)
+            if discovered is not None:
+                summaries = discovered
+            elif manifest.kind == PluginKind.NATIVE:
+                # Native plugins: tools_summary names match the Python function names
+                summaries = manifest.tools_summary
+            else:
+                # MCP servers: tools_summary names are unverified guesses — skip them
+                logger.debug(
+                    "skipping_unverified_mcp_summaries",
+                    plugin_id=plugin_id,
+                    reason="MCP not connected yet; tools_summary names may not match real tool names",
+                )
+                continue
             for s in summaries:
                 result.append(
                     {
@@ -654,7 +685,12 @@ class PluginRegistry:
             manifest = self._catalog.get(plugin_id)
             if manifest is None:
                 continue
-            summaries = self._discovered_summaries.get(plugin_id, manifest.tools_summary)
+            # Only use discovered summaries (verified names) — never guessed manifest names
+            summaries = self._discovered_summaries.get(plugin_id)
+            if summaries is None and manifest.kind in (PluginKind.MCP_STDIO, PluginKind.MCP_HTTP, PluginKind.MCP_OAUTH):
+                summaries = []  # MCP not connected — don't guess tool names
+            elif summaries is None:
+                summaries = manifest.tools_summary  # Native plugins: names match Python functions
             t2.append(
                 {
                     "plugin": manifest.name,
@@ -744,7 +780,11 @@ class PluginRegistry:
             await self.disconnect_plugin(user_id, pid)
 
     async def evict_idle_toolsets(self) -> int:
-        """Close MCP toolsets idle longer than the TTL."""
+        """Close MCP toolsets idle longer than the TTL.
+
+        Only closes the underlying connection — the plugin stays enabled
+        so that lazy reconnection fires on next use.
+        """
         now = time.monotonic()
         expired: list[tuple[str, str]] = [
             k for k, (_, ts) in self._mcp_toolsets.items() if now - ts > _TOOLSET_IDLE_TTL
@@ -754,10 +794,6 @@ class PluginRegistry:
             if entry is not None:
                 with contextlib.suppress(Exception):
                     await entry[0].close()
-                user_id, plugin_id = key
-                user_mcps = self._user_enabled.get(user_id, {})
-                user_mcps.pop(plugin_id, None)
-                self._persist_enabled(user_id)
         if expired:
             logger.info("plugins_idle_evicted", count=len(expired))
         return len(expired)
