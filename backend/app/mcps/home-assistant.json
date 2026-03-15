@@ -1,0 +1,54 @@
+{
+    "id": "home-assistant",
+    "name": "Home Assistant (IoT)",
+    "description": "Control smart home devices via Home Assistant. Turn lights on/off, adjust thermostats, check sensor readings, run automations, and query the state of any entity in your home network.",
+    "kind": "mcp_stdio",
+    "category": "iot",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@voska/hass-mcp"
+    ],
+    "env_keys": [
+        "HASS_URL",
+        "HASS_TOKEN"
+    ],
+    "requires_auth": true,
+    "icon": "home",
+    "tags": [
+        "smart-home",
+        "iot",
+        "home-assistant",
+        "automation",
+        "lights",
+        "sensors"
+    ],
+    "version": "0.1.0",
+    "tools_summary": [
+        {
+            "name": "get_states",
+            "description": "Get the current state of all or specific Home Assistant entities"
+        },
+        {
+            "name": "call_service",
+            "description": "Call a Home Assistant service (e.g. turn on lights, set thermostat)"
+        },
+        {
+            "name": "get_history",
+            "description": "Get the state history of an entity over a time range"
+        },
+        {
+            "name": "list_automations",
+            "description": "List all configured automations in Home Assistant"
+        },
+        {
+            "name": "trigger_automation",
+            "description": "Trigger a named Home Assistant automation"
+        },
+        {
+            "name": "get_devices",
+            "description": "List all registered devices and their entities"
+        }
+    ],
+    "setup_instructions": "1. Install Home Assistant on your local network or use Home Assistant Cloud (Nabu Casa)\n2. Go to HA → Profile → Long-Lived Access Tokens → Create Token\n3. Set HASS_URL to your HA instance URL (e.g. http://homeassistant.local:8123)\n4. Set HASS_TOKEN to the generated long-lived access token"
+}

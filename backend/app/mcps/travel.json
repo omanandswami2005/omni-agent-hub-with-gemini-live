@@ -1,0 +1,58 @@
+{
+    "id": "travel",
+    "name": "Travel Planner",
+    "description": "Search flights, hotels, and destinations. Get travel recommendations, check visa requirements, find points of interest, and build complete trip itineraries using the Amadeus Travel API.",
+    "kind": "mcp_stdio",
+    "category": "travel",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@optiim/travel-mcp"
+    ],
+    "env_keys": [
+        "AMADEUS_CLIENT_ID",
+        "AMADEUS_CLIENT_SECRET"
+    ],
+    "requires_auth": true,
+    "icon": "plane",
+    "tags": [
+        "travel",
+        "flights",
+        "hotels",
+        "itinerary",
+        "amadeus"
+    ],
+    "version": "0.1.0",
+    "tools_summary": [
+        {
+            "name": "search_flights",
+            "description": "Search for available flights between two cities on a given date"
+        },
+        {
+            "name": "get_flight_offers",
+            "description": "Get detailed pricing and availability for specific flight routes"
+        },
+        {
+            "name": "search_hotels",
+            "description": "Search for hotels at a destination with check-in/check-out dates"
+        },
+        {
+            "name": "get_hotel_details",
+            "description": "Get detailed information and amenities for a specific hotel"
+        },
+        {
+            "name": "get_points_of_interest",
+            "description": "Find top attractions and points of interest near a location"
+        },
+        {
+            "name": "build_itinerary",
+            "description": "Generate a day-by-day travel itinerary for a destination"
+        },
+        {
+            "name": "get_airport_info",
+            "description": "Get details about an airport by IATA code"
+        }
+    ],
+    "setup_instructions": "1. Register at developers.amadeus.com (free test account available)\n2. Create a new app to get Client ID and Secret\n3. The free tier includes flight search, hotel search, and points of interest\n4. Set AMADEUS_CLIENT_ID and AMADEUS_CLIENT_SECRET from your Amadeus dashboard",
+    "_note": "Amadeus offers a free Self-Service tier with real flight and hotel data. No credit card required for the test environment."
+}

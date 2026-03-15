@@ -1,0 +1,48 @@
+{
+    "id": "slidespeak",
+    "name": "SlideSpeek — AI Presentations",
+    "description": "Create professional AI-generated PowerPoint presentations from a text prompt or outline. SlideSpeek uses AI to generate slide structure, content, speaker notes, and design layouts automatically.",
+    "kind": "mcp_stdio",
+    "category": "productivity",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@slidespeak/mcp-server-slidespeak"
+    ],
+    "env_keys": [
+        "SLIDESPEAK_API_KEY"
+    ],
+    "requires_auth": true,
+    "icon": "presentation",
+    "tags": [
+        "presentations",
+        "powerpoint",
+        "slides",
+        "ai",
+        "productivity"
+    ],
+    "version": "0.1.0",
+    "tools_summary": [
+        {
+            "name": "create_presentation",
+            "description": "Generate a full PowerPoint presentation from a topic or detailed prompt"
+        },
+        {
+            "name": "create_from_outline",
+            "description": "Generate a presentation from a structured outline you provide"
+        },
+        {
+            "name": "get_presentation_status",
+            "description": "Check the status of an in-progress presentation generation job"
+        },
+        {
+            "name": "download_presentation",
+            "description": "Get the download URL for a completed presentation (PPTX or PDF)"
+        },
+        {
+            "name": "list_presentations",
+            "description": "List recently generated presentations in your SlideSpeek account"
+        }
+    ],
+    "setup_instructions": "1. Sign up at slidespeak.co\n2. Go to Account Settings → API Keys → Generate New Key\n3. Set SLIDESPEAK_API_KEY to your generated key\nNote: SlideSpeek offers a free tier with limited monthly generations."
+}

@@ -1,0 +1,57 @@
+{
+    "id": "canva",
+    "name": "Canva",
+    "description": "Create and edit Canva designs, search templates, export images, and manage your Canva brand kit via Canva's official MCP integration. Generate design assets directly through the agent.",
+    "kind": "mcp_oauth",
+    "category": "creative",
+    "url": "https://mcp.canva.com/mcp",
+    "oauth": {
+        "client_name": "Omni Hub",
+        "scopes": [
+            "design:content:read",
+            "design:content:write",
+            "brand:read",
+            "asset:read",
+            "asset:write"
+        ],
+        "authorization_url": "https://www.canva.com/api/oauth/authorize",
+        "token_url": "https://api.canva.com/rest/v1/oauth/token",
+        "redirect_uri": ""
+    },
+    "requires_auth": true,
+    "icon": "palette",
+    "tags": [
+        "design",
+        "creative",
+        "images",
+        "templates"
+    ],
+    "version": "0.1.0",
+    "tools_summary": [
+        {
+            "name": "canva_create_design",
+            "description": "Create a new Canva design from a template or blank"
+        },
+        {
+            "name": "canva_search_templates",
+            "description": "Search Canva templates by keyword and category"
+        },
+        {
+            "name": "canva_export_design",
+            "description": "Export a Canva design as PNG, PDF, or MP4"
+        },
+        {
+            "name": "canva_list_designs",
+            "description": "List the user's recent Canva designs"
+        },
+        {
+            "name": "canva_get_brand_kit",
+            "description": "Get the user's Canva brand colors, fonts and logos"
+        },
+        {
+            "name": "canva_upload_asset",
+            "description": "Upload an image to Canva as a brand asset"
+        }
+    ],
+    "setup_instructions": "Connect your Canva account via OAuth. Canva's MCP is available at mcp.canva.com for accounts with the Canva API access (Teams or Enterprise). Enable via Account Settings → Apps → Connect Canva."
+}

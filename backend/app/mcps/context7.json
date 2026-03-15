@@ -1,0 +1,33 @@
+{
+    "id": "context7",
+    "name": "Context7",
+    "description": "Fetch up-to-date, version-specific library documentation and code examples directly from Context7's indexed library database. Eliminates hallucinated API docs by pulling real docs for any library the LLM needs.",
+    "kind": "mcp_stdio",
+    "category": "development",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@upstash/context7-mcp"
+    ],
+    "env_keys": [],
+    "requires_auth": false,
+    "icon": "book-open",
+    "tags": [
+        "documentation",
+        "development",
+        "libraries",
+        "code"
+    ],
+    "version": "0.1.0",
+    "tools_summary": [
+        {
+            "name": "resolve-library-id",
+            "description": "Resolve a library name to its Context7-compatible library ID"
+        },
+        {
+            "name": "get-library-docs",
+            "description": "Fetch up-to-date documentation for a specific library version from Context7"
+        }
+    ],
+    "setup_instructions": "No API key required. Works out of the box. Optionally set CONTEXT7_API_KEY for higher rate limits."
+}

@@ -1,0 +1,51 @@
+{
+    "id": "linkedin",
+    "name": "LinkedIn",
+    "description": "Read LinkedIn profiles, search people and companies, and post content to LinkedIn via the unofficial LinkedIn MCP server. Useful for professional research, outreach drafting, and publishing thought leadership content.",
+    "kind": "mcp_stdio",
+    "category": "communication",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@modelcontextprotocol/server-linkedin"
+    ],
+    "env_keys": [
+        "LINKEDIN_ACCESS_TOKEN"
+    ],
+    "requires_auth": true,
+    "icon": "linkedin",
+    "tags": [
+        "social",
+        "professional",
+        "networking"
+    ],
+    "version": "0.1.0",
+    "tools_summary": [
+        {
+            "name": "linkedin_get_profile",
+            "description": "Get the authenticated user's LinkedIn profile"
+        },
+        {
+            "name": "linkedin_search_people",
+            "description": "Search for people on LinkedIn"
+        },
+        {
+            "name": "linkedin_search_companies",
+            "description": "Search for companies on LinkedIn"
+        },
+        {
+            "name": "linkedin_get_connections",
+            "description": "Get the user's LinkedIn connections"
+        },
+        {
+            "name": "linkedin_create_post",
+            "description": "Create a post on LinkedIn"
+        },
+        {
+            "name": "linkedin_get_feed",
+            "description": "Get the user's LinkedIn feed"
+        }
+    ],
+    "setup_instructions": "Obtain a LinkedIn OAuth access token via the LinkedIn API Developer Portal. Requires a LinkedIn app with r_liteprofile, r_emailaddress, w_member_social scopes. Set as LINKEDIN_ACCESS_TOKEN.",
+    "_note": "LinkedIn's official API is restricted. For personal use, some community MCP servers use browser-based auth. Verify the npm package is available and matches your use case."
+}

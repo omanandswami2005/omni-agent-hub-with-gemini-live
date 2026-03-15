@@ -1,0 +1,46 @@
+{
+    "id": "substack",
+    "name": "Substack",
+    "description": "Read, search and manage Substack newsletters and posts. Browse publications, fetch articles, search content by keyword, and interact with the Substack reader platform.",
+    "kind": "mcp_stdio",
+    "category": "content",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@mikemtlee/mcp-substack"
+    ],
+    "env_keys": [],
+    "requires_auth": false,
+    "icon": "rss",
+    "tags": [
+        "newsletter",
+        "writing",
+        "content",
+        "publishing"
+    ],
+    "version": "0.1.0",
+    "tools_summary": [
+        {
+            "name": "get_publication",
+            "description": "Get metadata about a Substack publication by subdomain"
+        },
+        {
+            "name": "get_posts",
+            "description": "List recent posts from a Substack publication"
+        },
+        {
+            "name": "get_post",
+            "description": "Fetch the full content of a specific Substack post"
+        },
+        {
+            "name": "search_posts",
+            "description": "Search posts within a Substack publication"
+        },
+        {
+            "name": "get_authors",
+            "description": "List authors of a Substack publication"
+        }
+    ],
+    "setup_instructions": "No API key required for reading public Substack content. The server uses Substack's public API. To access subscriber-only content, set SUBSTACK_COOKIE to your session cookie from browser dev tools.",
+    "_note": "Substack does not have an official API. This MCP uses the public/reader API endpoints available without authentication."
+}

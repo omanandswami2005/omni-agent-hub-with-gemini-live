@@ -1,0 +1,48 @@
+{
+    "id": "medium",
+    "name": "Medium",
+    "description": "Read Medium stories and publications, search articles by topic or tag, retrieve author profiles, and fetch full post content via Medium's official API.",
+    "kind": "mcp_stdio",
+    "category": "content",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@awkoy/medium-mcp-server"
+    ],
+    "env_keys": [
+        "MEDIUM_INTEGRATION_TOKEN"
+    ],
+    "requires_auth": true,
+    "icon": "book-open",
+    "tags": [
+        "blog",
+        "articles",
+        "reading",
+        "publishing",
+        "content"
+    ],
+    "version": "0.1.0",
+    "tools_summary": [
+        {
+            "name": "get_user",
+            "description": "Get a Medium user's profile and publications"
+        },
+        {
+            "name": "get_publications",
+            "description": "List publications the authenticated user is a contributor to"
+        },
+        {
+            "name": "create_post",
+            "description": "Publish a new post on Medium (draft or published)"
+        },
+        {
+            "name": "create_post_under_publication",
+            "description": "Publish a post under a specific Medium publication"
+        },
+        {
+            "name": "get_post",
+            "description": "Retrieve a specific post by ID"
+        }
+    ],
+    "setup_instructions": "1. Go to medium.com/me/settings → Integration tokens\n2. Generate a new token and copy it\n3. Set MEDIUM_INTEGRATION_TOKEN to the token value\nNote: Medium's official API supports reading your own posts and creating/publishing new posts."
+}

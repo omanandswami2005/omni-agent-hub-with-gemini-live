@@ -1,0 +1,57 @@
+{
+    "id": "health",
+    "name": "Health & Nutrition",
+    "description": "Look up nutritional information for foods, get dietary recommendations, track macros, search recipes by nutritional constraints, and access exercise and wellness data. Uses free Open Food Facts and Nutritionix APIs.",
+    "kind": "mcp_stdio",
+    "category": "health",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@modelcontextprotocol/server-everything",
+        "--",
+        "health"
+    ],
+    "env_keys": [
+        "NUTRITIONIX_APP_ID",
+        "NUTRITIONIX_API_KEY"
+    ],
+    "requires_auth": false,
+    "icon": "heart",
+    "tags": [
+        "health",
+        "nutrition",
+        "food",
+        "fitness",
+        "wellness",
+        "diet"
+    ],
+    "version": "0.1.0",
+    "tools_summary": [
+        {
+            "name": "search_food",
+            "description": "Search for a food or dish and get full nutritional breakdown (calories, macros, vitamins)"
+        },
+        {
+            "name": "get_nutrients",
+            "description": "Get detailed nutrient data for a specific food by barcode or name"
+        },
+        {
+            "name": "calculate_daily_needs",
+            "description": "Calculate daily caloric and macro needs based on age, weight, height, and activity level"
+        },
+        {
+            "name": "search_recipes",
+            "description": "Find healthy recipes matching dietary requirements (vegan, keto, high-protein, etc.)"
+        },
+        {
+            "name": "get_exercise_calories",
+            "description": "Estimate calories burned for a given exercise activity and duration"
+        },
+        {
+            "name": "get_bmi",
+            "description": "Calculate BMI and provide healthy weight range for given height"
+        }
+    ],
+    "setup_instructions": "For basic food lookups: no API key needed (uses Open Food Facts free API).\nFor natural language food queries and branded items:\n1. Sign up at developer.nutritionix.com (free tier: 500 requests/day)\n2. Create an app to get your App ID and API Key\n3. Set NUTRITIONIX_APP_ID and NUTRITIONIX_API_KEY",
+    "_note": "Open Food Facts is completely free and provides 2M+ food products. Nutritionix adds natural language processing for food queries like 'a slice of pizza' and branded restaurant items."
+}

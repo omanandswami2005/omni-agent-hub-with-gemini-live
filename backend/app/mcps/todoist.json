@@ -1,0 +1,66 @@
+{
+    "id": "todoist",
+    "name": "Todoist",
+    "description": "Create, read, update and complete tasks and projects in Todoist. Manage your personal to-do list and project boards via the official Todoist MCP server.",
+    "kind": "mcp_stdio",
+    "category": "productivity",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@doist/mcp-todoist"
+    ],
+    "env_keys": [
+        "TODOIST_API_TOKEN"
+    ],
+    "requires_auth": true,
+    "icon": "check-square",
+    "tags": [
+        "productivity",
+        "tasks",
+        "todo"
+    ],
+    "version": "0.1.0",
+    "tools_summary": [
+        {
+            "name": "todoist_get_tasks",
+            "description": "Get tasks from Todoist with optional filters"
+        },
+        {
+            "name": "todoist_create_task",
+            "description": "Create a new task in Todoist"
+        },
+        {
+            "name": "todoist_update_task",
+            "description": "Update an existing Todoist task"
+        },
+        {
+            "name": "todoist_complete_task",
+            "description": "Mark a Todoist task as completed"
+        },
+        {
+            "name": "todoist_delete_task",
+            "description": "Delete a Todoist task"
+        },
+        {
+            "name": "todoist_get_projects",
+            "description": "List all Todoist projects"
+        },
+        {
+            "name": "todoist_create_project",
+            "description": "Create a new Todoist project"
+        },
+        {
+            "name": "todoist_get_sections",
+            "description": "Get sections within a Todoist project"
+        },
+        {
+            "name": "todoist_add_comment",
+            "description": "Add a comment to a Todoist task"
+        },
+        {
+            "name": "todoist_get_labels",
+            "description": "Get all labels/tags in Todoist"
+        }
+    ],
+    "setup_instructions": "Get your API token from Todoist Settings → Integrations → API token. Set as TODOIST_API_TOKEN environment variable."
+}

@@ -1,0 +1,60 @@
+{
+    "id": "financial-datasets",
+    "name": "Financial Datasets",
+    "description": "Access real-time and historical US stock market data, financial statements, income statements, balance sheets, cash flow statements, and earnings data via Financial Datasets AI.",
+    "kind": "mcp_stdio",
+    "category": "finance",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@financial-datasets/mcp-server"
+    ],
+    "env_keys": [
+        "FINANCIAL_DATASETS_API_KEY"
+    ],
+    "requires_auth": true,
+    "icon": "trending-up",
+    "tags": [
+        "finance",
+        "stocks",
+        "markets",
+        "financial-data",
+        "earnings"
+    ],
+    "version": "0.1.0",
+    "tools_summary": [
+        {
+            "name": "get_stock_price",
+            "description": "Get current and historical stock prices for a ticker symbol"
+        },
+        {
+            "name": "get_income_statement",
+            "description": "Retrieve quarterly or annual income statements for a company"
+        },
+        {
+            "name": "get_balance_sheet",
+            "description": "Retrieve balance sheet data for a company"
+        },
+        {
+            "name": "get_cash_flow",
+            "description": "Retrieve cash flow statements for a company"
+        },
+        {
+            "name": "get_company_facts",
+            "description": "Get key company metadata: sector, industry, market cap, employees"
+        },
+        {
+            "name": "search_tickers",
+            "description": "Search for stock ticker symbols by company name"
+        },
+        {
+            "name": "get_earnings",
+            "description": "Get earnings history and upcoming earnings dates for a company"
+        },
+        {
+            "name": "get_insider_trades",
+            "description": "Get recent insider trading activity for a company"
+        }
+    ],
+    "setup_instructions": "1. Sign up at financialdatasets.ai\n2. Go to your dashboard and generate an API key\n3. Set FINANCIAL_DATASETS_API_KEY to your key\nNote: Free tier available with limited monthly requests. Covers US stocks, ETFs, and indices."
+}

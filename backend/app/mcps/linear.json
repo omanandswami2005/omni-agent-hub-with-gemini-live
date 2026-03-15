@@ -1,0 +1,58 @@
+{
+    "id": "linear",
+    "name": "Linear",
+    "description": "Manage issues, projects, cycles, and teams in Linear — the modern software project management tool. Create, update, and triage engineering work directly from the agent.",
+    "kind": "mcp_stdio",
+    "category": "development",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@linearapp/mcp"
+    ],
+    "env_keys": [
+        "LINEAR_API_KEY"
+    ],
+    "requires_auth": true,
+    "icon": "activity",
+    "tags": [
+        "project-management",
+        "development",
+        "issues"
+    ],
+    "version": "0.1.0",
+    "tools_summary": [
+        {
+            "name": "linear_get_issues",
+            "description": "Get issues from Linear with optional filters"
+        },
+        {
+            "name": "linear_create_issue",
+            "description": "Create a new issue in Linear"
+        },
+        {
+            "name": "linear_update_issue",
+            "description": "Update an existing Linear issue"
+        },
+        {
+            "name": "linear_get_projects",
+            "description": "List all projects in Linear"
+        },
+        {
+            "name": "linear_get_teams",
+            "description": "Get all teams in the Linear workspace"
+        },
+        {
+            "name": "linear_search_issues",
+            "description": "Full-text search issues in Linear"
+        },
+        {
+            "name": "linear_get_viewer",
+            "description": "Get the authenticated user's Linear profile"
+        },
+        {
+            "name": "linear_add_comment",
+            "description": "Add a comment to a Linear issue"
+        }
+    ],
+    "setup_instructions": "Get your API key from Linear Settings → API → Create new key. Set as LINEAR_API_KEY environment variable."
+}

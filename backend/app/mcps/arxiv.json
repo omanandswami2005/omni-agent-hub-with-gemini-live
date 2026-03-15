@@ -1,0 +1,46 @@
+{
+    "id": "arxiv",
+    "name": "ArXiv Research",
+    "description": "Search and retrieve academic papers from ArXiv.org across Physics, Mathematics, Computer Science, Quantitative Biology, Statistics, and more. Completely free — no API key required.",
+    "kind": "mcp_stdio",
+    "category": "research",
+    "command": "npx",
+    "args": [
+        "-y",
+        "@qpd-v/mcp-server-arxiv"
+    ],
+    "env_keys": [],
+    "requires_auth": false,
+    "icon": "graduation-cap",
+    "tags": [
+        "research",
+        "academic",
+        "papers",
+        "science",
+        "free"
+    ],
+    "version": "0.1.0",
+    "tools_summary": [
+        {
+            "name": "search_papers",
+            "description": "Search ArXiv for academic papers by keyword, author, or topic"
+        },
+        {
+            "name": "get_paper",
+            "description": "Retrieve full metadata and abstract for a specific ArXiv paper by ID (e.g. 2310.01234)"
+        },
+        {
+            "name": "get_recent_papers",
+            "description": "Get the most recent submissions in a category (cs.AI, math.ST, etc.)"
+        },
+        {
+            "name": "search_by_author",
+            "description": "Find all ArXiv papers by a specific author"
+        },
+        {
+            "name": "get_paper_categories",
+            "description": "List all available ArXiv subject categories"
+        }
+    ],
+    "setup_instructions": "No setup required. ArXiv provides a free, unauthenticated public API. Just enable this plugin and start searching."
+}
