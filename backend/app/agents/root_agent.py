@@ -31,6 +31,7 @@ from app.middleware.agent_callbacks import (
     permission_check_callback,
 )
 from app.models.persona import PersonaResponse
+from app.tools.capabilities_tool import get_capability_tools
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -102,8 +103,16 @@ def _build_root_instruction(
         "then make an image'). Pass only the `task` argument — the full user request. "
         "The tool returns an ordered plan; then transfer to each "
         "persona in order.\n\n"
+        "You have two capability introspection tools available to you AND all persona sub-agents:\n"
+        "- **get_capabilities()** — returns a live overview of ALL available tools across T1 (core), "
+        "T2 (plugins/MCPs), and T3 (client-local) tiers. Call this when the user asks "
+        "'what can you do?', 'what tools do you have?', or similar.\n"
+        "- **get_capabilities_of(plugin_name)** — returns the full function schemas (with parameters) "
+        "for a specific plugin, MCP, or tier (pass 'T1', 'T2', or 'T3'). Call this before invoking "
+        "a plugin you haven't used before, or when the user asks about a specific integration.\n\n"
         "Routing rules:\n"
-        "0. Greetings, pleasantries, 'what can you do?', 'how are you?' — answer DIRECTLY, no transfer.\n"
+        "0. Greetings, pleasantries, 'how are you?' — answer DIRECTLY, no transfer.\n"
+        "0a. 'What can you do?' / 'What tools do you have?' — call get_capabilities() DIRECTLY, no transfer.\n"
         "1. If the user asks to use a specific tool, transfer to the persona that has that tool available!\n"
         "2. If the user names a persona explicitly, transfer to that persona.\n"
         "3. For complex multi-step requests → call plan_task first.\n"
@@ -115,7 +124,7 @@ def _build_root_instruction(
         "9. For data/charts/analysis → transfer to analyst.\n"
         "10. For scheduling, email drafts, reminders, calendar, and general tasks → transfer to assistant.\n\n"
         "IMPORTANT: Do NOT use Google Search or any search for casual conversation, greetings, or questions you can answer from your training knowledge. "
-        "Do NOT invent tool names. You only have transfer_to_agent and plan_task."
+        "Do NOT invent tool names. You only have transfer_to_agent, plan_task, get_capabilities, and get_capabilities_of."
     )
 
 
@@ -174,7 +183,7 @@ def build_root_agent(
     sub_agents.append(device_agent)
 
     # ── Layer 2: Task planner tool on the root ────────────────────────
-    root_tools = [get_task_planner_tool()]
+    root_tools = [get_task_planner_tool(), *get_capability_tools()]
 
     # ── Layer 0: Root router ──────────────────────────────────────────
     instruction = _build_root_instruction(persona_names, has_device, tools_map, plugin_summaries)

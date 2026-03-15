@@ -641,6 +641,43 @@ class PluginRegistry:
                 )
         return result
 
+    def get_capability_snapshot(self, user_id: str) -> dict[str, Any]:
+        """Return a structured snapshot of all enabled T2 capabilities for *user_id*.
+
+        Used by the REST API ``GET /plugins/capabilities`` endpoint so the
+        dashboard can display a live capability overview without starting a WS session.
+        Returns a dict with ``t2`` (enabled plugin summaries) and ``catalog``
+        (all available plugin names for discovery).
+        """
+        t2: list[dict] = []
+        for plugin_id in self.get_enabled_ids(user_id):
+            manifest = self._catalog.get(plugin_id)
+            if manifest is None:
+                continue
+            summaries = self._discovered_summaries.get(plugin_id, manifest.tools_summary)
+            t2.append(
+                {
+                    "plugin": manifest.name,
+                    "plugin_id": plugin_id,
+                    "kind": str(manifest.kind),
+                    "description": manifest.description,
+                    "tags": manifest.tags,
+                    "tools": [{"name": s.name, "description": s.description} for s in summaries],
+                }
+            )
+
+        available_catalog = [
+            {"id": m.id, "name": m.name, "description": m.description, "kind": str(m.kind)}
+            for m in self._catalog.values()
+            if m.id not in self.get_enabled_ids(user_id)
+        ]
+
+        return {
+            "t2_enabled_count": len(t2),
+            "t2": t2,
+            "available_plugins": available_catalog,
+        }
+
     async def get_tool_schemas(self, plugin_id: str, user_id: str) -> list[ToolSchema]:
         """Return full tool schemas for a plugin (on-demand loading).
 

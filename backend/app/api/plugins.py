@@ -82,6 +82,64 @@ async def list_tool_summaries(user: CurrentUser):
     return registry.get_tool_summaries(user.uid)
 
 
+@router.get("/capabilities")
+async def get_capabilities_snapshot(user: CurrentUser):
+    """Return a live capability snapshot for the authenticated user.
+
+    Includes:
+    - **T1** core built-in tools (always available, from the agent factory registry)
+    - **T2** enabled plugin/MCP tool summaries
+    - Available (but not yet enabled) plugins for discovery
+
+    This is the REST equivalent of the agent's ``get_capabilities()`` tool call.
+    Poll this endpoint after toggling a plugin to update the UI.
+    """
+    from app.agents.agent_factory import T1_TOOL_REGISTRY
+    from app.services.connection_manager import get_connection_manager
+
+    registry = get_plugin_registry()
+    cm = get_connection_manager()
+
+    # T1: build from registry (avoid ADK heavy init for search tool in HTTP context)
+    t1: list[dict] = []
+    seen_t1: set[str] = set()
+    for cap, factory in T1_TOOL_REGISTRY.items():
+        try:
+            tools = factory()
+        except Exception:
+            continue
+        for t in tools:
+            name = getattr(t, "name", str(t))
+            if name in seen_t1:
+                continue
+            seen_t1.add(name)
+            desc = (getattr(t, "description", "") or "").strip()
+            t1.append({"name": name, "description": desc, "capability_tag": cap})
+
+    # T2: snapshot from registry
+    snapshot = registry.get_capability_snapshot(user.uid)
+
+    # T3: from connection manager
+    capabilities = cm.get_capabilities(user.uid)
+    t3: list[dict] = []
+    for ct, cap_data in capabilities.items():
+        for tool_def in cap_data.get("local_tools", []):
+            if tool_def.get("name"):
+                t3.append({
+                    "name": tool_def["name"],
+                    "description": tool_def.get("description", ""),
+                    "client_type": str(ct),
+                })
+
+    return {
+        "t1": t1,
+        "t2": snapshot["t2"],
+        "t2_enabled_count": snapshot["t2_enabled_count"],
+        "t3": t3,
+        "available_plugins": snapshot["available_plugins"],
+    }
+
+
 @router.get("/{plugin_id}/tools", response_model=list[ToolSchema])
 async def get_tool_schemas(plugin_id: str, user: CurrentUser):
     """Return full tool schemas for a specific plugin (on-demand loading)."""
@@ -90,6 +148,50 @@ async def get_tool_schemas(plugin_id: str, user: CurrentUser):
     if manifest is None:
         raise HTTPException(status_code=404, detail=f"Plugin '{plugin_id}' not found")
     return await registry.get_tool_schemas(plugin_id, user.uid)
+
+
+@router.get("/{plugin_id}/capabilities")
+async def get_plugin_capabilities(plugin_id: str, user: CurrentUser):
+    """Return full function schemas (name, description, parameters) for a specific plugin.
+
+    This is the REST equivalent of the agent's ``get_capabilities_of(plugin_name)`` tool.
+    Returns tool schemas including full parameter definitions once the plugin is connected.
+    Falls back to lightweight summaries if the plugin is enabled but not yet connected.
+    """
+    registry = get_plugin_registry()
+    manifest = registry.get_manifest(plugin_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail=f"Plugin '{plugin_id}' not found")
+
+    enabled_ids = registry.get_enabled_ids(user.uid)
+    if plugin_id not in enabled_ids:
+        # Return manifest-level summary even if not enabled
+        return {
+            "plugin_id": plugin_id,
+            "plugin": manifest.name,
+            "kind": str(manifest.kind),
+            "enabled": False,
+            "tools": [
+                {"name": s.name, "description": s.description, "parameters": {}}
+                for s in manifest.tools_summary
+            ],
+            "hint": "Enable this plugin to load full function schemas.",
+        }
+
+    schemas = await registry.get_tool_schemas(plugin_id, user.uid)
+    summaries = registry._discovered_summaries.get(plugin_id, manifest.tools_summary)
+    tools = (
+        [{"name": s.name, "description": s.description, "parameters": s.parameters} for s in schemas]
+        if schemas
+        else [{"name": s.name, "description": s.description, "parameters": {}} for s in summaries]
+    )
+    return {
+        "plugin_id": plugin_id,
+        "plugin": manifest.name,
+        "kind": str(manifest.kind),
+        "enabled": True,
+        "tools": tools,
+    }
 
 
 @router.get("/{plugin_id}", response_model=PluginStatus)
