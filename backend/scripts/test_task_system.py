@@ -124,13 +124,13 @@ class ApiClient:
 
     async def get(self, path: str, **kwargs) -> dict:
         import httpx
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             resp = await client.get(f"{TASKS_URL}{path}", headers=self.headers, **kwargs)
             return {"status": resp.status_code, "body": resp.json() if resp.status_code < 500 else {}}
 
     async def post(self, path: str, data: dict | None = None, **kwargs) -> dict:
         import httpx
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
             resp = await client.post(
                 f"{TASKS_URL}{path}", headers=self.headers, json=data or {}, **kwargs
             )

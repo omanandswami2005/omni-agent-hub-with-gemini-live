@@ -84,7 +84,7 @@ const LandingPage = () => {
           <div className="flex flex-col items-center text-center max-w-4xl mx-auto mt-16">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-sm font-medium text-purple-300 mb-8 animate-[fade-in_1s_ease-out]">
               <SparklesIcon className="w-4 h-4" />
-              <span>Gemini Live Agent Challenge Winner</span>
+              <span>Gemini Live Agent Challenge</span>
             </div>
 
             <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight mb-8 leading-tight">

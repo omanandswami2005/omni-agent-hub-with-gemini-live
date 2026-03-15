@@ -92,7 +92,16 @@ class TaskStep(BaseModel):
 
     @classmethod
     def from_firestore(cls, data: dict) -> TaskStep:
-        return cls(**data)
+        safe = {**data}
+        # Firestore DatetimeWithNanoseconds → regular datetime
+        for dt_field in ("started_at", "completed_at"):
+            v = safe.get(dt_field)
+            if v is not None and not isinstance(v, datetime):
+                try:
+                    safe[dt_field] = datetime.fromisoformat(str(v))
+                except (ValueError, TypeError):
+                    safe[dt_field] = None
+        return cls(**safe)
 
 
 class HumanInput(BaseModel):

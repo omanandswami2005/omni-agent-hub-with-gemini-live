@@ -73,15 +73,29 @@ class TaskOrchestrator:
 
     async def list_tasks(self, user_id: str) -> list[PlannedTask]:
         """List all tasks for a user, newest first."""
-        query = (
-            self.db.collection(COLLECTION)
-            .where(filter=firestore.FieldFilter("user_id", "==", user_id))
-            .order_by("created_at", direction=firestore.Query.DESCENDING)
-        )
-        return [
-            PlannedTask.from_firestore(snap.id, snap.to_dict())
-            for snap in query.stream()
-        ]
+        try:
+            query = (
+                self.db.collection(COLLECTION)
+                .where(filter=firestore.FieldFilter("user_id", "==", user_id))
+                .order_by("created_at", direction=firestore.Query.DESCENDING)
+            )
+            return [
+                PlannedTask.from_firestore(snap.id, snap.to_dict())
+                for snap in query.stream()
+            ]
+        except Exception:
+            # Fallback: query without order_by (no composite index)
+            logger.warning("list_tasks_fallback", user_id=user_id)
+            query = (
+                self.db.collection(COLLECTION)
+                .where(filter=firestore.FieldFilter("user_id", "==", user_id))
+            )
+            tasks = [
+                PlannedTask.from_firestore(snap.id, snap.to_dict())
+                for snap in query.stream()
+            ]
+            tasks.sort(key=lambda t: t.created_at, reverse=True)
+            return tasks
 
     async def _update_task_field(self, task_id: str, **fields) -> None:
         """Atomic field update on a task doc."""
@@ -221,6 +235,7 @@ class TaskOrchestrator:
     async def _execute_steps(self, task: PlannedTask) -> None:
         """Execute task steps sequentially, respecting dependencies."""
         try:
+            has_failure = False
             for step in task.steps:
                 if task.status == TaskStatus.CANCELLED:
                     break
@@ -253,13 +268,17 @@ class TaskOrchestrator:
                 # Execute the step
                 await self._execute_single_step(task, step)
 
-            # All steps done
+                # Track step failures
+                if step.status == StepStatus.FAILED:
+                    has_failure = True
+
+            # All steps done — determine final status
             if task.status != TaskStatus.CANCELLED:
-                task.status = TaskStatus.COMPLETED
+                task.status = TaskStatus.FAILED if has_failure else TaskStatus.COMPLETED
                 task.result_summary = self._build_result_summary(task)
                 await self._save_task(task)
                 await self._publish_event(task, "task_completed")
-                logger.info("task_completed", task_id=task.id)
+                logger.info("task_finished", task_id=task.id, status=task.status.value)
 
         except asyncio.CancelledError:
             task.status = TaskStatus.CANCELLED
@@ -514,7 +533,7 @@ class TaskOrchestrator:
                     }
                     for s in task.steps
                 ],
-                "progress": round(task.progress, 2),
+                "progress": round(task.progress * 100, 1),
                 "result_summary": task.result_summary,
             },
             "timestamp": time.time(),
@@ -534,7 +553,7 @@ class TaskOrchestrator:
                 "output": step.output[:500] if step.output else "",
                 "error": step.error,
             },
-            "progress": round(task.progress, 2),
+            "progress": round(task.progress * 100, 1),
             "timestamp": time.time(),
         })
         await self._event_bus.publish(task.user_id, event)

@@ -10,6 +10,7 @@ import GenUIRenderer from '@/components/genui/GenUIRenderer';
 import PersonaCard from '@/components/persona/PersonaCard';
 import ClientStatusBar from '@/components/clients/ClientStatusBar';
 import PipelineMonitor from '@/components/chat/PipelineMonitor';
+import TaskPanel from '@/components/chat/TaskPanel';
 import DesktopViewer from '@/components/sandbox/DesktopViewer';
 import { useVoice } from '@/hooks/useVoiceProvider';
 import { useChatStore } from '@/stores/chatStore';
@@ -90,11 +91,19 @@ export default function DashboardPage() {
     const pipelineHistory = usePipelineStore((s) => s.history);
     const hasPipeline = !!activePipeline || pipelineHistory.length > 0;
     const desktop = useTaskStore((s) => s.desktop);
+    const taskList = useTaskStore((s) => s.getTaskList());
+    const hasRunningTask = useTaskStore((s) => s.hasRunningTask());
+    const hasTasks = taskList.length > 0;
+    const hasActivity = hasPipeline || hasTasks;
 
-    // Auto-switch to pipeline tab when a pipeline starts
+    // Auto-switch to pipeline tab when a pipeline starts or task is created
     useEffect(() => {
         if (activePipeline) setSidebarTab('pipeline');
     }, [activePipeline?.pipeline_id]);
+
+    useEffect(() => {
+        if (hasRunningTask || taskList.length === 1) setSidebarTab('pipeline');
+    }, [hasRunningTask, taskList.length]);
 
     // When persona changes, reconnect WS so the backend uses the new persona's voice
     const reconnect = useVoice((v) => v.reconnect);
@@ -142,11 +151,11 @@ export default function DashboardPage() {
                             : 'text-muted-foreground hover:bg-muted'
                             }`}
                     >
-                        Pipeline
-                        {hasPipeline && sidebarTab !== 'pipeline' && (
+                        Tasks
+                        {hasActivity && sidebarTab !== 'pipeline' && (
                             <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-blue-500" />
                         )}
-                        {activePipeline && (
+                        {(activePipeline || hasRunningTask) && (
                             <span className="ml-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-green-400" />
                         )}
                     </button>
@@ -238,13 +247,14 @@ export default function DashboardPage() {
                         <DesktopViewer />
                     </div>
                 ) : (
-                    <div className="overflow-y-auto p-4">
-                        <PipelineMonitor />
-                        {!hasPipeline && (
+                    <div className="overflow-y-auto p-4 space-y-4">
+                        <TaskPanel />
+                        {hasPipeline && <PipelineMonitor />}
+                        {!hasActivity && (
                             <div className="mt-4 rounded-lg border border-dashed border-border p-6 text-center">
-                                <p className="text-sm font-medium text-muted-foreground">No pipeline yet</p>
+                                <p className="text-sm font-medium text-muted-foreground">No tasks yet</p>
                                 <p className="mt-1 text-xs text-muted-foreground">
-                                    Ask for a complex multi-step task to trigger the Task Architect.
+                                    Ask for a complex multi-step task to trigger the planner.
                                 </p>
                             </div>
                         )}
