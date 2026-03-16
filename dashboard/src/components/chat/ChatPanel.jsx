@@ -3,13 +3,15 @@
  * Voice orb is now a global overlay (FloatingVoiceBubble) — not in this panel.
  */
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import MessageBubble from '@/components/chat/MessageBubble';
 import ChatInput from '@/components/chat/ChatInput';
 import TranscriptLine from '@/components/chat/TranscriptLine';
 import TypingIndicator from '@/components/chat/TypingIndicator';
-import { Mic } from 'lucide-react';
+import { Mic, ChevronUp } from 'lucide-react';
+
+const PAGE_SIZE = 30;
 
 export default function ChatPanel({
   onSend,
@@ -23,10 +25,56 @@ export default function ChatPanel({
   const transcript = useChatStore((s) => s.transcript);
   const crossTranscript = useChatStore((s) => s.crossTranscript);
   const listRef = useRef(null);
+  const sentinelRef = useRef(null);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const prevHeightRef = useRef(0);
 
-  // Auto-scroll to bottom on new messages
+  // Visible slice — always the latest N messages
+  const visibleMessages = useMemo(
+    () => messages.slice(-visibleCount),
+    [messages, visibleCount],
+  );
+  const hasMore = messages.length > visibleCount;
+
+  // Load more when scrolling to top (intersection observer on sentinel)
   useEffect(() => {
-    if (listRef.current) {
+    const sentinel = sentinelRef.current;
+    const list = listRef.current;
+    if (!sentinel || !list) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && messages.length > visibleCount) {
+          prevHeightRef.current = list.scrollHeight;
+          setVisibleCount((v) => Math.min(v + PAGE_SIZE, messages.length));
+        }
+      },
+      { root: list, threshold: 0.1 },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [messages.length, visibleCount]);
+
+  // Preserve scroll position after loading older messages
+  useEffect(() => {
+    const list = listRef.current;
+    if (list && prevHeightRef.current > 0) {
+      const newHeight = list.scrollHeight;
+      list.scrollTop += newHeight - prevHeightRef.current;
+      prevHeightRef.current = 0;
+    }
+  }, [visibleMessages.length]);
+
+  // Auto-scroll to bottom on new messages (only if already near bottom)
+  const isNearBottom = useRef(true);
+  const onScroll = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    isNearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
+  useEffect(() => {
+    if (listRef.current && isNearBottom.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
   }, [messages, transcript, crossTranscript]);
@@ -58,7 +106,7 @@ export default function ChatPanel({
       </div>
 
       {/* Message list */}
-      <div ref={listRef} className="flex-1 space-y-1 overflow-y-auto px-5 py-4">
+      <div ref={listRef} onScroll={onScroll} className="flex-1 space-y-1 overflow-y-auto px-5 py-4">
         {messages.length === 0 && (
           <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-3">
             <div className="rounded-full border border-white/[0.06] bg-white/[0.03] p-5">
@@ -68,7 +116,15 @@ export default function ChatPanel({
             <p className="text-xs text-muted-foreground/60">Your conversation will appear here</p>
           </div>
         )}
-        {messages.map((msg) => (
+        {/* Sentinel for loading older messages */}
+        {hasMore && (
+          <div ref={sentinelRef} className="flex justify-center py-2">
+            <span className="flex items-center gap-1 text-xs text-muted-foreground/50">
+              <ChevronUp size={12} /> Scroll up for older messages
+            </span>
+          </div>
+        )}
+        {visibleMessages.map((msg) => (
           <MessageBubble key={msg.id} message={msg} />
         ))}
         {agentState === 'processing' && <TypingIndicator />}

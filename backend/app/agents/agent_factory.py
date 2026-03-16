@@ -150,7 +150,13 @@ def create_agent(
     """
     tools = _default_tools_for_persona(persona)
     if extra_tools:
-        tools.extend(extra_tools)
+        # Deduplicate: T2 plugin tools may overlap with T1 tools (e.g. E2B
+        # plugin provides execute_code which is already a T1 CODE_EXECUTION
+        # tool).  Gemini Live API rejects duplicate function declarations.
+        existing = {getattr(t, "name", str(t)) for t in tools}
+        for t in extra_tools:
+            if getattr(t, "name", str(t)) not in existing:
+                tools.append(t)
 
     # Use persona-specific model override ONLY for non-live (text) sessions.
     # In live mode, all sub-agents MUST use a live-capable model because ADK

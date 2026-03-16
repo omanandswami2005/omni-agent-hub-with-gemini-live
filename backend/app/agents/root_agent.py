@@ -41,10 +41,12 @@ logger = get_logger(__name__)
 
 def _build_root_instruction(
     persona_names: list[tuple[str, str]],
+    root_tool_names: list[str],
 ) -> str:
     """Build a lightweight root instruction — capabilities discovered on demand."""
 
     persona_text = "\n".join(f"- **{pid}** — {pname}" for pid, pname in persona_names)
+    tool_list = ", ".join(["transfer_to_agent", *sorted(root_tool_names)])
 
     return (
         "You are Omni, a friendly voice-first AI assistant hub.\n"
@@ -64,7 +66,7 @@ def _build_root_instruction(
         "6. Image generation, creative → transfer to **creative**.\n"
         "7. Data analysis, charts → transfer to **analyst**.\n"
         "8. Scheduling, reminders → transfer to **assistant**.\n"
-        "9. UI generation, widgets, interactive visuals → transfer to **genui**.\n"
+        "9. UI generation, widgets, charts, tables, interactive visuals, rendering data → transfer to **genui**.\n"
         "10. Complex multi-step work → call **create_planned_task()**, show plan, execute after confirmation.\n"
         "11. Device control (desktop tray, Chrome, dashboard) → call **list_connected_clients()** first, "
         "then call send_to_desktop / send_to_chrome / notify_client DIRECTLY (NO transfer).\n"
@@ -76,11 +78,12 @@ def _build_root_instruction(
         "1. **E2B Cloud Sandbox** (coder/analyst personas) — virtual Linux machine, always available.\n"
         "2. **User's Real Devices** (your direct tools) — requires device online, call list_connected_clients first.\n"
         "'Run Python' → coder. 'Open Chrome on my laptop' → your send_to_desktop tool.\n\n"
-        "## Rules\n"
-        "- NEVER invent tool names. Only call tools in your tools list or transfer to a persona.\n"
-        "- Tell the user what you're doing before calling a tool.\n"
-        "- Summarize results conversationally.\n"
-        "- If unsure about available capabilities, call get_capabilities().\n"
+        "## YOUR TOOL REGISTRY\n"
+        f"You can ONLY call these tools: {tool_list}.\n"
+        "You CANNOT call render_genui_component, get_genui_schema, execute_code, generate_image, "
+        "google_search, or ANY tool not in your list above.\n"
+        "To use those, TRANSFER to the persona that has them (e.g., genui for charts/tables, "
+        "coder for code, researcher for search, creative for images).\n"
     )
 
 
@@ -150,12 +153,9 @@ def build_root_agent(
         *(device_tools or []),
     ]
 
-    # ── Build full tools map (T1 + T2) for instruction generation ─────
-    # No longer needed — lightweight instruction discovers capabilities
-    # on demand via get_capabilities() instead of baking tool names in.
-
     # ── Layer 0: Root router ──────────────────────────────────────────
-    instruction = _build_root_instruction(persona_names)
+    root_tool_names = sorted({getattr(t, "name", str(t)) for t in root_tools})
+    instruction = _build_root_instruction(persona_names, root_tool_names)
 
     root = Agent(
         name="omni_root",
