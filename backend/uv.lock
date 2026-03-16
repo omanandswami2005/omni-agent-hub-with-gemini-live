@@ -271,6 +271,18 @@ wheels = [
 ]
 
 [[package]]
+name = "croniter"
+version = "6.2.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/df/de/5832661ed55107b8a09af3f0a2e71e0957226a59eb1dcf0a445cce6daf20/croniter-6.2.2.tar.gz", hash = "sha256:ba60832a5ec8e12e51b8691c3309a113d1cf6526bdf1a48150ce8ec7a532d0ab", size = 113762, upload-time = "2026-03-15T08:43:48.112Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/39/783980e78cb92c2d7bdb1fc7dbc86e94ccc6d58224d76a7f1f51b6c51e30/croniter-6.2.2-py3-none-any.whl", hash = "sha256:a5d17b1060974d36251ea4faf388233eca8acf0d09cbd92d35f4c4ac8f279960", size = 45422, upload-time = "2026-03-15T08:43:46.626Z" },
+]
+
+[[package]]
 name = "cryptography"
 version = "46.0.5"
 source = { registry = "https://pypi.org/simple" }
@@ -813,6 +825,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/4e/7f/db00b2820475793a52958dc55fe9ec2eb8e863546e05fcece9b921f86ebe/google_cloud_resource_manager-1.16.0.tar.gz", hash = "sha256:cc938f87cc36c2672f062b1e541650629e0d954c405a4dac35ceedee70c267c3", size = 459840, upload-time = "2026-01-15T13:04:07.726Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/94/ff/4b28bcc791d9d7e4ac8fea00fbd90ccb236afda56746a3b4564d2ae45df3/google_cloud_resource_manager-1.16.0-py3-none-any.whl", hash = "sha256:fb9a2ad2b5053c508e1c407ac31abfd1a22e91c32876c1892830724195819a28", size = 400218, upload-time = "2026-01-15T13:02:47.378Z" },
+]
+
+[[package]]
+name = "google-cloud-scheduler"
+version = "2.18.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/b8/93133334e6508bc7a71beaa53524f849c29ea6b1f9c0364ada113801f5e0/google_cloud_scheduler-2.18.0.tar.gz", hash = "sha256:c8869e234d46a7698b4bf83fba7c3ff058682fc1541bf9a1e5e8e2b9758f040c", size = 150909, upload-time = "2026-01-15T13:04:44.505Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5f/45/59b115ce47bc972edcb222ce7783e1e2301dac0d2afc49842b1be83b2115/google_cloud_scheduler-2.18.0-py3-none-any.whl", hash = "sha256:0818a47bd7709c4b39584ad0cfc246352778770fad70cb5ea5b54c8f0b29da99", size = 137647, upload-time = "2026-01-15T12:17:12.768Z" },
 ]
 
 [[package]]
@@ -1539,14 +1567,17 @@ name = "omni-backend"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "croniter" },
     { name = "e2b-code-interpreter" },
     { name = "e2b-desktop" },
     { name = "fastapi" },
     { name = "firebase-admin" },
     { name = "google-adk" },
+    { name = "google-auth" },
     { name = "google-cloud-aiplatform", extra = ["agent-engines"] },
     { name = "google-cloud-firestore" },
     { name = "google-cloud-logging" },
+    { name = "google-cloud-scheduler" },
     { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-trace" },
@@ -1570,14 +1601,17 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "croniter", specifier = ">=2.0.0" },
     { name = "e2b-code-interpreter", specifier = ">=1.0.0" },
     { name = "e2b-desktop", specifier = ">=2.3.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "firebase-admin", specifier = ">=6.5.0" },
     { name = "google-adk", specifier = ">=0.5.0" },
+    { name = "google-auth", specifier = ">=2.29.0" },
     { name = "google-cloud-aiplatform", extras = ["agent-engines"], specifier = ">=1.112.0" },
     { name = "google-cloud-firestore", specifier = ">=2.16.0" },
     { name = "google-cloud-logging", specifier = ">=3.10.0" },
+    { name = "google-cloud-scheduler", specifier = ">=2.13.0" },
     { name = "google-cloud-secret-manager", specifier = ">=2.20.0" },
     { name = "google-cloud-storage", specifier = ">=2.16.0" },
     { name = "google-cloud-trace", specifier = ">=1.12.0" },

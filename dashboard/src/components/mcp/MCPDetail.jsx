@@ -10,6 +10,7 @@ import { useVoice } from '@/hooks/useVoiceProvider';
 
 export default function MCPDetail({ server, onToggle, onClose }) {
   const [oauthLoading, setOauthLoading] = useState(false);
+  const [oauthError, setOauthError] = useState(null);
   const [secrets, setSecrets] = useState({});
   const [secretsSaved, setSecretsSaved] = useState(false);
   const [secretsLoading, setSecretsLoading] = useState(false);
@@ -32,24 +33,45 @@ export default function MCPDetail({ server, onToggle, onClose }) {
   useEffect(() => {
     setSecrets({});
     setSecretsSaved(false);
+    setOauthError(null);
   }, [server?.id]);
+
+  // Refetch catalog when window regains focus (handles redirect-back from OAuth)
+  useEffect(() => {
+    const onFocus = () => {
+      fetchCatalog();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') fetchCatalog();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [fetchCatalog]);
 
   // Listen for OAuth popup postMessage
   const onMessage = useCallback((event) => {
     if (event.data?.type === 'oauth_callback' && event.data.plugin_id === server?.id) {
-      handleOAuthCallback(event.data.plugin_id, event.data.status);
       setOauthLoading(false);
-      // Fetch immediately, then retry with backoff until tools appear
-      // (backend tool discovery can be on a different Cloud Run instance)
-      fetchCatalog();
       if (event.data.status === 'success') {
+        setOauthError(null);
+        handleOAuthCallback(event.data.plugin_id, event.data.status);
+        // Fetch immediately, then retry with backoff until tools appear
+        // (backend tool discovery can be on a different Cloud Run instance)
+        fetchCatalog();
         refreshAfterOAuth(event.data.plugin_id);
         // Reconnect the WebSocket so the backend rebuilds the runner with
         // the newly connected plugin's tools loaded.
         setTimeout(() => voice.reconnect?.(), 1500);
+      } else {
+        setOauthError(event.data.message || 'OAuth connection failed. Please try again.');
+        fetchCatalog();
       }
     }
-  }, [server?.id, handleOAuthCallback, fetchCatalog, refreshAfterOAuth]);
+  }, [server?.id, handleOAuthCallback, fetchCatalog, refreshAfterOAuth, voice]);
 
   useEffect(() => {
     window.addEventListener('message', onMessage);
@@ -60,6 +82,7 @@ export default function MCPDetail({ server, onToggle, onClose }) {
 
   const handleOAuthConnect = async () => {
     setOauthLoading(true);
+    setOauthError(null);
     try {
       if (isGoogleOAuth) {
         await startGoogleOAuth(server.id);
@@ -68,8 +91,8 @@ export default function MCPDetail({ server, onToggle, onClose }) {
       }
     } catch (err) {
       console.error('OAuth connection error:', err);
-      // Show error briefly then reset loading state
-      setTimeout(() => setOauthLoading(false), 2000);
+      setOauthError(err?.message || 'Failed to start OAuth. Please try again.');
+      setOauthLoading(false);
     }
     // Reset loading after a timeout in case no callback comes
     setTimeout(() => setOauthLoading(false), 10000);
@@ -101,29 +124,34 @@ export default function MCPDetail({ server, onToggle, onClose }) {
 
       {/* OAuth connect / disconnect (MCP OAuth or Google OAuth native) */}
       {(isOAuth || isGoogleOAuth) ? (
-        <div className="flex items-center justify-between rounded-lg bg-muted/50 p-3">
-          <div>
-            <span className="text-sm font-medium">{isGoogleOAuth ? 'Google Account' : 'OAuth Connection'}</span>
-            {isConnected && <span className="ml-2 text-xs text-green-500">● Connected</span>}
-            {server.state === 'error' && (
-              <p className="mt-1 text-xs text-destructive">{server.error}</p>
+        <div className="space-y-2 rounded-lg bg-muted/50 p-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-sm font-medium">{isGoogleOAuth ? 'Google Account' : 'OAuth Connection'}</span>
+              {isConnected && <span className="ml-2 text-xs text-green-500">● Connected</span>}
+              {server.state === 'error' && (
+                <p className="mt-1 text-xs text-destructive">{server.error}</p>
+              )}
+            </div>
+            {isConnected ? (
+              <button
+                onClick={handleOAuthDisconnect}
+                className="rounded-lg border border-destructive/50 px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10"
+              >
+                Disconnect
+              </button>
+            ) : (
+              <button
+                onClick={handleOAuthConnect}
+                disabled={oauthLoading}
+                className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              >
+                {oauthLoading ? 'Connecting…' : isGoogleOAuth ? 'Connect Google Account' : 'Connect with OAuth'}
+              </button>
             )}
           </div>
-          {isConnected ? (
-            <button
-              onClick={handleOAuthDisconnect}
-              className="rounded-lg border border-destructive/50 px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10"
-            >
-              Disconnect
-            </button>
-          ) : (
-            <button
-              onClick={handleOAuthConnect}
-              disabled={oauthLoading}
-              className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {oauthLoading ? 'Connecting…' : isGoogleOAuth ? 'Connect Google Account' : 'Connect with OAuth'}
-            </button>
+          {oauthError && (
+            <p className="text-xs text-destructive">{oauthError}</p>
           )}
         </div>
       ) : (

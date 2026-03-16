@@ -206,8 +206,10 @@ class ToolRegistry:
                     if manifest is None:
                         continue
                     ptags = set(manifest.tags)
-                    # Wildcard "*" matches everything
-                    if "*" in ptags or ptags & pcaps:
+                    # Wildcard "*" matches everything — check both directions:
+                    # "*" in ptags = plugin wants all personas
+                    # "*" in pcaps = persona accepts all plugins
+                    if "*" in ptags or "*" in pcaps or ptags & pcaps:
                         matched.extend(tools)
                 result[persona.id] = matched
 

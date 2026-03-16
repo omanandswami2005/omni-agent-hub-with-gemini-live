@@ -164,12 +164,12 @@ TESTS: list[dict[str, Any]] = [
     {
         "id": "notify",
         "name": "Notification Tool",
-        "desc": "T2 native plugin: notification_sender",
+        "desc": "T2 native plugin: courier",
         "prompt": (
             "Send me a notification with the title 'Test Passed' and message "
             "'Feature test from CLI completed successfully!'"
         ),
-        "requires_plugin": "notification-sender",
+        "requires_plugin": "courier",
     },
     {
         "id": "persona",

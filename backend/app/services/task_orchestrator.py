@@ -751,6 +751,16 @@ class TaskOrchestrator:
     def _build_tool_context(self, user_id: str) -> str:
         """Build a string describing available tools for decomposition prompt."""
         lines = []
+
+        # T1: Always-available built-in tools per persona
+        lines.append("\nBuilt-in tools (always available, NO plugin needed):")
+        lines.append("  researcher: google_search (web search, news, fact-finding)")
+        lines.append("  coder: execute_code, install_package, desktop tools (E2B sandbox)")
+        lines.append("  analyst: google_search, execute_code, install_package, desktop tools")
+        lines.append("  creative: generate_image (Imagen)")
+        lines.append("  assistant: general tasks, communication")
+        lines.append("  genui: render_genui_component (charts, tables, UI components)")
+
         try:
             from app.tools.capabilities_tool import _get_capabilities_data
             data = _get_capabilities_data(user_id)
@@ -767,14 +777,14 @@ class TaskOrchestrator:
                     elif tool_name == "(not connected yet)":
                         plugins.setdefault(pname, []).append("(connecting...)")
                 if plugins:
-                    lines.append("\nEnabled plugins and their tools:")
+                    lines.append("\nEnabled plugins (T2 — user-activated):")
                     for pname, tools in plugins.items():
                         lines.append(f"  {pname}: {', '.join(tools)}")
             else:
-                lines.append("\nNo external plugins/MCPs are currently enabled.")
+                lines.append("\nNo additional plugins are currently enabled.")
 
         except Exception:
-            lines.append("\nCould not determine available plugins.")
+            lines.append("\nCould not determine enabled plugins.")
 
         return "\n".join(lines)
 
@@ -853,11 +863,12 @@ You are a task decomposition engine. Break the following task into clear,
 actionable steps. Each step should be executable by one specialist agent.
 
 Available personas (pick the best for each step):
-  assistant — general tasks, communication, scheduling
-  coder — code writing, execution, debugging
-  researcher — web search, deep research, fact-finding
-  analyst — data analysis, charts, code execution
-  creative — image generation, creative writing
+  assistant — general tasks, communication, scheduling, plugin tools (calendar, email, etc.)
+  coder — code writing, execution, debugging, E2B desktop sandbox
+  researcher — web search (google_search is BUILT-IN, always available), deep research, fact-finding
+  analyst — data analysis, charts, code execution, web search
+  creative — image generation (generate_image is BUILT-IN), creative writing
+  genui — interactive UI components, charts, tables, visualizations
 
 {tool_context}
 
@@ -881,8 +892,9 @@ Rules:
 - Use depends_on to reference step IDs when a step needs output from another
 - Each step should be self-contained with clear instructions
 - Be specific in instructions — the agent won't see the original request
-- ONLY plan steps that use available tools/plugins listed above
-- If a needed plugin is not enabled, include a step noting the requirement
+- ONLY plan steps that use available tools listed above
+- Built-in tools (google_search, execute_code, generate_image, etc.) are ALWAYS available — do NOT create steps saying they need a plugin
+- Only flag a missing plugin if the task needs a T2 plugin (calendar, email, notion, etc.) that is not in the enabled plugins list
 
 TASK:
 {task}

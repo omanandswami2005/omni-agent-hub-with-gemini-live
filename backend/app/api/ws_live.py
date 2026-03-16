@@ -671,11 +671,15 @@ async def _upstream(
                 elif msg_type == "image":
                     import base64
 
+                    from app.utils.image_cache import cache_user_image
+
                     image_bytes = base64.b64decode(data.get("data_base64", ""))
                     blob = types.Blob(
                         mime_type=data.get("mime_type", "image/jpeg"),
                         data=image_bytes,
                     )
+                    # Cache for MultimodalAgentTool so sub-agents can see the image
+                    cache_user_image(user_id, blob)
                     queue.send_realtime(blob)
                 elif msg_type == "mcp_toggle":
                     # Handle MCP toggle during live session
@@ -827,6 +831,8 @@ async def _downstream(
     first_event = True
     _MAX_TOOL_RETRIES = 3  # Max consecutive tool-not-found errors before giving up
     _tool_error_count = 0
+    _MAX_RATE_LIMIT_RETRIES = 4  # Max consecutive rate-limit retries before giving up
+    _rate_limit_count = 0
     while True:
         try:
             async for event in runner.run_live(
@@ -839,6 +845,7 @@ async def _downstream(
                     logger.info("live_connection_established", user_id=user_id, session_id=session_id)
                     first_event = False
                 _tool_error_count = 0  # Reset on successful event
+                _rate_limit_count = 0
                 await _process_event(websocket, event, bus, user_id, conn_tag=str(id(websocket)), client_type=client_type)
             # Generator exhausted — may be an agent transfer or graceful end.
             # Restart the loop so the new active agent can continue processing.
@@ -948,13 +955,28 @@ async def _downstream(
                     )
                     await websocket.send_text(err.model_dump_json())
             elif "429" in exc_str or "resource_exhausted" in exc_str_lower:
-                logger.warning("ws_downstream_rate_limited", user_id=user_id)
+                _rate_limit_count += 1
+                backoff = min(2 ** _rate_limit_count, 16)  # 2s, 4s, 8s, 16s
+                logger.warning("ws_downstream_rate_limited", user_id=user_id, attempt=_rate_limit_count, backoff_s=backoff)
                 with contextlib.suppress(Exception):
                     err = ErrorMessage(
                         code="rate_limited",
-                        description="The AI service is temporarily overloaded (rate limit). Please wait a moment and try again.",
+                        description=f"The AI service is temporarily overloaded (rate limit). Retrying in {backoff}s…",
                     )
                     await websocket.send_text(err.model_dump_json())
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(StatusMessage(state=AgentState.IDLE).model_dump_json())
+                if _rate_limit_count >= _MAX_RATE_LIMIT_RETRIES:
+                    logger.error("ws_downstream_rate_limit_max_retries", user_id=user_id)
+                    with contextlib.suppress(Exception):
+                        err = ErrorMessage(
+                            code="rate_limited",
+                            description="Rate limit persists after multiple retries. Please wait a minute and try again.",
+                        )
+                        await websocket.send_text(err.model_dump_json())
+                    break
+                await asyncio.sleep(backoff)
+                continue  # Restart run_live — session context preserved
             else:
                 logger.exception("ws_downstream_error", user_id=user_id)
             # Always send IDLE status on any exception path so the frontend
@@ -969,7 +991,7 @@ async def _downstream(
 # Persona AgentTool names — persona agents wrapped via AgentTool.
 # Used to emit transfer-like messages and drain pending results.
 _PERSONA_AGENT_NAMES = frozenset(
-    {"coder", "researcher", "analyst", "creative", "genui", "assistant"}
+    {"coder", "researcher", "analyst", "creative", "genui"}
 )
 
 # Cross-device T3 tool names (from app.tools.cross_client)
@@ -1111,6 +1133,13 @@ def _next_call_id(fc_id: str | None = None) -> str:
 # same tool name don't clobber each other.
 _pending_call_ids: dict[tuple[str, str], list[str]] = {}
 
+# ── GenUI dedup counter ──────────────────────────────────────────────
+# Tracks how many GenUI payloads were already emitted via the drain path
+# (persona AgentTool response) per connection.  When the root agent later
+# echoes the same GenUI JSON in its text output, the counter suppresses the
+# duplicate emission.  Keyed by conn_tag.
+_genui_drain_count: dict[str, int] = {}
+
 
 async def _process_event(
     websocket: WebSocket,
@@ -1162,6 +1191,22 @@ async def _process_event(
                 # Detect GenUI: if the text is a JSON block with "genui_type"
                 genui_payload = _try_parse_genui(part.text)
                 if genui_payload:
+                    # Dedup: if this genui was already sent via the drain path
+                    # (persona AgentTool response), suppress the duplicate.
+                    if _genui_drain_count.get(conn_tag, 0) > 0:
+                        _genui_drain_count[conn_tag] -= 1
+                        logger.debug("genui_text_dedup_suppressed", conn=conn_tag)
+                        # Send companion text only (no GENUI frame)
+                        companion_text = genui_payload.get("text", "")
+                        if companion_text:
+                            msg = AgentResponse(
+                                content_type=ContentType.TEXT,
+                                data=companion_text,
+                            )
+                            json_str = msg.model_dump_json()
+                            await websocket.send_text(json_str)
+                            await _publish(bus, user_id, json_str)
+                        continue
                     msg = AgentResponse(
                         content_type=ContentType.GENUI,
                         data=genui_payload.get("text", ""),
@@ -1282,7 +1327,8 @@ async def _process_event(
             logger.info("persona_tool_response", agent=fr.name, user_id=user_id, response_preview=str(fr.response)[:200] if fr.response else "None")
             # Drain pending GenUI components queued by the sub-agent
             if user_id:
-                for genui_data in drain_pending_genui(user_id):
+                _drained_genui = drain_pending_genui(user_id)
+                for genui_data in _drained_genui:
                     genui_msg = AgentResponse(
                         content_type=ContentType.GENUI,
                         data="",
@@ -1292,6 +1338,9 @@ async def _process_event(
                     await websocket.send_text(gj)
                     await _publish(bus, user_id, gj)
                     logger.info("genui_via_agent_tool", agent=fr.name, conn=conn_tag)
+                # Track drained count so text-parse path skips duplicates
+                if _drained_genui:
+                    _genui_drain_count[conn_tag] = _genui_drain_count.get(conn_tag, 0) + len(_drained_genui)
 
                 # Drain pending images queued by the sub-agent
                 _img_items = drain_pending_images(user_id)
@@ -1688,20 +1737,21 @@ async def ws_live(websocket: WebSocket) -> None:
         _get_runner(user.uid, session_service=active_session_service)
     )
 
-    # Build available tool names for auth response
-    from app.services.tool_registry import get_tool_registry
+    # Collect available tool names from cached summaries (lightweight,
+    # no MCP connections).  The full tool list is built inside _get_runner
+    # via build_for_session — don't call build_for_session a second time
+    # here; that was triggering duplicate MCP connections and doubling
+    # the startup latency.
+    from app.services.plugin_registry import get_plugin_registry
 
-    tool_registry = get_tool_registry()
     available_tool_names: list[str] = []
     try:
-        tools_map = await tool_registry.build_for_session(user.uid)
-        for tools in tools_map.values():
-            for t in tools:
-                name = getattr(t, "name", getattr(t, "__name__", str(t)))
-                if name not in available_tool_names:
-                    available_tool_names.append(name)
+        for s in get_plugin_registry().get_tool_summaries(user.uid):
+            name = s.get("name") or s.get("tool_name", "")
+            if name and name not in available_tool_names:
+                available_tool_names.append(name)
     except Exception:
-        logger.debug("tool_registry_preview_failed", user_id=user.uid)
+        logger.debug("tool_summary_preview_failed", user_id=user.uid)
 
     # Send auth success + connected message
     auth_ok = AuthResponse(
@@ -1859,6 +1909,8 @@ async def ws_live(websocket: WebSocket) -> None:
                     )
 
         await mgr.disconnect(user.uid, client_type, websocket=websocket)
+        # Clean up per-connection dedup state
+        _genui_drain_count.pop(own_conn_tag, None)
         logger.info("ws_live_closed", user_id=user.uid, session_id=session_id)
 
 

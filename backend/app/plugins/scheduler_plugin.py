@@ -9,6 +9,7 @@ Leverages Google Cloud Scheduler (recurring) and Cloud Tasks (one-shot).
 from __future__ import annotations
 
 from google.adk.tools import FunctionTool
+from google.adk.tools.tool_context import ToolContext
 
 from app.models.plugin import (
     PluginCategory,
@@ -139,6 +140,7 @@ async def create_scheduled_task(
     notify_channel: str = "",
     notify_recipient: str = "",
     action_params: str = "",
+    tool_context: ToolContext | None = None,
 ) -> dict:
     """Schedule a recurring or one-shot task.
 
@@ -190,7 +192,7 @@ async def create_scheduled_task(
         }
 
     task = await svc.create_task(
-        user_id="default_user",  # Will be overridden by middleware
+        user_id=_get_user_id(tool_context),
         description=description,
         action=action,
         schedule=cron_expr,
@@ -212,7 +214,7 @@ async def create_scheduled_task(
     }
 
 
-async def list_scheduled_tasks() -> dict:
+async def list_scheduled_tasks(tool_context: ToolContext | None = None) -> dict:
     """List all scheduled tasks for the current user.
 
     Returns:
@@ -221,7 +223,7 @@ async def list_scheduled_tasks() -> dict:
     from app.services.scheduler_service import get_scheduler_service
 
     svc = get_scheduler_service()
-    tasks = await svc.list_tasks(user_id="default_user")
+    tasks = await svc.list_tasks(user_id=_get_user_id(tool_context))
 
     return {
         "count": len(tasks),
@@ -229,7 +231,7 @@ async def list_scheduled_tasks() -> dict:
     }
 
 
-async def delete_scheduled_task(task_id: str) -> dict:
+async def delete_scheduled_task(task_id: str, tool_context: ToolContext | None = None) -> dict:
     """Delete/cancel a scheduled task.
 
     Args:
@@ -241,7 +243,7 @@ async def delete_scheduled_task(task_id: str) -> dict:
     from app.services.scheduler_service import get_scheduler_service
 
     svc = get_scheduler_service()
-    deleted = await svc.delete_task(user_id="default_user", task_id=task_id)
+    deleted = await svc.delete_task(user_id=_get_user_id(tool_context), task_id=task_id)
 
     return {
         "success": deleted,
@@ -250,7 +252,7 @@ async def delete_scheduled_task(task_id: str) -> dict:
     }
 
 
-async def pause_scheduled_task(task_id: str) -> dict:
+async def pause_scheduled_task(task_id: str, tool_context: ToolContext | None = None) -> dict:
     """Pause a scheduled task without deleting it.
 
     Args:
@@ -262,14 +264,14 @@ async def pause_scheduled_task(task_id: str) -> dict:
     from app.services.scheduler_service import get_scheduler_service
 
     svc = get_scheduler_service()
-    task = await svc.pause_task(user_id="default_user", task_id=task_id)
+    task = await svc.pause_task(user_id=_get_user_id(tool_context), task_id=task_id)
 
     if task:
         return {"success": True, "task_id": task_id, "status": "paused"}
     return {"success": False, "error": f"Task {task_id} not found"}
 
 
-async def resume_scheduled_task(task_id: str) -> dict:
+async def resume_scheduled_task(task_id: str, tool_context: ToolContext | None = None) -> dict:
     """Resume a paused scheduled task.
 
     Args:
@@ -281,7 +283,7 @@ async def resume_scheduled_task(task_id: str) -> dict:
     from app.services.scheduler_service import get_scheduler_service
 
     svc = get_scheduler_service()
-    task = await svc.resume_task(user_id="default_user", task_id=task_id)
+    task = await svc.resume_task(user_id=_get_user_id(tool_context), task_id=task_id)
 
     if task:
         return {"success": True, "task_id": task_id, "status": "active"}

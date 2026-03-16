@@ -98,9 +98,28 @@ async def lifespan(app: FastAPI):
     mgr = get_connection_manager()
     mgr.start_reaper()
 
+    # Start in-process cron runner.  In production this complements Cloud
+    # Scheduler (catches missed triggers / newly-created tasks).  In dev
+    # it is the only trigger mechanism.  The idempotency check in
+    # execute_task() prevents double-execution when both fire.
+    _scheduler_svc = None
+    try:
+        from app.services.scheduler_service import get_scheduler_service
+
+        _scheduler_svc = get_scheduler_service()
+        poll = 60.0 if settings.is_production else 15.0
+        await _scheduler_svc.start_local_cron(poll_interval=poll)
+    except Exception:
+        logger.warning("cron_runner_start_failed", exc_info=True)
+
     yield
 
-    # Shutdown — stop reaper + close MCP/plugin connections
+    # Shutdown — stop local cron + reaper + close MCP/plugin connections
+    if _scheduler_svc:
+        try:
+            await _scheduler_svc.stop_local_cron()
+        except Exception:
+            pass
     mgr.stop_reaper()
     try:
         from app.services.plugin_registry import get_plugin_registry

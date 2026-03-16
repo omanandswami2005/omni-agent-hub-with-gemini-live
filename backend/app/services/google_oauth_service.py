@@ -163,19 +163,26 @@ class GoogleOAuthService:
             tokens = self._load_from_secret_manager(user_id, plugin_id)
             if tokens:
                 self._tokens[key] = tokens
+                logger.info("google_oauth_loaded_from_sm", user_id=user_id, plugin_id=plugin_id)
+            else:
+                logger.warning("google_oauth_no_tokens", user_id=user_id, plugin_id=plugin_id)
 
         if tokens is None:
             return None
 
         # Refresh if expired
         if tokens.expires_at < time.monotonic() and tokens.refresh_token:
+            logger.info("google_oauth_refreshing", user_id=user_id, plugin_id=plugin_id,
+                        has_client_id=bool(self._client_id()), has_client_secret=bool(self._client_secret()))
             refreshed = await self._refresh(tokens.refresh_token)
             if refreshed:
                 tokens.access_token = refreshed.access_token
                 tokens.expires_at = refreshed.expires_at
                 if refreshed.refresh_token:
                     tokens.refresh_token = refreshed.refresh_token
+                logger.info("google_oauth_refreshed_ok", user_id=user_id, plugin_id=plugin_id)
             else:
+                logger.warning("google_oauth_refresh_returned_none", user_id=user_id, plugin_id=plugin_id)
                 return None
 
         return tokens.access_token
@@ -218,16 +225,25 @@ class GoogleOAuthService:
 
     async def _refresh(self, refresh_token: str) -> GoogleTokens | None:
         try:
+            cid = self._client_id()
+            csecret = self._client_secret()
+            if not cid or not csecret:
+                logger.warning("google_oauth_refresh_missing_creds",
+                               has_client_id=bool(cid), has_client_secret=bool(csecret))
+                return None
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(
                     _TOKEN_URL,
                     data={
-                        "client_id": self._client_id(),
-                        "client_secret": self._client_secret(),
+                        "client_id": cid,
+                        "client_secret": csecret,
                         "refresh_token": refresh_token,
                         "grant_type": "refresh_token",
                     },
                 )
+                if resp.status_code != 200:
+                    logger.warning("google_oauth_refresh_http_error",
+                                   status=resp.status_code, body=resp.text[:200])
                 resp.raise_for_status()
                 data = resp.json()
             return GoogleTokens(

@@ -85,7 +85,7 @@ CURRENT CONTEXT:
 class MemoryService:
     """Manages long-term user memory via Firestore + Gemini extraction."""
 
-    MODEL = "gemini-2.5-flash"
+    MODEL = "gemini-2.5-flash-lite"
 
     def __init__(self) -> None:
         self._firestore = None

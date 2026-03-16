@@ -521,8 +521,34 @@ class OAuthService:
                 },
             )
             if resp.status_code != 200:
-                logger.warning("oauth_refresh_failed", status=resp.status_code, body=resp.text)
+                # Parse error type from response body
+                error_code = ""
+                try:
+                    error_code = resp.json().get("error", "")
+                except Exception:
+                    pass
+                logger.warning(
+                    "oauth_refresh_failed",
+                    status=resp.status_code,
+                    body=resp.text,
+                    error_code=error_code,
+                    user_id=user_id,
+                    plugin_id=plugin_id,
+                )
                 self._tokens.pop(key, None)
+
+                # Permanently invalid — clean up Secret Manager so we
+                # don't keep reloading a revoked token on every request.
+                if error_code == "invalid_grant":
+                    logger.warning(
+                        "oauth_token_revoked_cleaning_up",
+                        user_id=user_id,
+                        plugin_id=plugin_id,
+                    )
+                    try:
+                        secret_service.delete_secrets(user_id, f"{plugin_id}-mcp-oauth")
+                    except Exception:
+                        pass
                 return None
             data = resp.json()
 

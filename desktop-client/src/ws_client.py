@@ -214,13 +214,20 @@ class DesktopWSClient:
         if self.ws and self.connected:
             await self.ws.send(json.dumps(message))
 
-    async def send_response(self, action: str, result: Any) -> None:
-        """Send an action response back to the server."""
-        await self.send_json({
-            "type": "action_response",
-            "action": action,
+    async def send_response(self, action: str, result: Any, call_id: str = "") -> None:
+        """Send an action response back to the server.
+
+        Uses the T3 ``tool_result`` protocol so the backend can resolve
+        the awaiting Future and relay the result to the AI agent.
+        """
+        msg: dict[str, Any] = {
+            "type": "tool_result",
+            "call_id": call_id,
             "result": result,
-        })
+        }
+        if isinstance(result, dict) and "error" in result:
+            msg["error"] = result["error"]
+        await self.send_json(msg)
 
     async def disconnect(self) -> None:
         """Gracefully close connection and stop reconnection."""
@@ -368,6 +375,7 @@ class DesktopWSClient:
         elif msg_type == "cross_client":
             action = msg.get("action", "")
             payload = msg.get("data", {})
+            call_id = msg.get("call_id", "")
 
             # Built-in notification handler — show OS toast
             if action == "notification":
@@ -375,20 +383,20 @@ class DesktopWSClient:
                 if self.gui:
                     self.gui.show_notification("Omni Agent", message)
                     self.gui.append_chat(f"[Notification] {message}")
-                await self.send_response(action, {"received": True})
+                await self.send_response(action, {"received": True}, call_id=call_id)
                 return
 
             handler = self._handlers.get(action)
             if handler:
                 try:
                     result = await handler(**payload) if payload else await handler()
-                    await self.send_response(action, result)
+                    await self.send_response(action, result, call_id=call_id)
                 except Exception as exc:
                     logger.error("Handler error for %s: %s", action, exc)
-                    await self.send_response(action, {"error": str(exc)})
+                    await self.send_response(action, {"error": str(exc)}, call_id=call_id)
             else:
                 logger.warning("No handler for action: %s", action)
-                await self.send_response(action, {"error": f"Unknown action: {action}"})
+                await self.send_response(action, {"error": f"Unknown action: {action}"}, call_id=call_id)
 
         elif msg_type == "ping":
             await self.send_json({"type": "pong"})

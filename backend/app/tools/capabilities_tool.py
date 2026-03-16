@@ -191,7 +191,6 @@ def _render_markdown(data: dict) -> str:
 
     # Build a readable persona → capability mapping
     _PERSONA_DISPLAY = {
-        "assistant": ("Claire — General Assistant", "scheduling, reminders, everyday tasks, calendar, email, notifications"),
         "coder": ("Dev — Software Engineer", "code execution, E2B sandbox, GitHub, debugging"),
         "researcher": ("Sage — Research Analyst", "web search, fact-checking, data gathering"),
         "analyst": ("Nova — Data Analyst", "data analysis, charts, statistics, code execution"),
@@ -205,9 +204,10 @@ def _render_markdown(data: dict) -> str:
     # ── Persona specialists ────────────────────────────────────────
     lines.append("\n## Specialist Agents (call via `persona_id(request)`)\n")
     lines.append(
-        "**IMPORTANT:** You (root) do NOT call individual tools like "
-        "`list_calendar_events`, `execute_code`, `google_search`, etc. directly. "
-        "Instead, route to the right specialist below, who owns those tools.\n"
+        "**IMPORTANT:** You (root) do NOT call specialist-only tools like "
+        "`execute_code`, `google_search`, `generate_image` directly. "
+        "Route to the right specialist below. However, communication tools "
+        "(calendar, email, Notion) are YOUR tools — call them directly.\n"
     )
     for pid, (display_name, desc) in _PERSONA_DISPLAY.items():
         caps = _PERSONA_CAPABILITIES.get(pid, [])
@@ -240,7 +240,8 @@ def _render_markdown(data: dict) -> str:
             tool_names = ", ".join(t["tool"] for t in tools)
             lines.append(
                 f"- **{plugin_name}**: {tool_names}\n"
-                f"  → Route to the appropriate specialist (e.g., **assistant** for calendar/email, **coder** for GitHub)"
+                f"  → Route to the appropriate specialist (e.g., **coder** for GitHub) "
+                f"or call directly for calendar/email/Notion."
             )
     else:
         lines.append(

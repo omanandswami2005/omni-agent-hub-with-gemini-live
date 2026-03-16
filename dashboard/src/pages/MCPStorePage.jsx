@@ -11,13 +11,28 @@ import { useMcpStore } from '@/stores/mcpStore';
 export default function MCPStorePage() {
   useDocumentTitle('MCP & Plugins');
   const { catalog, loading, error, fetchCatalog, fetchEnabled, toggleMCP } = useMcpStore();
-  const [selected, setSelected] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
     fetchCatalog();
     fetchEnabled();
   }, [fetchCatalog, fetchEnabled]);
+
+  // Refetch when window regains focus (handles OAuth redirect-back, tab switch)
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchCatalog();
+        fetchEnabled();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [fetchCatalog, fetchEnabled]);
+
+  // Derive selected from catalog so OAuth/toggle state changes propagate live
+  const selected = selectedId ? catalog.find((s) => s.id === selectedId) || null : null;
 
   const filtered = catalog.filter((s) => {
     if (search && !s.name.toLowerCase().includes(search.toLowerCase())) return false;
@@ -27,7 +42,6 @@ export default function MCPStorePage() {
   const handleToggle = async (mcpId, enabled) => {
     try {
       await toggleMCP(mcpId, enabled);
-      if (selected?.id === mcpId) setSelected((prev) => ({ ...prev, state: enabled ? 'enabled' : 'available' }));
     } catch {
       // Re-fetch catalog to reset UI state after failed toggle
       fetchCatalog();
@@ -37,7 +51,7 @@ export default function MCPStorePage() {
   if (selected) {
     return (
       <div className="mx-auto max-w-2xl py-6">
-        <MCPDetail server={selected} onToggle={handleToggle} onClose={() => setSelected(null)} />
+        <MCPDetail server={selected} onToggle={handleToggle} onClose={() => setSelectedId(null)} />
       </div>
     );
   }
@@ -63,7 +77,7 @@ export default function MCPStorePage() {
       ) : filtered.length === 0 ? (
         <p className="text-sm text-muted-foreground">No servers found.</p>
       ) : (
-        <MCPStoreGrid servers={filtered} onSelect={setSelected} />
+        <MCPStoreGrid servers={filtered} onSelect={(s) => setSelectedId(s?.id)} />
       )}
     </div>
   );

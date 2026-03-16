@@ -29,7 +29,10 @@ export function useBootstrap() {
                     usePersonaStore.getState().setActivePersona(data.personas[0]);
                 }
             }
-            if (data.mcp_catalog) useMcpStore.getState().setCatalog(data.mcp_catalog);
+            // Prefer plugin_catalog (full PluginStatus with tools_summary, state,
+            // kind, etc.) over mcp_catalog (stripped MCPCatalogItem).
+            const catalog = data.plugin_catalog || data.mcp_catalog;
+            if (catalog) useMcpStore.getState().setCatalog(catalog);
             if (data.mcp_enabled) useMcpStore.getState().setInstalled(data.mcp_enabled);
         }).catch(() => {
             // Silent — individual pages can still fetch their own data as fallback

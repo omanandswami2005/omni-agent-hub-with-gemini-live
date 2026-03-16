@@ -27,6 +27,7 @@ from google.adk.agents import Agent
 from google.adk.tools.agent_tool import AgentTool
 
 from app.agents.agent_factory import LIVE_MODEL, create_agent
+from app.agents.multimodal_agent_tool import MultimodalAgentTool
 from app.agents.personas import get_default_personas
 from app.tools.cross_client import get_cross_client_tools
 from app.middleware.agent_callbacks import (
@@ -69,7 +70,6 @@ def _build_root_instruction(
         "- 'I'll generate that table now.' → then call genui(request)\n"
         "- 'Let me look that up.' → then call researcher(request)\n"
         "- 'I'll run that code for you.' → then call coder(request)\n"
-        "- 'Let me check your calendar.' → then call assistant(request)\n"
         "Always acknowledge first, THEN call the tool in the same turn.\n\n"
         "## Specialist Tools (call with a natural-language request string)\n"
         f"{persona_text}\n\n"
@@ -80,7 +80,9 @@ def _build_root_instruction(
         "4. Research, web search → **researcher(request)**.\n"
         "5. Image generation, creative → **creative(request)**.\n"
         "6. Data analysis → **analyst(request)**.\n"
-        "7. Calendar, email, scheduling, reminders, Notion, any plugin tool → **assistant(request)**.\n"
+        "7. Calendar, email, scheduling, reminders, Notion, plugin tools → "
+        "handle DIRECTLY using your communication tools (e.g. list_calendar_events, "
+        "list_notion_pages, send_email). Do NOT route these to a specialist.\n"
         "8. UI components, charts, tables, interactive visuals → **genui(request)**.\n"
         "9. Complex multi-step work → call **create_planned_task()** first.\n"
         "10. Device control (desktop, Chrome, dashboard) → call **list_connected_clients()** "
@@ -91,13 +93,20 @@ def _build_root_instruction(
         "1. **E2B Cloud Sandbox** (coder/analyst tools) — virtual Linux, always available.\n"
         "2. **User's Real Devices** (your direct tools) — call list_connected_clients first.\n"
         "'Run Python' → coder. 'Open Chrome on my laptop' → send_to_desktop.\n\n"
+        "## IMAGE HANDLING\n"
+        "When the user sends an image, it is automatically forwarded to whichever "
+        "specialist you route to. Just describe what the user wants in the request "
+        "string — the image will be included. Example: User sends an image and says "
+        "'save this' → call coder(request='The user sent an image. Save it to the "
+        "sandbox as image.png'). The specialist WILL receive the image data.\n\n"
         "## YOUR TOOL REGISTRY\n"
         f"Specialist tools: {', '.join(pid for pid, _ in persona_names)}.\n"
         f"Utility tools: {other_list}.\n"
         "You CANNOT call render_genui_component, get_genui_schema, execute_code, "
-        "generate_image, google_search, list_calendar_events, list_notion_pages, "
-        "or ANY plugin/MCP tool directly — those belong to specialist agents. "
-        "ALWAYS route through the right specialist.\n\n"
+        "generate_image, google_search directly — those belong to specialist agents. "
+        "ALWAYS route through the right specialist.\n"
+        "You CAN call calendar, email, notification, and Notion tools directly — "
+        "those are YOUR communication tools.\n\n"
         "## ERROR RECOVERY\n"
         "If a specialist tool returns an error or fails:\n"
         "1. Do NOT crash or go silent — always continue the voice conversation.\n"
@@ -150,27 +159,36 @@ def build_root_agent(
     # ── Persona AgentTools — each persona wrapped in AgentTool ────────
     persona_agent_tools: list[AgentTool] = []
     persona_names: list[tuple[str, str]] = []
+    # Communication T2 tools (from "assistant" persona slot) go on root
+    # directly so root keeps audio and handles plugins natively.
+    root_comm_tools: list = []
 
     for p in personas:
+        if p.id == "assistant":
+            # Absorb assistant's T2 tools into root — no sub-agent needed.
+            root_comm_tools = tools_map.get(p.id, []) if tools_by_persona is not None else (mcp_tools or [])
+            continue
+
         # Decide T2 tools for this persona (legacy path: flat mcp_tools for all)
         extra = tools_map.get(p.id, []) if tools_by_persona is not None else mcp_tools
 
         agent = create_agent(p, extra_tools=extra, model=effective_model)
         persona_agent_tools.append(
-            AgentTool(agent=agent, skip_summarization=True)
+            MultimodalAgentTool(agent=agent, skip_summarization=True)
         )
         persona_names.append((p.id, p.name))
 
     # ── Device tools: cross-client + T3 on root directly ─────────────
     device_tools = tools_map.get("__device__")
 
-    # ── Root tools: planning + capabilities + cross-client + T3 + AgentTools ─
+    # ── Root tools: planning + capabilities + cross-client + T3 + comms + AgentTools ─
     root_tools = [
         *get_planned_task_tools(),
         *get_human_input_tools(),
         *get_capability_tools(),
         *get_cross_client_tools(),
         *(device_tools or []),
+        *root_comm_tools,
         *persona_agent_tools,
     ]
 

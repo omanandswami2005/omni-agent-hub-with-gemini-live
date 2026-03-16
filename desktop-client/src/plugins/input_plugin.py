@@ -12,6 +12,7 @@ from src.actions import (
     move_mouse,
     open_application,
     scroll,
+    search_applications,
     type_text,
 )
 from src.plugin_registry import DesktopPlugin
@@ -45,6 +46,10 @@ async def _handle_open_app(**kwargs) -> dict:
     return open_application(kwargs["name"])
 
 
+async def _handle_search_apps(**kwargs) -> dict:
+    return search_applications(kwargs["query"])
+
+
 async def _handle_get_window_title(**_kwargs) -> dict:
     return {"title": get_active_window_title()}
 
@@ -73,6 +78,7 @@ def register() -> DesktopPlugin:
             "move_mouse": _handle_move_mouse,
             "scroll": _handle_scroll,
             "open_app": _handle_open_app,
+            "search_apps": _handle_search_apps,
             "get_window_title": _handle_get_window_title,
             "mouse_position": _handle_mouse_position,
             "screen_size": _handle_screen_size,
@@ -153,13 +159,24 @@ def register() -> DesktopPlugin:
             },
             {
                 "name": "open_app",
-                "description": "Open an application by name on the user's desktop",
+                "description": "Open an application by name on the user's desktop. Automatically searches Start Menu, installed programs, and PATH to find the correct executable. Use natural names like 'chrome', 'firefox', 'vscode', 'notepad'.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "name": {"type": "string", "description": "Application name to open"},
+                        "name": {"type": "string", "description": "Application name to open (e.g. 'chrome', 'spotify', 'visual studio code')"},
                     },
                     "required": ["name"],
+                },
+            },
+            {
+                "name": "search_apps",
+                "description": "Search for installed applications matching a query. Use this FIRST when unsure of the exact application name. Returns a list of matching apps with names and paths.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search term (e.g. 'chrome', 'visual studio', 'note')"},
+                    },
+                    "required": ["query"],
                 },
             },
             {

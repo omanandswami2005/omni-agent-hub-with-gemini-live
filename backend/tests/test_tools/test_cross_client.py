@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -19,10 +20,10 @@ from app.tools.cross_client import (
     send_to_desktop,
 )
 from app.tools.desktop_tools import (
-    desktop_screenshot,
     desktop_click,
-    desktop_type,
     desktop_launch,
+    desktop_screenshot,
+    desktop_type,
     get_desktop_tools,
 )
 
@@ -69,6 +70,16 @@ def _reset_cm_singleton():
     mod._manager = old
 
 
+@pytest.fixture(autouse=True)
+def _clear_pending():
+    """Ensure _pending_results is clean before/after each test."""
+    from app.services.tool_registry import _pending_results
+
+    _pending_results.clear()
+    yield
+    _pending_results.clear()
+
+
 def _fake_ctx(user_id: str = "u1") -> MagicMock:
     """Create a mock ToolContext with a user_id."""
     ctx = MagicMock()
@@ -76,35 +87,76 @@ def _fake_ctx(user_id: str = "u1") -> MagicMock:
     return ctx
 
 
+def _resolve_next_pending(result: dict, delay: float = 0.0):
+    """Return an *async* side-effect for ``send_to_client`` that resolves the
+    pending Future registered by ``_send_action`` with *result*.
+
+    The Future is registered *before* send_to_client is called, so we look
+    it up from ``_pending_results`` inside the side-effect callback.
+    """
+    from app.services.tool_registry import _pending_results
+
+    async def _side_effect(*_args, **_kwargs):
+        if delay:
+            await asyncio.sleep(delay)
+        # There should be exactly one pending call_id
+        for _call_id, fut in list(_pending_results.items()):
+            if not fut.done():
+                fut.set_result(result)
+                break
+
+    return _side_effect
+
+
 # ── send_to_desktop ──────────────────────────────────────────────────
 
 
 class TestSendToDesktop:
     @pytest.mark.asyncio
-    async def test_delivers_when_online(self, mock_cm):
+    async def test_returns_client_result_when_online(self, mock_cm):
+        mock_cm.send_to_client = AsyncMock(
+            side_effect=_resolve_next_pending({"files": ["a.txt", "b.txt"]})
+        )
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            result = await send_to_desktop("open_app", '{"app": "calc"}', tool_context=_fake_ctx())
-        assert result["delivered"] is True
+            result = await send_to_desktop("list_files", '{"path": "/"}', tool_context=_fake_ctx())
+        assert result == {"files": ["a.txt", "b.txt"]}
         mock_cm.send_to_client.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_fails_when_offline(self, mock_cm):
+    async def test_error_when_offline(self, mock_cm):
         mock_cm.is_online.return_value = False
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             result = await send_to_desktop("open_app", "{}", tool_context=_fake_ctx())
-        assert result["delivered"] is False
+        assert "error" in result
         assert "not connected" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_timeout_when_client_silent(self, mock_cm):
+        # Don't resolve the Future — let it time out
+        with (
+            patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm),
+            patch("app.tools.cross_client._ACTION_TIMEOUT", 0.1),
+        ):
+            result = await send_to_desktop("open_app", "{}", tool_context=_fake_ctx())
+        assert "error" in result
+        assert "did not respond" in result["error"]
 
 
 class TestSendToChrome:
     @pytest.mark.asyncio
-    async def test_delivers(self, mock_cm):
+    async def test_returns_result(self, mock_cm):
+        mock_cm.send_to_client = AsyncMock(
+            side_effect=_resolve_next_pending({"page_content": "<html>..."})
+        )
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
-            result = await send_to_chrome("open_tab", '{"url": "https://x.com"}', tool_context=_fake_ctx())
-        assert result["delivered"] is True
+            result = await send_to_chrome("get_page", '{"url": "https://x.com"}', tool_context=_fake_ctx())
+        assert result == {"page_content": "<html>..."}
 
     @pytest.mark.asyncio
     async def test_sends_correct_client_type(self, mock_cm):
+        mock_cm.send_to_client = AsyncMock(
+            side_effect=_resolve_next_pending({"ok": True})
+        )
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             await send_to_chrome("get_page", "{}", tool_context=_fake_ctx())
         args = mock_cm.send_to_client.call_args
@@ -113,18 +165,24 @@ class TestSendToChrome:
 
 class TestSendToDashboard:
     @pytest.mark.asyncio
-    async def test_delivers(self, mock_cm):
+    async def test_returns_result(self, mock_cm):
+        mock_cm.send_to_client = AsyncMock(
+            side_effect=_resolve_next_pending({"shown": True})
+        )
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             result = await send_to_dashboard("show_notification", '{"msg": "hi"}', tool_context=_fake_ctx())
-        assert result["delivered"] is True
+        assert result == {"shown": True}
 
 
 class TestNotifyClient:
     @pytest.mark.asyncio
     async def test_sends_notification(self, mock_cm):
+        mock_cm.send_to_client = AsyncMock(
+            side_effect=_resolve_next_pending({"received": True})
+        )
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             result = await notify_client("Hello!", "web", tool_context=_fake_ctx())
-        assert result["delivered"] is True
+        assert result == {"received": True}
 
     @pytest.mark.asyncio
     async def test_invalid_client_type(self, mock_cm):
@@ -151,6 +209,9 @@ class TestListConnectedClients:
 class TestMessageFormat:
     @pytest.mark.asyncio
     async def test_message_has_correct_structure(self, mock_cm):
+        mock_cm.send_to_client = AsyncMock(
+            side_effect=_resolve_next_pending({"ok": True})
+        )
         with patch("app.tools.cross_client.get_connection_manager", return_value=mock_cm):
             await send_to_desktop("capture_screen", '{"format": "png"}', tool_context=_fake_ctx())
         sent_msg = mock_cm.send_to_client.call_args[0][2]
@@ -158,6 +219,10 @@ class TestMessageFormat:
         assert parsed["type"] == "cross_client"
         assert parsed["action"] == "capture_screen"
         assert parsed["data"]["format"] == "png"
+        # New: messages include a call_id for response correlation
+        assert "call_id" in parsed
+        assert isinstance(parsed["call_id"], str)
+        assert len(parsed["call_id"]) > 0
 
 
 # ── Desktop tools (E2B-based) ────────────────────────────────────────

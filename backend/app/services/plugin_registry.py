@@ -488,12 +488,29 @@ class PluginRegistry:
 
         oauth = get_oauth_service()
 
-        # Refresh token if needed
+        # Refresh token if needed — if refresh fails (e.g. invalid_grant)
+        # the token is already revoked; do NOT fall back to get_access_token
+        # because it would just reload the same stale token from SM.
         access_token = await oauth.refresh_token_if_needed(user_id, plugin_id, manifest.url)
         if not access_token:
+            # Only try the raw access_token if refresh_token_if_needed
+            # returned None because no tokens exist at all (first load).
+            # Check in-memory cache — if it was just evicted by a failed
+            # refresh, this will correctly return None.
             access_token = oauth.get_access_token(user_id, plugin_id)
         if not access_token:
-            self._errors[key] = "OAuth not connected. Use the Connect button to authorize."
+            # Auto-disable so we don't keep retrying on every session start
+            self._user_enabled.setdefault(user_id, {}).pop(plugin_id, None)
+            self._persist_enabled(user_id)
+            self._errors[key] = (
+                "OAuth token expired or revoked. "
+                "Please reconnect from the Integrations page."
+            )
+            logger.warning(
+                "mcp_oauth_no_valid_token",
+                user_id=user_id,
+                plugin_id=plugin_id,
+            )
             return False
 
         headers = {"Authorization": f"Bearer {access_token}"}

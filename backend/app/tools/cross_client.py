@@ -3,11 +3,16 @@
 An agent can invoke these tools to push data or actions to specific
 client types (desktop tray, Chrome extension, web dashboard) via the
 :class:`~app.services.connection_manager.ConnectionManager`.
+
+Uses the same T3 reverse-RPC pattern as client-local proxy tools: each
+action gets a unique ``call_id``, the backend awaits an asyncio Future,
+and the client resolves it by sending a ``tool_result`` frame back.
 """
 
 from __future__ import annotations
 
 import json
+from uuid import uuid4
 
 from google.adk.tools import FunctionTool
 from google.adk.tools.tool_context import ToolContext
@@ -19,7 +24,7 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Timeout (seconds) for waiting on a client response.
-_ACTION_TIMEOUT = 10.0
+_ACTION_TIMEOUT = 30.0
 
 
 def _safe_parse_json(payload: str) -> dict | list | str:
@@ -47,15 +52,17 @@ async def send_to_desktop(
     payload: str = "{}",
     tool_context: ToolContext | None = None,
 ) -> dict:
-    """Send an action to the user's desktop tray client.
+    """Send an action to the user's desktop tray client and wait for its response.
 
     Args:
         action: Action name the desktop client should execute
-                (e.g. ``open_app``, ``type_text``, ``capture_screen``).
+                (e.g. ``open_app``, ``type_text``, ``capture_screen``,
+                ``list_files``, ``list_running_apps``).
         payload: JSON string with action parameters.
 
     Returns:
-        A dict with ``delivered`` bool and optional ``error``.
+        The result returned by the desktop client after executing the action,
+        or an error dict if the client is offline or timed out.
     """
     user_id = _get_user_id(tool_context)
     return await _send_action(user_id, ClientType.DESKTOP, action, payload)
@@ -66,14 +73,15 @@ async def send_to_chrome(
     payload: str = "{}",
     tool_context: ToolContext | None = None,
 ) -> dict:
-    """Send an action to the user's Chrome extension.
+    """Send an action to the user's Chrome extension and wait for its response.
 
     Args:
         action: Action name (e.g. ``open_tab``, ``get_page_content``).
         payload: JSON string with action parameters.
 
     Returns:
-        A dict with ``delivered`` bool and optional ``error``.
+        The result returned by the Chrome extension after executing the action,
+        or an error dict if the client is offline or timed out.
     """
     user_id = _get_user_id(tool_context)
     return await _send_action(user_id, ClientType.CHROME, action, payload)
@@ -84,14 +92,15 @@ async def send_to_dashboard(
     payload: str = "{}",
     tool_context: ToolContext | None = None,
 ) -> dict:
-    """Send an action or data to the user's web dashboard.
+    """Send an action or data to the user's web dashboard and wait for its response.
 
     Args:
         action: Action name (e.g. ``show_notification``, ``render_genui``).
         payload: JSON string with action parameters.
 
     Returns:
-        A dict with ``delivered`` bool and optional ``error``.
+        The result returned by the dashboard after executing the action,
+        or an error dict if the client is offline or timed out.
     """
     user_id = _get_user_id(tool_context)
     return await _send_action(user_id, ClientType.WEB, action, payload)
@@ -146,7 +155,13 @@ async def _send_action(
     action: str,
     payload: str,
 ) -> dict:
-    """Route an action message to a specific client via ConnectionManager."""
+    """Route an action to a client and **wait** for the result via T3 reverse-RPC.
+
+    The message includes a unique ``call_id``.  The target client executes
+    the action and sends back a ``tool_result`` frame with the matching
+    ``call_id``.  This function awaits that result (up to ``_ACTION_TIMEOUT``
+    seconds) before returning it to the calling ADK tool.
+    """
     mgr = get_connection_manager()
 
     if not mgr.is_online(user_id, client_type):
@@ -157,26 +172,64 @@ async def _send_action(
             action=action,
         )
         return {
-            "delivered": False,
             "error": f"{client_type} client is not connected",
         }
+
+    call_id = uuid4().hex
 
     message = json.dumps(
         {
             "type": "cross_client",
+            "call_id": call_id,
             "action": action,
             "data": _safe_parse_json(payload) if isinstance(payload, str) else payload,
         }
     )
 
+    # Register a Future *before* sending so there is no race between send
+    # and the client's immediate reply.
+    import asyncio
+
+    from app.services.tool_registry import _pending_results
+
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future = loop.create_future()
+    _pending_results[call_id] = fut
+
     await mgr.send_to_client(user_id, client_type, message)
     logger.info(
-        "action_sent",
+        "action_sent_awaiting",
         user_id=user_id,
         client_type=client_type,
         action=action,
+        call_id=call_id,
     )
-    return {"delivered": True, "client_type": str(client_type)}
+
+    # Wait for the client to resolve the Future via resolve_tool_result()
+    try:
+        result = await asyncio.wait_for(fut, timeout=_ACTION_TIMEOUT)
+    except TimeoutError:
+        logger.warning(
+            "action_timeout",
+            user_id=user_id,
+            client_type=client_type,
+            action=action,
+            call_id=call_id,
+        )
+        return {"error": f"{client_type} client did not respond within {_ACTION_TIMEOUT}s"}
+    finally:
+        _pending_results.pop(call_id, None)
+
+    logger.info(
+        "action_result_received",
+        user_id=user_id,
+        client_type=client_type,
+        action=action,
+        call_id=call_id,
+    )
+    if isinstance(result, str):
+        return {"result": result}
+    return result
 
 
 # ---------------------------------------------------------------------------

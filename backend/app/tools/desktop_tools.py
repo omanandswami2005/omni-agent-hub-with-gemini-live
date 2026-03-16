@@ -182,7 +182,7 @@ async def desktop_start_streaming(fps: float = 1.0, user_id: str = "default") ->
     Call this after start_desktop() so there is an active sandbox.
 
     Args:
-        fps: Frames per second (0.5–2.0 recommended). Default 1.0.
+        fps: Frames per second (0.5-2.0 recommended). Default 1.0.
         user_id: User identifier.
 
     Returns:

@@ -30,7 +30,7 @@ MANIFEST = PluginManifest(
     category=PluginCategory.PRODUCTIVITY,
     kind=PluginKind.NATIVE,
     icon="google-calendar",
-    tags=["productivity", "gcp", "calendar"],
+    tags=["productivity", "gcp", "calendar", "communication"],
     module="app.plugins.google_calendar_plugin",
     factory="get_tools",
     requires_auth=True,
@@ -61,14 +61,25 @@ _PLUGIN_ID = "google-calendar"
 
 async def _get_token(tool_context: ToolContext | None) -> str | None:
     """Get the Google OAuth access token from the session context."""
+    from app.utils.logging import get_logger
+    _log = get_logger(__name__)
+
     if tool_context is None:
+        _log.warning("calendar_get_token_no_context")
         return None
     user_id = getattr(tool_context, "user_id", None)
     if not user_id:
+        _log.warning("calendar_get_token_no_user_id")
         return None
     from app.services.google_oauth_service import get_google_oauth_service
     goauth = get_google_oauth_service()
-    return await goauth.get_valid_token(user_id, _PLUGIN_ID)
+    token = await goauth.get_valid_token(user_id, _PLUGIN_ID)
+    if not token:
+        _log.warning("calendar_get_token_failed", user_id=user_id, plugin_id=_PLUGIN_ID,
+                      has_tokens=goauth.has_tokens(user_id, _PLUGIN_ID))
+    else:
+        _log.debug("calendar_get_token_ok", user_id=user_id)
+    return token
 
 
 # ---------------------------------------------------------------------------
@@ -92,45 +103,52 @@ async def list_calendar_events(
 
     import httpx
 
-    access_token = await _get_token(tool_context)
-    if not access_token:
-        return {"error": "Not connected. Please connect your Google account first via the Integrations page."}
+    from app.utils.logging import get_logger
+    _log = get_logger(__name__)
 
-    max_results = max(1, min(50, max_results))
-    now = datetime.now(UTC).isoformat()
+    try:
+        access_token = await _get_token(tool_context)
+        if not access_token:
+            return {"error": "Google Calendar token unavailable. The token refresh may have failed. Ask the user to reconnect Google Calendar on the Integrations page."}
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(
-            f"{_API}/calendars/primary/events",
-            headers={"Authorization": f"Bearer {access_token}"},
-            params={
-                "maxResults": str(max_results),
-                "timeMin": now,
-                "singleEvents": "true",
-                "orderBy": "startTime",
-            },
-        )
-        if resp.status_code == 401:
-            return {"error": "Token expired or revoked. Please reconnect your Google account."}
-        resp.raise_for_status()
-        data = resp.json()
+        max_results = max(1, min(50, max_results))
+        now = datetime.now(UTC).isoformat()
 
-    events = []
-    for item in data.get("items", []):
-        start = item.get("start", {}).get("dateTime") or item.get("start", {}).get("date", "")
-        end = item.get("end", {}).get("dateTime") or item.get("end", {}).get("date", "")
-        events.append(
-            {
-                "id": item.get("id"),
-                "summary": item.get("summary", "(No title)"),
-                "start": start,
-                "end": end,
-                "location": item.get("location", ""),
-                "description": item.get("description", "")[:200],
-            }
-        )
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{_API}/calendars/primary/events",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params={
+                    "maxResults": str(max_results),
+                    "timeMin": now,
+                    "singleEvents": "true",
+                    "orderBy": "startTime",
+                },
+            )
+            if resp.status_code == 401:
+                return {"error": "Token expired or revoked. Please reconnect your Google account."}
+            resp.raise_for_status()
+            data = resp.json()
 
-    return {"events": events, "count": len(events)}
+        events = []
+        for item in data.get("items", []):
+            start = item.get("start", {}).get("dateTime") or item.get("start", {}).get("date", "")
+            end = item.get("end", {}).get("dateTime") or item.get("end", {}).get("date", "")
+            events.append(
+                {
+                    "id": item.get("id"),
+                    "summary": item.get("summary", "(No title)"),
+                    "start": start,
+                    "end": end,
+                    "location": item.get("location", ""),
+                    "description": item.get("description", "")[:200],
+                }
+            )
+
+        return {"events": events, "count": len(events)}
+    except Exception as exc:
+        _log.exception("list_calendar_events_failed", user_id=getattr(tool_context, "user_id", None))
+        return {"error": f"Calendar API error: {exc}"}
 
 
 async def create_calendar_event(
@@ -157,7 +175,7 @@ async def create_calendar_event(
 
     access_token = await _get_token(tool_context)
     if not access_token:
-        return {"error": "Not connected. Please connect your Google account first via the Integrations page."}
+        return {"error": "Google Calendar token unavailable. The token refresh may have failed. Ask the user to reconnect Google Calendar on the Integrations page."}
 
     body: dict = {
         "summary": summary,
@@ -204,7 +222,7 @@ async def delete_calendar_event(
 
     access_token = await _get_token(tool_context)
     if not access_token:
-        return {"error": "Not connected. Please connect your Google account first via the Integrations page."}
+        return {"error": "Google Calendar token unavailable. The token refresh may have failed. Ask the user to reconnect Google Calendar on the Integrations page."}
 
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.delete(

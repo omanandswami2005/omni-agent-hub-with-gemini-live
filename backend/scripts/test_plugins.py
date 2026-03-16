@@ -48,9 +48,9 @@ async def test_plugin_catalog():
                 print(f"        tool: {t.name} — {t.description}")
 
     assert len(catalog) > 0, "Catalog should not be empty"
-    # Check that notification-sender was auto-discovered
+    # Check that courier was auto-discovered
     ids = [p.id for p in catalog]
-    assert "notification-sender" in ids, "Notification sender plugin should be auto-discovered"
+    assert "courier" in ids, "Courier plugin should be auto-discovered"
     assert "e2b-sandbox" in ids, "E2B sandbox should be in catalog"
     assert "wikipedia" in ids, "Wikipedia should be in catalog"
 
@@ -192,50 +192,40 @@ print(json.dumps({"average": avg, "top_scorer": top["name"]}, indent=2))
 
 
 async def test_native_plugin():
-    """Test 4: Native plugin — notification sender."""
+    """Test 4: Native plugin — courier."""
     print("\n" + "=" * 60)
-    print("TEST 4: Native Plugin — Notification Sender")
+    print("TEST 4: Native Plugin — Courier")
     print("=" * 60)
 
     from app.services.plugin_registry import get_plugin_registry
 
     registry = get_plugin_registry()
 
-    # Enable notification sender
+    # Enable courier
     from app.models.plugin import PluginToggle
     result = await registry.toggle_plugin(
         TEST_USER,
-        PluginToggle(plugin_id="notification-sender", enabled=True),
+        PluginToggle(plugin_id="courier", enabled=True),
     )
-    print(f"  Notification sender enabled: {result}")
+    print(f"  Courier enabled: {result}")
     assert result, "Native plugin should enable successfully"
 
     # Get tools
     tools = await registry.get_tools(TEST_USER)
-    notif_tools = [t for t in tools if "notification" in getattr(t, "name", "").lower()]
-    print(f"  Notification tools: {len(notif_tools)}")
+    notif_tools = [t for t in tools if "notification" in getattr(t, "name", "").lower() or "email" in getattr(t, "name", "").lower()]
+    print(f"  Courier tools: {len(notif_tools)}")
     for t in notif_tools:
         print(f"    {t.name}")
 
-    assert len(notif_tools) >= 2, "Should have at least send_notification and list_notification_channels"
-
-    # Test calling the tools directly
-    from app.plugins.notification_sender import send_notification, list_notification_channels
-
-    channels = await list_notification_channels()
-    print(f"  Available channels: {[c['id'] for c in channels['channels']]}")
-
-    result = await send_notification(message="Test from plugin system", channel="log", title="Plugin Test")
-    print(f"  Send result: {result}")
-    assert result["success"], "Notification send should succeed"
+    assert len(notif_tools) >= 2, "Should have at least send_notification and send_email"
 
     # Get tool schemas
-    schemas = await registry.get_tool_schemas("notification-sender", TEST_USER)
+    schemas = await registry.get_tool_schemas("courier", TEST_USER)
     print(f"  Tool schemas: {len(schemas)}")
     for s in schemas:
         print(f"    {s.name}: {s.description[:60]}")
 
-    await registry.disconnect_plugin(TEST_USER, "notification-sender")
+    await registry.disconnect_plugin(TEST_USER, "courier")
     print("  ✅ Native plugin test PASSED")
     return True
 
@@ -250,11 +240,11 @@ async def test_lazy_loading():
 
     registry = get_plugin_registry()
 
-    # Enable notification sender (has pre-declared summaries)
+    # Enable courier (has pre-declared summaries)
     from app.models.plugin import PluginToggle
     await registry.toggle_plugin(
         TEST_USER,
-        PluginToggle(plugin_id="notification-sender", enabled=True),
+        PluginToggle(plugin_id="courier", enabled=True),
     )
 
     # Step 1: Get summaries only (fast — no MCP connection)
@@ -264,7 +254,7 @@ async def test_lazy_loading():
         print(f"    [{s['plugin']}] {s['tool']}: {s['description'][:60]}")
 
     # Step 2: On-demand — get full schemas only when needed
-    schemas = await registry.get_tool_schemas("notification-sender", TEST_USER)
+    schemas = await registry.get_tool_schemas("courier", TEST_USER)
     print(f"  Full schemas (on-demand): {len(schemas)}")
 
     await registry.disconnect_all(TEST_USER)

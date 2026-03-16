@@ -71,7 +71,6 @@ _MODEL_OVERRIDES: dict[str, str] = {
 }
 
 _PERSONA_CAPABILITIES: dict[str, list[str]] = {
-    "assistant": [TC.COMMUNICATION, TC.TASK, TC.WILDCARD],
     "coder": [TC.CODE_EXECUTION, TC.DESKTOP, TC.TASK, TC.WILDCARD],
     "researcher": [TC.SEARCH, TC.TASK, TC.WILDCARD],
     "analyst": [TC.SEARCH, TC.CODE_EXECUTION, TC.DESKTOP, TC.TASK, TC.WILDCARD],
@@ -208,6 +207,7 @@ def create_agent(
         name=persona.name,
         voice=persona.voice,
         tool_count=len(tools),
+        tool_names=sorted({getattr(t, "name", str(t)) for t in tools}),
     )
     return agent
 

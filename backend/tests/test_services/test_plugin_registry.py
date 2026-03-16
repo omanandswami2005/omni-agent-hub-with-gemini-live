@@ -47,7 +47,7 @@ class TestCatalog:
     def test_auto_discovers_native_plugins(self, registry):
         catalog = registry.get_catalog()
         ids = [p.id for p in catalog]
-        assert "notification-sender" in ids
+        assert "courier" in ids
 
     def test_catalog_ids_unique(self, registry):
         catalog = registry.get_catalog()
@@ -60,7 +60,7 @@ class TestCatalog:
                 id="test-dynamic",
                 name="Test Dynamic",
                 kind=PluginKind.NATIVE,
-                module="app.plugins.notification_sender",
+                module="app.plugins.courier_plugin",
                 factory="get_tools",
             )
         )
@@ -184,13 +184,13 @@ class TestMCPStdio:
 class TestNativePlugin:
     @pytest.mark.asyncio
     async def test_connect_native_plugin(self, registry):
-        success = await registry.connect_plugin("u1", "notification-sender")
+        success = await registry.connect_plugin("u1", "courier")
         assert success
 
         tools = await registry.get_tools("u1")
         names = {t.name for t in tools}
         assert "send_notification" in names
-        assert "list_notification_channels" in names
+        assert "send_email" in names
 
         await registry.shutdown()
 

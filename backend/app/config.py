@@ -51,7 +51,7 @@ class Settings(BaseSettings):
 
     # --- Model Names ---
     LIVE_MODEL: str = "gemini-live-2.5-flash-native-audio"  # Vertex AI native audio model
-    TEXT_MODEL: str = "gemini-2.5-flash"  # Standard text model
+    TEXT_MODEL: str = "gemini-2.5-flash-lite"  # Standard text model
 
     # --- GCS (Cloud Storage) ---
     GCS_BUCKET_NAME: str = "omni-artifacts"
@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     # --- Google OAuth (for Google Calendar / Drive plugins) ---
     GOOGLE_OAUTH_CLIENT_ID: str = ""
     GOOGLE_OAUTH_CLIENT_SECRET: str = ""
+
+    # --- Scheduler ---
+    SCHEDULER_SA_EMAIL: str = ""  # Service account email for Cloud Scheduler OIDC
 
     @property
     def is_production(self) -> bool:

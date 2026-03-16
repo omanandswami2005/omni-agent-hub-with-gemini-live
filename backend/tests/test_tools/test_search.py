@@ -91,7 +91,7 @@ class TestProcessLlmRequest:
         from google.genai import types
 
         req = MagicMock()
-        req.model = "gemini-2.5-flash"
+        req.model = "gemini-2.5-flash-lite"
         req.config = types.GenerateContentConfig()
         req.config.tools = []
         return req
