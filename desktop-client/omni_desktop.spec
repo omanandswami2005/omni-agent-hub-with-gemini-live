@@ -8,8 +8,12 @@ Build with:
 
 import sys
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 block_cipher = None
+
+# Collect every module under src.* automatically (handles dynamic imports and plugins)
+src_submodules = collect_submodules("src")
 
 # Resolve the src directory path
 src_path = str(Path("src").resolve())
@@ -19,17 +23,10 @@ a = Analysis(
     pathex=[str(Path(".").resolve())],
     binaries=[],
     datas=[
-        # Bundle all plugin modules so dynamic discovery works at runtime
-        ("src/plugins", "src/plugins"),
-        # Bundle .env if it exists (optional - users can still place one next to the exe)
-        # ("*.env", "."),
+        # Bundle the entire src package so plugin discovery works at runtime
+        ("src", "src"),
     ],
-    hiddenimports=[
-        # Plugins (dynamically discovered — must be listed explicitly)
-        "src.plugins.command_plugin",
-        "src.plugins.file_plugin",
-        "src.plugins.input_plugin",
-        "src.plugins.screen_plugin",
+    hiddenimports=src_submodules + [
         # PyQt6 modules
         "PyQt6.QtCore",
         "PyQt6.QtGui",

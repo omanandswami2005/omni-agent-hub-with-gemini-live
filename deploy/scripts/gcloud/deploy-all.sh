@@ -102,7 +102,8 @@ if [[ -z "${SKIP_BACKEND:-}" ]]; then
     --memory=2Gi \
     --cpu=2 \
     --port=8080 \
-    --env-vars-file="${ROOT_DIR}/backend/cloud-run-env.yaml"
+    --env-vars-file="${ROOT_DIR}/backend/cloud-run-env.yaml" \
+    --update-secrets="E2B_API_KEY=e2b-api-key:latest"
 
   BACKEND_URL=$(gcloud run services describe omni-backend \
     --region="${REGION}" --project="${PROJECT_ID}" \
