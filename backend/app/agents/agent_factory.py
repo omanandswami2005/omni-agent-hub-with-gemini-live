@@ -163,6 +163,10 @@ def create_agent(
     tool_names = sorted({getattr(t, "name", str(t)) for t in tools})
     # Escape curly braces so ADK's template engine doesn't treat them as variables
     safe_tool_names = [n.replace("{", "{{").replace("}", "}}") for n in tool_names]
+    # Always include transfer_to_agent — ADK auto-injects it for parent/peer transfer
+    if "transfer_to_agent" not in safe_tool_names:
+        safe_tool_names.append("transfer_to_agent")
+        safe_tool_names.sort()
     tool_guard = (
         "\n\nSTRICT TOOL REGISTRY: You can ONLY call these tools: "
         + ", ".join(safe_tool_names)
@@ -170,12 +174,24 @@ def create_agent(
         "tell the user to enable the relevant plugin."
     ) if tool_names else ""
 
+    # Add escalation instruction so personas hand off out-of-scope requests
+    escalation_instruction = (
+        "\n\n## Out-of-Scope Requests\n"
+        "If the user asks for something OUTSIDE your capabilities (e.g. a tool you don't have, "
+        "a different persona's specialty, device control, etc.), do NOT attempt it yourself. "
+        "Instead, use transfer_to_agent to hand the request to the right agent:\n"
+        "- transfer_to_agent(agent_name='omni_root') — route back to the coordinator to re-classify the request.\n"
+        "- Or transfer directly to a sibling if you know the right one (e.g. 'coder', 'researcher', 'creative', 'device_agent').\n"
+        "NEVER say 'no devices connected' or 'tool not found' for things outside your scope — just transfer."
+    )
+
     base_instruction = persona.system_instruction or f"You are {persona.name}."
 
     agent = Agent(
         name=persona.id,
         model=effective_model,
-        instruction=base_instruction + tool_guard,
+        description=f"{persona.name} — {', '.join(persona.capabilities or [])} specialist",
+        instruction=base_instruction + escalation_instruction + tool_guard,
         tools=tools,
         before_model_callback=context_injection_callback,
         after_model_callback=cost_estimation_callback,

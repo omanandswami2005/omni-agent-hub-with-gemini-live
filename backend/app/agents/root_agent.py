@@ -19,9 +19,10 @@ from __future__ import annotations
 
 from google.adk.agents import Agent
 
-from app.agents.agent_factory import LIVE_MODEL, create_agent
+from app.agents.agent_factory import LIVE_MODEL, create_agent, get_tools_for_capabilities, _PERSONA_CAPABILITIES
 from app.agents.cross_client_agent import build_cross_client_agent
 from app.agents.personas import get_default_personas
+from app.tools.cross_client import get_cross_client_tools
 from app.middleware.agent_callbacks import (
     after_agent_callback,
     before_agent_callback,
@@ -156,7 +157,20 @@ def _build_root_instruction(
         "- NEVER invent tool names. Only call tools in your tools list.\n"
         "- NEVER use search for casual conversation or general knowledge.\n"
         "- If a requested capability has no matching tool/plugin, tell the user to enable it in the MCP Store.\n"
-        "- Always give verbal feedback before calling a tool.\n"
+        "- Always give verbal feedback before calling a tool.\n\n"
+        "## YOUR STRICT TOOL REGISTRY\n"
+        "You can ONLY call these tools: transfer_to_agent, create_planned_task, "
+        "execute_planned_task, get_task_status, list_planned_tasks, pause_planned_task, "
+        "resume_planned_task, cancel_planned_task, ask_user_confirmation, ask_user_choice, "
+        "ask_user_text, get_capabilities, get_capabilities_of.\n"
+        "You CANNOT call google_search, google_search_agent, generate_image, generate_rich_image, "
+        "desktop_start_streaming, desktop_screenshot, execute_code, install_package, send_to_desktop, "
+        "or ANY other tool not in the list above.\n"
+        "To access those tools, you MUST use transfer_to_agent to route to the persona that has them. "
+        "For example: web search → transfer_to_agent(agent_name='researcher'), "
+        "image generation → transfer_to_agent(agent_name='creative'), "
+        "desktop/code execution → transfer_to_agent(agent_name='coder'), "
+        "real device control → transfer_to_agent(agent_name='device_agent').\n"
     )
 
 
@@ -221,8 +235,21 @@ def build_root_agent(
         *get_capability_tools(),
     ]
 
+    # ── Build full tools map (T1 + T2) for instruction generation ─────
+    # The root instruction needs to show EACH persona's actual tools so
+    # the LLM knows which persona to route to for a given tool.
+    full_tools_map: dict[str, list] = {}
+    for p in personas:
+        caps = _PERSONA_CAPABILITIES.get(p.id, p.capabilities or [])
+        t1_tools = get_tools_for_capabilities(caps)
+        t2_tools = tools_map.get(p.id, [])
+        full_tools_map[p.id] = t1_tools + t2_tools
+    # Device agent: cross-client built-in tools + any T3 proxy tools
+    device_builtin = get_cross_client_tools()
+    full_tools_map["__device__"] = device_builtin + (device_tools or [])
+
     # ── Layer 0: Root router ──────────────────────────────────────────
-    instruction = _build_root_instruction(persona_names, has_device, tools_map, plugin_summaries)
+    instruction = _build_root_instruction(persona_names, has_device, full_tools_map, plugin_summaries)
 
     root = Agent(
         name="omni_root",

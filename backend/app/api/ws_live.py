@@ -848,12 +848,15 @@ async def _downstream(
             if "not found" in exc_str.lower() and "tool" in exc_str.lower():
                 _tool_error_count += 1
                 logger.warning("ws_downstream_tool_not_found", user_id=user_id, error=exc_str, attempt=_tool_error_count)
-                # Invalidate ADK session so the retry starts fresh
-                _adk_session_id_cache.pop(user_id, None)
+                # Keep the ADK session to preserve conversation context.
+                # Only invalidate the runner so the agent is rebuilt with
+                # fresh instructions on the retry — but session history
+                # (conversation context) is retained for recovery.
+                # _adk_session_id_cache.pop(user_id, None)  # DO NOT invalidate session
                 with contextlib.suppress(Exception):
                     err = ErrorMessage(
                         code="tool_error",
-                        description=f"The AI tried to use a tool that doesn't exist. Please try rephrasing your request. ({exc_str.split(chr(10))[0]})",
+                        description="I tried to use a tool directly instead of routing to the right specialist. Let me try again — please repeat your request.",
                     )
                     await websocket.send_text(err.model_dump_json())
                 # Always send IDLE status so the frontend unblocks
@@ -863,7 +866,7 @@ async def _downstream(
                 if _tool_error_count >= _MAX_TOOL_RETRIES:
                     logger.error("ws_downstream_tool_not_found_max_retries", user_id=user_id)
                     break
-                # Restart the run_live loop — session was invalidated so a fresh one is created
+                # Restart the run_live loop with same session — context preserved
                 continue
             else:
                 logger.exception("ws_downstream_error", user_id=user_id)
