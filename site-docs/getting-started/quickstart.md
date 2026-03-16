@@ -5,7 +5,7 @@ Get Omni running locally in under 5 minutes.
 ## 1. Clone the Repository
 
 ```bash
-git clone https://github.com/omni-docs/omni-docs.github.io.git
+git clone https://github.com/omanandswami2005/omni-agent-hub-with-gemini-live/
 cd omni
 ```
 

@@ -7,13 +7,12 @@ hide:
 <div class="hero" markdown>
 
 # OMNI
-
 ### Speak anywhere. Act everywhere.
 
 One AI brain. Every device. Infinite capabilities.
 
 [Get Started :material-rocket-launch:](getting-started/index.md){ .md-button .md-button--primary }
-[View on GitHub :material-github:](https://github.com/omni-docs/omni-docs.github.io){ .md-button }
+[View on GitHub :material-github:](https://github.com/omanandswami2005/omni-agent-hub-with-gemini-live/tree/main/site-docs){ .md-button }
 
 </div>
 

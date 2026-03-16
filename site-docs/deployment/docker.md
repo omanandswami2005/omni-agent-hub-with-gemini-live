@@ -24,7 +24,3 @@ cd dashboard
 docker build -t omni-dashboard .
 docker run -p 80:80 omni-dashboard
 ```
-
-## Docker Compose Configuration
-
-See [deploy/docker-compose.yml](https://github.com/omni-docs/omni-docs.github.io/blob/main/deploy/docker-compose.yml) for the full multi-service configuration.
