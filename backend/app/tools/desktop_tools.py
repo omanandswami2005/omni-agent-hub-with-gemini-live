@@ -86,6 +86,8 @@ async def _stream_loop(user_id: str, fps: float = 1.0) -> None:
 
     interval = 1.0 / fps
     svc = get_e2b_desktop_service()
+    consecutive_errors = 0
+    max_consecutive_errors = 10
     logger.info("e2b_stream_started", user_id=user_id, fps=fps)
     try:
         while True:
@@ -97,12 +99,18 @@ async def _stream_loop(user_id: str, fps: float = 1.0) -> None:
                 img_bytes = await svc.screenshot(user_id)
                 blob = types.Blob(mime_type="image/png", data=img_bytes)
                 queue.send_realtime(blob)
+                consecutive_errors = 0
             except Exception:
-                logger.warning("e2b_stream_frame_error", user_id=user_id, exc_info=True)
+                consecutive_errors += 1
+                logger.warning("e2b_stream_frame_error", user_id=user_id, errors=consecutive_errors, exc_info=True)
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.error("e2b_stream_too_many_errors", user_id=user_id)
+                    break
             await asyncio.sleep(interval)
     except asyncio.CancelledError:
         pass
     finally:
+        _active_streams.pop(user_id, None)
         logger.info("e2b_stream_stopped", user_id=user_id)
 
 
@@ -701,6 +709,90 @@ async def desktop_multi_step(
     }
 
 
+# ── Clipboard ─────────────────────────────────────────────────────────
+
+
+async def desktop_clipboard_read(user_id: str = "default") -> dict:
+    """Read the current clipboard contents from the desktop.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        Dict with clipboard text content.
+    """
+    svc = get_e2b_desktop_service()
+    result = await svc.run_command(user_id, "xclip -selection clipboard -o 2>/dev/null || xsel --clipboard --output 2>/dev/null || echo ''")
+    return {"clipboard": result.get("stdout", "").strip()}
+
+
+async def desktop_clipboard_write(text: str, user_id: str = "default") -> dict:
+    """Write text to the desktop clipboard.
+
+    Args:
+        text: Text to copy to clipboard.
+        user_id: User identifier.
+
+    Returns:
+        Confirmation.
+    """
+    svc = get_e2b_desktop_service()
+    # Use printf to safely handle special characters
+    safe_text = text.replace("\\", "\\\\").replace("'", "'\\''")
+    await svc.run_command(user_id, f"printf '%s' '{safe_text}' | xclip -selection clipboard 2>/dev/null || printf '%s' '{safe_text}' | xsel --clipboard --input 2>/dev/null")
+    return {"copied": True, "length": len(text)}
+
+
+async def desktop_install_packages(
+    packages: list[str],
+    manager: str = "apt",
+    user_id: str = "default",
+) -> dict:
+    """Install packages on the desktop sandbox.
+
+    Args:
+        packages: List of package names to install (e.g. ['python3-pip', 'nodejs']).
+        manager: Package manager — 'apt', 'pip', or 'npm'.
+        user_id: User identifier.
+
+    Returns:
+        Installation result.
+    """
+    svc = get_e2b_desktop_service()
+    pkg_str = " ".join(packages)
+    if manager == "pip":
+        cmd = f"pip install {pkg_str}"
+    elif manager == "npm":
+        cmd = f"npm install -g {pkg_str}"
+    else:
+        cmd = f"apt-get update -qq && apt-get install -y -qq {pkg_str}"
+    result = await svc.run_command(user_id, cmd, timeout=120.0)
+    return {
+        "installed": result.get("exit_code", -1) == 0,
+        "packages": packages,
+        "manager": manager,
+        "stdout": result.get("stdout", "")[-500:],
+        "stderr": result.get("stderr", "")[-500:],
+    }
+
+
+async def desktop_get_screen_info(user_id: str = "default") -> dict:
+    """Get the desktop screen resolution and display info.
+
+    Useful for determining correct click coordinates.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        Screen resolution and display information.
+    """
+    svc = get_e2b_desktop_service()
+    result = await svc.run_command(user_id, "xdpyinfo 2>/dev/null | grep dimensions || echo 'unknown'")
+    stdout = result.get("stdout", "").strip()
+    return {"screen_info": stdout}
+
+
 # ── Tool Registration ─────────────────────────────────────────────────
 
 _DESKTOP_TOOLS: list[FunctionTool] | None = None
@@ -741,5 +833,10 @@ def get_desktop_tools() -> list[FunctionTool]:
             FunctionTool(desktop_find_and_click),
             FunctionTool(desktop_list_files),
             FunctionTool(desktop_multi_step),
+            # Clipboard & system
+            FunctionTool(desktop_clipboard_read),
+            FunctionTool(desktop_clipboard_write),
+            FunctionTool(desktop_install_packages),
+            FunctionTool(desktop_get_screen_info),
         ]
     return _DESKTOP_TOOLS

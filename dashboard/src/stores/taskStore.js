@@ -21,6 +21,8 @@ export const useTaskStore = create((set, get) => ({
     pendingInputs: {},
     // E2B Desktop status
     desktop: null,
+    // Agent vision streaming active
+    isAgentStreaming: false,
     // Task panel open
     isPanelOpen: false,
 
@@ -75,6 +77,9 @@ export const useTaskStore = create((set, get) => ({
 
     /** Update desktop status */
     setDesktop: (desktop) => set({ desktop }),
+
+    /** Update agent streaming state */
+    setAgentStreaming: (isAgentStreaming) => set({ isAgentStreaming }),
 
     /** Remove a task */
     removeTask: (taskId) => {

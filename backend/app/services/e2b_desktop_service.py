@@ -14,6 +14,7 @@ Each user gets at most one desktop sandbox at a time.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from dataclasses import dataclass
@@ -92,14 +93,14 @@ class E2BDesktopService:
         await self._publish_status(info)
 
         try:
-            sandbox = Sandbox.create(timeout=timeout, api_key=settings.E2B_API_KEY)
+            sandbox = await asyncio.to_thread(Sandbox.create, timeout=timeout, api_key=settings.E2B_API_KEY)
             info.sandbox_id = sandbox.sandbox_id
             info.status = DesktopStatus.READY
 
             # Start streaming with auth
-            sandbox.stream.start(require_auth=True)
-            auth_key = sandbox.stream.get_auth_key()
-            stream_url = sandbox.stream.get_url(auth_key=auth_key)
+            await asyncio.to_thread(sandbox.stream.start, require_auth=True)
+            auth_key = await asyncio.to_thread(sandbox.stream.get_auth_key)
+            stream_url = await asyncio.to_thread(sandbox.stream.get_url, auth_key=auth_key)
             info.stream_url = stream_url
             info.auth_key = auth_key
             info.status = DesktopStatus.STREAMING
@@ -132,7 +133,7 @@ class E2BDesktopService:
         if info.status == DesktopStatus.DESTROYED:
             return None
         # Probe the sandbox to check it's still alive
-        if not self._is_sandbox_alive(sandbox):
+        if not await self._is_sandbox_alive(sandbox):
             logger.warning("stale_sandbox_detected", user_id=user_id, sandbox_id=info.sandbox_id)
             self._desktops.pop(user_id, None)
             info.status = DesktopStatus.DESTROYED
@@ -150,9 +151,9 @@ class E2BDesktopService:
 
         sandbox, info = entry
         with contextlib.suppress(Exception):
-            sandbox.stream.stop()
+            await asyncio.to_thread(sandbox.stream.stop)
         try:
-            sandbox.kill()
+            await asyncio.to_thread(sandbox.kill)
         except Exception:
             logger.warning("desktop_kill_failed", user_id=user_id, exc_info=True)
 
@@ -166,54 +167,54 @@ class E2BDesktopService:
     async def screenshot(self, user_id: str) -> bytes:
         """Take a screenshot of the desktop."""
         sandbox = self._get_sandbox(user_id)
-        return sandbox.screenshot()
+        return await asyncio.to_thread(sandbox.screenshot)
 
     async def left_click(self, user_id: str, x: int, y: int) -> None:
         sandbox = self._get_sandbox(user_id)
-        sandbox.left_click(x, y)
+        await asyncio.to_thread(sandbox.left_click, x, y)
 
     async def right_click(self, user_id: str, x: int, y: int) -> None:
         sandbox = self._get_sandbox(user_id)
-        sandbox.right_click(x, y)
+        await asyncio.to_thread(sandbox.right_click, x, y)
 
     async def double_click(self, user_id: str, x: int, y: int) -> None:
         sandbox = self._get_sandbox(user_id)
-        sandbox.double_click(x, y)
+        await asyncio.to_thread(sandbox.double_click, x, y)
 
     async def move_mouse(self, user_id: str, x: int, y: int) -> None:
         sandbox = self._get_sandbox(user_id)
-        sandbox.move_mouse(x, y)
+        await asyncio.to_thread(sandbox.move_mouse, x, y)
 
     async def scroll(self, user_id: str, x: int, y: int, direction: str = "down", amount: int = 3) -> None:
         sandbox = self._get_sandbox(user_id)
-        sandbox.move_mouse(x, y)
-        sandbox.scroll(direction=direction, amount=amount)
+        await asyncio.to_thread(sandbox.move_mouse, x, y)
+        await asyncio.to_thread(sandbox.scroll, direction=direction, amount=amount)
 
     async def drag(self, user_id: str, start_x: int, start_y: int, end_x: int, end_y: int) -> None:
         sandbox = self._get_sandbox(user_id)
-        sandbox.drag((start_x, start_y), (end_x, end_y))
+        await asyncio.to_thread(sandbox.drag, (start_x, start_y), (end_x, end_y))
 
     async def write_text(self, user_id: str, text: str) -> None:
         """Type text using keyboard."""
         sandbox = self._get_sandbox(user_id)
-        sandbox.write(text)
+        await asyncio.to_thread(sandbox.write, text)
 
     async def press_keys(self, user_id: str, keys: list[str]) -> None:
         """Press key combination (e.g. ['ctrl', 'c'])."""
         sandbox = self._get_sandbox(user_id)
-        sandbox.press(keys)
+        await asyncio.to_thread(sandbox.press, keys)
 
     # ── App & Window Management ───────────────────────────────────────
 
     async def launch_app(self, user_id: str, app_name: str) -> None:
         """Launch an application (e.g. 'google-chrome', 'firefox', 'code')."""
         sandbox = self._get_sandbox(user_id)
-        sandbox.launch(app_name)
+        await asyncio.to_thread(sandbox.launch, app_name)
 
     async def open_url(self, user_id: str, url: str) -> None:
         """Open a URL in the browser."""
         sandbox = self._get_sandbox(user_id)
-        sandbox.launch("google-chrome", ["--no-sandbox", url])
+        await asyncio.to_thread(sandbox.launch, "google-chrome", ["--no-sandbox", url])
 
     async def get_windows(self, user_id: str, app_name: str = "") -> list[dict]:
         """Get list of application windows. app_name is required by the SDK."""
@@ -221,7 +222,7 @@ class E2BDesktopService:
         if not app_name:
             raise ValueError("app_name is required to list windows")
         try:
-            window_ids = sandbox.get_application_windows(app_name)
+            window_ids = await asyncio.to_thread(sandbox.get_application_windows, app_name)
         except Exception:
             # xdotool exits 1 when no windows match
             return []
@@ -232,7 +233,7 @@ class E2BDesktopService:
     async def run_command(self, user_id: str, command: str, timeout: float = 30.0) -> dict:
         """Run a shell command in the desktop sandbox."""
         sandbox = self._get_sandbox(user_id)
-        result = sandbox.commands.run(command, timeout=timeout)
+        result = await asyncio.to_thread(sandbox.commands.run, command, timeout=timeout)
         return {
             "stdout": result.stdout,
             "stderr": result.stderr,
@@ -244,13 +245,13 @@ class E2BDesktopService:
     async def upload_file(self, user_id: str, path: str, content: bytes) -> str:
         """Upload file to the desktop sandbox."""
         sandbox = self._get_sandbox(user_id)
-        sandbox.files.write(path, content)
+        await asyncio.to_thread(sandbox.files.write, path, content)
         return path
 
     async def download_file(self, user_id: str, path: str) -> bytes:
         """Download file from the desktop sandbox."""
         sandbox = self._get_sandbox(user_id)
-        return sandbox.files.read(path, format="bytes")
+        return await asyncio.to_thread(sandbox.files.read, path, format="bytes")
 
     async def inject_from_gcs(self, user_id: str, gcs_path: str, sandbox_path: str) -> str:
         """Download a file from GCS and upload it to the desktop sandbox."""
@@ -280,10 +281,13 @@ class E2BDesktopService:
         return sandbox
 
     @staticmethod
-    def _is_sandbox_alive(sandbox) -> bool:
-        """Check whether an E2B sandbox is still running."""
+    async def _is_sandbox_alive(sandbox) -> bool:
+        """Check whether an E2B sandbox is still running (with timeout)."""
         try:
-            sandbox.commands.run("echo ok", timeout=5)
+            await asyncio.wait_for(
+                asyncio.to_thread(sandbox.commands.run, "echo ok", timeout=5),
+                timeout=10,
+            )
             return True
         except Exception:
             return False

@@ -13,6 +13,7 @@ import ClientStatusBar from '@/components/clients/ClientStatusBar';
 import PipelineMonitor from '@/components/chat/PipelineMonitor';
 import TaskPanel from '@/components/chat/TaskPanel';
 import DesktopViewer from '@/components/sandbox/DesktopViewer';
+import DesktopPiP from '@/components/sandbox/DesktopPiP';
 import { useVoice } from '@/hooks/useVoiceProvider';
 import { useChatStore } from '@/stores/chatStore';
 import { useSessionStore } from '@/stores/sessionStore';
@@ -264,6 +265,9 @@ export default function DashboardPage() {
                     </div>
                 )}
             </aside>
+
+            {/* Floating desktop PiP — visible when not on Desktop tab */}
+            <DesktopPiP visible={sidebarTab !== 'desktop'} />
         </div>
     );
 }

@@ -255,10 +255,48 @@ async def start_desktop(user: AuthenticatedUser = Depends(get_current_user)):  #
 async def stop_desktop(user: AuthenticatedUser = Depends(get_current_user)):  # noqa: B008
     """Stop the E2B Desktop sandbox for the current user."""
     from app.services.e2b_desktop_service import get_e2b_desktop_service
+    from app.tools.desktop_tools import _stop_streaming
 
+    _stop_streaming(user.uid)
     svc = get_e2b_desktop_service()
     destroyed = await svc.destroy_desktop(user.uid)
     return {"destroyed": destroyed}
+
+
+@router.post("/desktop/streaming/start")
+async def start_desktop_streaming(
+    user: AuthenticatedUser = Depends(get_current_user),  # noqa: B008
+):
+    """Start streaming the desktop screen to the AI agent (vision).
+
+    Requires an active Live API session and a running desktop sandbox.
+    """
+    from app.tools.desktop_tools import desktop_start_streaming
+
+    result = await desktop_start_streaming(fps=1.0, user_id=user.uid)
+    return result
+
+
+@router.post("/desktop/streaming/stop")
+async def stop_desktop_streaming(
+    user: AuthenticatedUser = Depends(get_current_user),  # noqa: B008
+):
+    """Stop streaming the desktop screen to the AI agent."""
+    from app.tools.desktop_tools import desktop_stop_streaming
+
+    result = await desktop_stop_streaming(user_id=user.uid)
+    return result
+
+
+@router.get("/desktop/streaming/status")
+async def desktop_streaming_status(
+    user: AuthenticatedUser = Depends(get_current_user),  # noqa: B008
+):
+    """Check if desktop streaming (agent vision) is active."""
+    from app.tools.desktop_tools import _active_streams
+
+    is_streaming = user.uid in _active_streams and not _active_streams[user.uid].done()
+    return {"streaming": is_streaming}
 
 
 @router.post("/desktop/upload")
