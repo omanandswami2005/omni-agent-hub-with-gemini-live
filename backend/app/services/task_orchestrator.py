@@ -2,9 +2,11 @@
 
 Manages the full lifecycle of PlannedTasks:
   1. Create task → decompose via Gemini → store steps in Firestore
-  2. Execute steps asynchronously (background asyncio tasks)
-  3. Pause for human input → resume when response arrives
-  4. Publish real-time events via EventBus for dashboard
+  2. Pre-flight resource validation before execution
+  3. Execute steps asynchronously (background asyncio tasks) with timeouts
+  4. Pause for human input → resume when response arrives
+  5. Publish real-time events via EventBus for dashboard
+  6. Retry failed steps
 
 Firestore collection: planned_tasks/{task_id}
 """
@@ -35,6 +37,26 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 COLLECTION = "planned_tasks"
+STEP_TIMEOUT_SECONDS = 300  # 5 min per step
+
+# Persona → capability tags used for tool resolution and resource validation
+_PERSONA_CAPS: dict[str, list[str]] = {
+    "assistant": ["search", "web", "knowledge", "communication", "media"],
+    "coder": ["code_execution", "sandbox", "search", "web"],
+    "researcher": ["search", "web", "knowledge"],
+    "analyst": ["code_execution", "sandbox", "search", "data", "web"],
+    "creative": ["creative", "media", "communication"],
+}
+
+# Keywords in step instructions that suggest a T2 MCP plugin is needed
+_MCP_HINT_KEYWORDS: dict[str, list[str]] = {
+    "calendar": ["calendar", "schedule", "meeting", "event", "appointment"],
+    "email": ["email", "mail", "send email", "inbox", "gmail"],
+    "notion": ["notion", "wiki", "workspace", "page", "database"],
+    "slack": ["slack", "message", "channel", "workspace"],
+    "github": ["github", "repository", "pull request", "issue", "commit"],
+    "drive": ["google drive", "drive", "docs", "sheets", "spreadsheet"],
+}
 
 
 class TaskOrchestrator:
@@ -120,19 +142,27 @@ class TaskOrchestrator:
     # ── Task Planning (Decomposition) ─────────────────────────────────
 
     async def plan_task(self, task: PlannedTask) -> PlannedTask:
-        """Use Gemini to decompose the task description into steps."""
+        """Use Gemini to decompose the task description into steps, then validate resources."""
         task.status = TaskStatus.PLANNING
         await self._save_task(task)
         await self._publish_event(task, "task_updated")
 
         try:
-            steps = await self._decompose_with_gemini(task.description)
+            steps = await self._decompose_with_gemini(task)
             task.steps = steps
             task.title = await self._generate_title(task.description)
+
+            # Pre-flight resource validation
+            validation = self._validate_resources(task)
+            if validation["warnings"] or validation["blockers"]:
+                task.context = {**task.context, "validation": validation}
+
             task.status = TaskStatus.AWAITING_CONFIRMATION
             await self._save_task(task)
             await self._publish_event(task, "task_planned")
-            logger.info("task_planned", task_id=task.id, step_count=len(steps))
+            logger.info("task_planned", task_id=task.id, step_count=len(steps),
+                        blockers=len(validation.get("blockers", [])),
+                        warnings=len(validation.get("warnings", [])))
         except Exception:
             task.status = TaskStatus.FAILED
             task.result_summary = "Failed to decompose task into steps."
@@ -142,13 +172,18 @@ class TaskOrchestrator:
 
         return task
 
-    async def _decompose_with_gemini(self, description: str) -> list[TaskStep]:
-        """Call Gemini to break down the task into ordered steps."""
+    async def _decompose_with_gemini(self, task: PlannedTask) -> list[TaskStep]:
+        """Call Gemini to break down the task into ordered steps.
+
+        Injects available tool context so Gemini only plans steps using
+        tools that are actually available for the user.
+        """
         from google.genai import Client
 
         from app.agents.agent_factory import TEXT_MODEL
 
-        prompt = _DECOMPOSE_PROMPT.format(task=description)
+        tool_context = self._build_tool_context(task.user_id)
+        prompt = _DECOMPOSE_PROMPT.format(task=task.description, tool_context=tool_context)
         client = Client(vertexai=True)
         response = client.models.generate_content(model=TEXT_MODEL, contents=[prompt])
 
@@ -166,8 +201,8 @@ class TaskOrchestrator:
             return [
                 TaskStep(
                     title="Execute task",
-                    description=description,
-                    instruction=description,
+                    description=task.description,
+                    instruction=task.description,
                     persona_id="assistant",
                 )
             ]
@@ -187,8 +222,8 @@ class TaskOrchestrator:
         return steps or [
             TaskStep(
                 title="Execute task",
-                description=description,
-                instruction=description,
+                description=task.description,
+                instruction=task.description,
                 persona_id="assistant",
             )
         ]
@@ -219,9 +254,22 @@ class TaskOrchestrator:
         """Begin async execution of a planned task.
 
         Returns immediately — execution runs in a background asyncio task.
+        Rejects if there are unresolved validation blockers.
         """
         if task.id in self._running_tasks:
             logger.warning("task_already_running", task_id=task.id)
+            return
+
+        # Re-validate resources right before execution
+        validation = self._validate_resources(task)
+        if validation["blockers"]:
+            task.context = {**task.context, "validation": validation}
+            task.status = TaskStatus.FAILED
+            blocker_msg = "; ".join(validation["blockers"])
+            task.result_summary = f"Cannot execute — missing requirements: {blocker_msg}"
+            await self._save_task(task)
+            await self._publish_event(task, "task_updated")
+            logger.warning("task_blocked", task_id=task.id, blockers=validation["blockers"])
             return
 
         task.status = TaskStatus.RUNNING
@@ -253,14 +301,20 @@ class TaskOrchestrator:
 
                 # Check dependencies
                 if step.depends_on:
-                    deps_met = all(
-                        self._get_step(task, dep_id)
-                        and self._get_step(task, dep_id).status == StepStatus.COMPLETED
-                        for dep_id in step.depends_on
-                    )
-                    if not deps_met:
+                    failed_deps = []
+                    unmet = False
+                    for dep_id in step.depends_on:
+                        dep_step = self._get_step(task, dep_id)
+                        if not dep_step or dep_step.status != StepStatus.COMPLETED:
+                            unmet = True
+                            if dep_step and dep_step.status == StepStatus.FAILED:
+                                failed_deps.append(dep_step.title)
+                    if unmet:
                         step.status = StepStatus.SKIPPED
-                        step.error = "Dependencies not met"
+                        if failed_deps:
+                            step.error = f"Skipped because required step(s) failed: {', '.join(failed_deps)}. Fix the failed steps and retry."
+                        else:
+                            step.error = "Skipped because prerequisite steps did not complete."
                         await self._save_task(task)
                         await self._publish_step_event(task, step)
                         continue
@@ -292,20 +346,36 @@ class TaskOrchestrator:
             logger.exception("task_execution_failed", task_id=task.id)
 
     async def _execute_single_step(self, task: PlannedTask, step: TaskStep) -> None:
-        """Execute one step using ADK agent for the assigned persona."""
+        """Execute one step using ADK agent for the assigned persona, with timeout."""
         step.status = StepStatus.RUNNING
         step.started_at = datetime.now(UTC)
         await self._save_task(task)
         await self._publish_step_event(task, step)
 
         try:
-            output = await self._run_step_agent(task, step)
+            output = await asyncio.wait_for(
+                self._run_step_agent(task, step),
+                timeout=STEP_TIMEOUT_SECONDS,
+            )
             step.status = StepStatus.COMPLETED
-            step.output = output[:10000]  # Truncate to prevent oversized docs
+            step.output = output[:10000]
             step.completed_at = datetime.now(UTC)
+        except TimeoutError:
+            step.status = StepStatus.FAILED
+            step.error = (
+                f"Step timed out after {STEP_TIMEOUT_SECONDS // 60} minutes. "
+                "The operation may be too complex — try breaking it into smaller steps or retrying."
+            )
+            step.completed_at = datetime.now(UTC)
+            logger.warning("step_timeout", task_id=task.id, step_id=step.id)
+        except ConnectionError as e:
+            step.status = StepStatus.FAILED
+            step.error = f"Connection error: could not reach the AI service. Details: {str(e)[:500]}. Please retry."
+            step.completed_at = datetime.now(UTC)
+            logger.exception("step_connection_error", task_id=task.id, step_id=step.id)
         except Exception as e:
             step.status = StepStatus.FAILED
-            step.error = str(e)[:2000]
+            step.error = self._categorize_error(e)
             step.completed_at = datetime.now(UTC)
             logger.exception("step_execution_failed", task_id=task.id, step_id=step.id)
 
@@ -321,16 +391,21 @@ class TaskOrchestrator:
 
         from app.agents.agent_factory import TEXT_MODEL, get_tools_for_capabilities
 
-        # Map persona to capabilities
-        _PERSONA_CAPS: dict[str, list[str]] = {
-            "assistant": ["search", "web", "knowledge", "communication", "media"],
-            "coder": ["code_execution", "sandbox", "search", "web"],
-            "researcher": ["search", "web", "knowledge"],
-            "analyst": ["code_execution", "sandbox", "search", "data", "web"],
-            "creative": ["creative", "media", "communication"],
-        }
         caps = _PERSONA_CAPS.get(step.persona_id, ["search"])
         tools = get_tools_for_capabilities(caps)
+
+        # Also include T2 MCP plugin tools if connected for this user
+        try:
+            from app.services.plugin_registry import get_plugin_registry
+            registry = get_plugin_registry()
+            t2_tools = registry.get_tools_for_capabilities(task.user_id, caps)
+            if t2_tools:
+                existing = {getattr(t, "name", str(t)) for t in tools}
+                for t in t2_tools:
+                    if getattr(t, "name", str(t)) not in existing:
+                        tools.append(t)
+        except Exception:
+            logger.debug("t2_tools_unavailable", step_id=step.id)
 
         # Build context from previous step outputs
         context_parts = []
@@ -535,10 +610,43 @@ class TaskOrchestrator:
         task.steps = []
         task.status = TaskStatus.PENDING
         task.result_summary = ""
+        task.context = {k: v for k, v in task.context.items() if k != "validation"}
         await self._save_task(task)
         await self._publish_event(task, "task_updated")
         # Re-plan
         task = await self.plan_task(task)
+        return task
+
+    async def retry_failed_steps(self, user_id: str, task_id: str) -> PlannedTask | None:
+        """Reset failed/skipped steps back to pending and re-execute the task."""
+        task = await self.get_task(user_id, task_id)
+        if not task:
+            return None
+        if task.status not in (TaskStatus.FAILED, TaskStatus.COMPLETED):
+            return None
+
+        # Reset failed and skipped steps
+        reset_count = 0
+        for step in task.steps:
+            if step.status in (StepStatus.FAILED, StepStatus.SKIPPED):
+                step.status = StepStatus.PENDING
+                step.error = ""
+                step.output = ""
+                step.started_at = None
+                step.completed_at = None
+                reset_count += 1
+
+        if reset_count == 0:
+            return task
+
+        task.status = TaskStatus.PENDING
+        task.result_summary = ""
+        await self._save_task(task)
+        await self._publish_event(task, "task_updated")
+
+        # Start execution
+        await self.start_execution(task)
+        logger.info("task_retry", task_id=task.id, reset_steps=reset_count)
         return task
 
     # ── Event Publishing ──────────────────────────────────────────────
@@ -556,14 +664,17 @@ class TaskOrchestrator:
                     {
                         "id": s.id,
                         "title": s.title,
+                        "description": s.description,
                         "persona_id": s.persona_id,
                         "status": s.status.value,
                         "output": s.output[:500] if s.output else "",
+                        "error": s.error,
                     }
                     for s in task.steps
                 ],
                 "progress": round(task.progress * 100, 1),
                 "result_summary": task.result_summary,
+                "context": task.context,
             },
             "timestamp": time.time(),
         })
@@ -604,6 +715,108 @@ class TaskOrchestrator:
         })
         await self._event_bus.publish(task.user_id, event)
 
+    # ── Resource Validation ─────────────────────────────────────────────
+
+    def _validate_resources(self, task: PlannedTask) -> dict:
+        """Pre-flight check: verify required resources are available.
+
+        Returns dict with 'warnings' and 'blockers' lists.
+        Blockers prevent execution; warnings are informational.
+        """
+        warnings: list[str] = []
+        blockers: list[str] = []
+
+        # Check T2 plugin availability based on step instructions
+        try:
+            from app.services.plugin_registry import get_plugin_registry
+            registry = get_plugin_registry()
+            enabled_ids = set(registry.get_enabled_ids(task.user_id))
+        except Exception:
+            enabled_ids = set()
+
+        for step in task.steps:
+            instruction_lower = (step.instruction + " " + step.description).lower()
+            for plugin_key, keywords in _MCP_HINT_KEYWORDS.items():
+                if any(kw in instruction_lower for kw in keywords):
+                    # Check if any enabled plugin relates to this keyword
+                    has_plugin = any(plugin_key in pid.lower() for pid in enabled_ids)
+                    if not has_plugin:
+                        warnings.append(
+                            f"Step '{step.title}' may need a {plugin_key} plugin "
+                            f"(mentions: {plugin_key}). Enable one in Settings → Integrations."
+                        )
+
+        return {"warnings": warnings, "blockers": blockers}
+
+    def _build_tool_context(self, user_id: str) -> str:
+        """Build a string describing available tools for decomposition prompt."""
+        lines = []
+        try:
+            from app.tools.capabilities_tool import _get_capabilities_data
+            data = _get_capabilities_data(user_id)
+
+            # T2 enabled plugins
+            t2 = data.get("t2", [])
+            if t2:
+                plugins: dict[str, list[str]] = {}
+                for entry in t2:
+                    pname = entry.get("plugin", "unknown")
+                    tool_name = entry.get("tool", "")
+                    if tool_name and tool_name != "(not connected yet)":
+                        plugins.setdefault(pname, []).append(tool_name)
+                    elif tool_name == "(not connected yet)":
+                        plugins.setdefault(pname, []).append("(connecting...)")
+                if plugins:
+                    lines.append("\nEnabled plugins and their tools:")
+                    for pname, tools in plugins.items():
+                        lines.append(f"  {pname}: {', '.join(tools)}")
+            else:
+                lines.append("\nNo external plugins/MCPs are currently enabled.")
+
+        except Exception:
+            lines.append("\nCould not determine available plugins.")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _categorize_error(exc: Exception) -> str:
+        """Produce a user-friendly error message from an exception."""
+        msg = str(exc)
+        lower = msg.lower()
+
+        if "disconnected" in lower or "server disconnected" in lower:
+            return (
+                "Lost connection to the AI service during execution. "
+                "This is usually temporary — please retry the task."
+            )
+        if "timeout" in lower or "timed out" in lower:
+            return (
+                "The operation timed out. The service may be overloaded. "
+                "Try again or simplify the step."
+            )
+        if "rate limit" in lower or "quota" in lower or "429" in lower:
+            return (
+                "Rate limit reached for the AI service. "
+                "Wait a few minutes and retry."
+            )
+        if "not found" in lower and "tool" in lower:
+            return (
+                f"A required tool was not found: {msg[:300]}. "
+                "Check that the necessary plugin is enabled in Settings → Integrations."
+            )
+        if "permission" in lower or "403" in lower or "unauthorized" in lower:
+            return (
+                "Permission denied. The plugin may need re-authorization. "
+                "Go to Settings → Integrations and reconnect it."
+            )
+        if "api key" in lower or "authentication" in lower:
+            return (
+                "Authentication error with an external service. "
+                "Check your API keys and plugin configuration."
+            )
+        # Generic fallback — still include actual error for debugging
+        return f"Step failed: {msg[:500]}. You can retry or edit the task."
+
     # ── Helpers ────────────────────────────────────────────────────────
 
     @staticmethod
@@ -616,11 +829,20 @@ class TaskOrchestrator:
     @staticmethod
     def _build_result_summary(task: PlannedTask) -> str:
         lines = [f"Task: {task.title or task.description[:80]}"]
+        failed_steps = []
         for step in task.steps:
             status_icon = {"completed": "✓", "failed": "✗", "skipped": "⊘"}.get(
                 step.status.value, "?"
             )
-            lines.append(f"  {status_icon} {step.title}: {step.output[:200] if step.output else step.error or step.status.value}")
+            detail = step.output[:200] if step.output else step.error or step.status.value
+            lines.append(f"  {status_icon} {step.title}: {detail}")
+            if step.status == StepStatus.FAILED:
+                failed_steps.append(step.title)
+
+        if failed_steps:
+            lines.append("")
+            lines.append(f"⚠ {len(failed_steps)} step(s) failed. You can retry failed steps or edit the task plan.")
+
         return "\n".join(lines)
 
 
@@ -636,6 +858,8 @@ Available personas (pick the best for each step):
   researcher — web search, deep research, fact-finding
   analyst — data analysis, charts, code execution
   creative — image generation, creative writing
+
+{tool_context}
 
 Return ONLY valid JSON matching this schema:
 {{
@@ -657,6 +881,8 @@ Rules:
 - Use depends_on to reference step IDs when a step needs output from another
 - Each step should be self-contained with clear instructions
 - Be specific in instructions — the agent won't see the original request
+- ONLY plan steps that use available tools/plugins listed above
+- If a needed plugin is not enabled, include a step noting the requirement
 
 TASK:
 {task}

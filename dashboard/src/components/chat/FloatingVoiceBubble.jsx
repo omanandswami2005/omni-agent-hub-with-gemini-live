@@ -22,7 +22,6 @@ import {
     MonitorOff,
     Camera,
     CameraOff,
-    MessageSquare,
     Video,
     GripVertical,
 } from 'lucide-react';
@@ -67,7 +66,6 @@ export default function FloatingVoiceBubble({
     onToggleMute,
     onToggleScreen,
     onToggleCamera,
-    onOpenChat,
     isConnected,
 }) {
     const agentState = useChatStore((s) => s.agentState);
@@ -171,18 +169,6 @@ export default function FloatingVoiceBubble({
 
                 {/* Control buttons */}
                 <div className="flex flex-col items-center gap-2">
-                    {/* Chat shortcut */}
-                    <ControlButton
-                        icon={MessageSquare}
-                        label="Chat"
-                        onClick={onOpenChat}
-                        color="text-primary"
-                        active={false}
-                    />
-
-                    {/* Divider */}
-                    <div className="h-px w-8 bg-border/50" />
-
                     {controls.map((ctrl) => (
                         <ControlButton key={ctrl.label} {...ctrl} />
                     ))}

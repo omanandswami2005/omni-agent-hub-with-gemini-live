@@ -181,50 +181,86 @@ def _extract_params(tool) -> dict:
 
 
 def _render_markdown(data: dict) -> str:
-    """Render the capability data dict as a readable markdown string."""
-    lines: list[str] = ["# Available Capabilities\n", f"**{data['summary']}**\n"]
+    """Render the capability data dict as a readable markdown string.
 
-    lines.append("\n## T1 — Core Built-in Tools (always available)\n")
-    if data["t1"]:
+    Groups tools under the specialist persona that handles them, so the
+    root agent (and the user) can see exactly which specialist to call.
+    """
+    from app.agents.agent_factory import _PERSONA_CAPABILITIES
+    from app.models.plugin import ToolCapability as TC
+
+    # Build a readable persona → capability mapping
+    _PERSONA_DISPLAY = {
+        "assistant": ("Claire — General Assistant", "scheduling, reminders, everyday tasks, calendar, email, notifications"),
+        "coder": ("Dev — Software Engineer", "code execution, E2B sandbox, GitHub, debugging"),
+        "researcher": ("Sage — Research Analyst", "web search, fact-checking, data gathering"),
+        "analyst": ("Nova — Data Analyst", "data analysis, charts, statistics, code execution"),
+        "creative": ("Muse — Creative", "image generation, illustrations, brainstorming"),
+        "genui": ("Pixel — Visual UI", "interactive charts, tables, cards, timelines, dashboards"),
+    }
+
+    lines: list[str] = ["# Omni Capabilities\n"]
+    lines.append(f"**{data['summary']}**\n")
+
+    # ── Persona specialists ────────────────────────────────────────
+    lines.append("\n## Specialist Agents (call via `persona_id(request)`)\n")
+    lines.append(
+        "**IMPORTANT:** You (root) do NOT call individual tools like "
+        "`list_calendar_events`, `execute_code`, `google_search`, etc. directly. "
+        "Instead, route to the right specialist below, who owns those tools.\n"
+    )
+    for pid, (display_name, desc) in _PERSONA_DISPLAY.items():
+        caps = _PERSONA_CAPABILITIES.get(pid, [])
+        # Gather matching T1 tool names for this persona
+        t1_names = []
         for e in data["t1"]:
-            param_names = list((e.get("parameters") or {}).get("properties", {}).keys())
-            param_str = f"({', '.join(param_names)})" if param_names else "()"
-            lines.append(f"- **{e['name']}**{param_str}: {e['description']}")
-    else:
-        lines.append("*(none)*")
+            cap = e.get("capability", "")
+            if cap in caps or TC.WILDCARD in caps:
+                t1_names.append(e["name"])
+        # Gather T2 plugin tools for this persona's MCP IDs
+        t2_tools = []
+        for e in data["t2"]:
+            t2_tools.append(f"{e['tool']} ({e['plugin']})")
+        tool_list = ", ".join(t1_names[:8])
+        if len(t1_names) > 8:
+            tool_list += f", +{len(t1_names) - 8} more"
+        lines.append(f"### {display_name}")
+        lines.append(f"Call: `{pid}(\"your request\")` — {desc}")
+        if tool_list:
+            lines.append(f"Core tools: {tool_list}")
+        lines.append("")
 
-    lines.append("\n## T2 — Plugin & MCP Tools (user-enabled)\n")
+    # ── T2 Plugins — mention which persona routes to them ──────────
+    lines.append("\n## Enabled Plugins (T2) — routed through specialist agents\n")
     if data["t2"]:
-        # Group by plugin
         by_plugin: dict[str, list[dict]] = {}
         for e in data["t2"]:
             by_plugin.setdefault(e["plugin"], []).append(e)
         for plugin_name, tools in sorted(by_plugin.items()):
-            lines.append(f"### {plugin_name}")
-            for t in tools:
-                lines.append(f"- **{t['tool']}**: {t['description']}")
+            tool_names = ", ".join(t["tool"] for t in tools)
             lines.append(
-                f"  *(Use `get_capabilities_of(\"{plugin_name}\")` for full parameter schemas)*"
+                f"- **{plugin_name}**: {tool_names}\n"
+                f"  → Route to the appropriate specialist (e.g., **assistant** for calendar/email, **coder** for GitHub)"
             )
     else:
         lines.append(
             "*(No plugins enabled — user can enable plugins in the dashboard Settings)*"
         )
 
-    lines.append("\n## T3 — Client-local Tools (device/browser)\n")
+    # ── T3 Client-local ────────────────────────────────────────────
+    lines.append("\n## Client-local Tools (T3) — call directly from root\n")
     if data["t3"]:
         for e in data["t3"]:
-            param_names = list((e.get("parameters") or {}).keys())
-            param_str = f"({', '.join(param_names)})" if param_names else "()"
             lines.append(
-                f"- **{e['tool']}**{param_str} [{e.get('client_type', '')}]: {e['description']}"
+                f"- **{e['tool']}** [{e.get('client_type', '')}]: {e['description']}"
             )
     else:
-        lines.append("*(No client-local tools advertised — desktop/chrome not connected)*")
+        lines.append("*(No client-local tools — desktop/chrome not connected)*")
 
     lines.append(
-        "\n---\n*Tip: call `get_capabilities_of(\"<plugin_name>\")` "
-        "to see full parameter schemas for any plugin listed above.*"
+        "\n---\n*Remember: As the root agent, only call your own tools "
+        "(list_connected_clients, send_to_desktop, etc.) and route everything "
+        "else to the correct specialist via `persona_id(request)`.*"
     )
     return "\n".join(lines)
 

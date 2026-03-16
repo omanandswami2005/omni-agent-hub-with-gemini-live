@@ -169,6 +169,11 @@ async def generate_image(
         # Signal via state_delta so AgentTool parent can detect pending images
         if tool_context:
             tool_context.state["_image_pending"] = True
+            # Persist image metadata for history replay (no base64 — too large)
+            import json as _json
+            _prev = _json.loads(tool_context.state.get("_image_results", "[]"))
+            _prev.append({"tool_name": "generate_image", "image_url": gcs_uri, "description": full_prompt, "mime_type": mime_type})
+            tool_context.state["_image_results"] = _json.dumps(_prev)
     else:
         logger.warning("image_generated_no_user_id", prompt=prompt[:80])
 
@@ -283,6 +288,19 @@ async def generate_rich_image(
         # Signal via state_delta so AgentTool parent can detect pending images
         if tool_context:
             tool_context.state["_image_pending"] = True
+            # Persist image metadata for history replay (GCS URIs only — no base64)
+            import json as _json
+            parts_for_state = []
+            for p in ordered_parts:
+                if p["type"] == "text":
+                    parts_for_state.append({"type": "text", "content": p["content"]})
+                elif p["type"] == "image":
+                    # Find the corresponding gcs_uri from images list
+                    gcs = next((img["gcs_uri"] for img in images if img.get("base64") == p.get("base64") and img.get("gcs_uri")), "")
+                    parts_for_state.append({"type": "image", "image_url": gcs, "mime_type": p.get("mime_type", "image/png")})
+            _prev = _json.loads(tool_context.state.get("_image_results", "[]"))
+            _prev.append({"tool_name": "generate_rich_image", "text": summary, "parts": parts_for_state})
+            tool_context.state["_image_results"] = _json.dumps(_prev)
     else:
         logger.warning("rich_image_generated_no_user_id", prompt=prompt[:80])
 

@@ -4,7 +4,7 @@
  * interaction persists across page navigations.
  */
 
-import { Outlet, useNavigate } from 'react-router';
+import { Outlet } from 'react-router';
 import Sidebar from '@/components/layout/Sidebar';
 import TopBar from '@/components/layout/TopBar';
 import MobileNav from '@/components/layout/MobileNav';
@@ -29,7 +29,6 @@ export function AppShell() {
 
 function ShellLayout() {
   const isMobile = useIsMobile();
-  const navigate = useNavigate();
   const voice = useVoice();
   useBootstrap();
   useEventSocket();
@@ -82,7 +81,6 @@ function ShellLayout() {
         onToggleMute={voice.toggleMute}
         onToggleScreen={voice.toggleScreen}
         onToggleCamera={voice.toggleCamera}
-        onOpenChat={() => navigate('/dashboard')}
         isConnected={voice.isConnected}
       />
     </div>

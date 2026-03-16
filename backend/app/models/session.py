@@ -70,6 +70,10 @@ class ChatMessage(BaseModel):
     responded: bool = False
     image_url: str = ""
     description: str = ""
+    # GenUI fields (for history replay of GenUI components)
+    content_type: str = "text"  # 'text' | 'genui' | 'image'
+    genui_type: str = ""
+    genui_data: dict[str, Any] | None = None
     # For multi-image / interleaved rich responses
     images: list[dict] = []
     parts: list[dict] = []

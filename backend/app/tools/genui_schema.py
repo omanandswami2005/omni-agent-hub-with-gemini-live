@@ -221,6 +221,10 @@ def render_genui_component(
     # Write state_delta so parent session (via AgentTool) receives the signal
     if tool_context:
         tool_context.state["_genui_result"] = _json.dumps(genui_payload)
+        # Accumulate into list for history replay (supports multiple GenUI per persona call)
+        _prev = _json.loads(tool_context.state.get("_genui_results", "[]"))
+        _prev.append(genui_payload)
+        tool_context.state["_genui_results"] = _json.dumps(_prev)
 
     return {"genui_type": component_type, "rendered": True, "delivered": True, "message": f"{component_type} component has been automatically delivered to the dashboard. Do NOT re-send it."}
 

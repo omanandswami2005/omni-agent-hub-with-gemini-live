@@ -430,8 +430,8 @@ export function useWebSocket() {
     sendBinaryAudio(wsRef.current, pcm16Buffer);
   }, []);
 
-  const sendImage = useCallback((base64) => {
-    sendJsonMessage(wsRef.current, { type: 'image', data_base64: base64 });
+  const sendImage = useCallback((base64, mimeType) => {
+    sendJsonMessage(wsRef.current, { type: 'image', data_base64: base64, mime_type: mimeType || 'image/jpeg' });
   }, []);
 
   const sendControl = useCallback((action, payload = {}) => {

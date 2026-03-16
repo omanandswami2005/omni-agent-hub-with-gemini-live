@@ -87,6 +87,7 @@ async def get_task(task_id: str, user: AuthenticatedUser = Depends(get_current_u
         "progress": round(task.progress * 100, 1),
         "result_summary": task.result_summary,
         "e2b_desktop_id": task.e2b_desktop_id,
+        "context": task.context,
         "created_at": task.created_at.isoformat() if task.created_at else "",
         "updated_at": task.updated_at.isoformat() if task.updated_at else "",
         "steps": [
@@ -119,6 +120,21 @@ async def execute_task(task_id: str, user: AuthenticatedUser = Depends(get_curre
         raise HTTPException(status_code=404, detail="Task not found")
     await orchestrator.start_execution(task)
     return {"status": "running", "message": f"Task '{task.title}' execution started."}
+
+
+@router.post("/{task_id}/retry")
+async def retry_task(task_id: str, user: AuthenticatedUser = Depends(get_current_user)):  # noqa: B008
+    """Retry failed/skipped steps in a failed task."""
+    orchestrator = get_task_orchestrator()
+    task = await orchestrator.retry_failed_steps(user.uid, task_id)
+    if not task:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="Task not found or cannot be retried")
+    return {
+        "status": task.status.value,
+        "message": f"Retrying failed steps in '{task.title}'.",
+    }
 
 
 @router.post("/{task_id}/action")

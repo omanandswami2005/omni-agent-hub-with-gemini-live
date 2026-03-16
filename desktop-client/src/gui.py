@@ -18,6 +18,7 @@ class MainWindow(QMainWindow):
     send_screen_signal = pyqtSignal(str) # For sending base64 image
     connect_signal = pyqtSignal(bool) # True for connect, False for disconnect
     interrupt_signal = pyqtSignal()
+    signout_signal = pyqtSignal()  # Emitted when user clicks Sign Out
 
     # Signal to prompt for confirmation from background thread
     security_prompt_signal = pyqtSignal(str, str, object)
@@ -41,6 +42,14 @@ class MainWindow(QMainWindow):
         self.connect_button.setCheckable(True)
         self.connect_button.clicked.connect(self._on_connect_toggled)
         self.status_layout.addWidget(self.connect_button)
+
+        self.signout_button = QPushButton("Sign Out")
+        self.signout_button.setStyleSheet(
+            "QPushButton { color: #f87171; border: 1px solid #f87171; border-radius: 4px; padding: 4px 10px; }"
+            "QPushButton:hover { background-color: rgba(248,113,113,0.12); }"
+        )
+        self.signout_button.clicked.connect(self._on_signout_clicked)
+        self.status_layout.addWidget(self.signout_button)
 
         self.layout.addLayout(self.status_layout)
 
@@ -110,6 +119,15 @@ class MainWindow(QMainWindow):
         else:
             self.connect_button.setText("Connect")
             self.connect_signal.emit(False)
+
+    def _on_signout_clicked(self):
+        reply = QMessageBox.question(
+            self, "Sign Out", "Sign out and return to the login screen?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.signout_signal.emit()
 
     def _on_send_clicked(self):
         text = self.text_input.text().strip()

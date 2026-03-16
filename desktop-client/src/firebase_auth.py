@@ -116,6 +116,18 @@ class FirebaseAuth:
             expires_in=int(data.get("expires_in", 3600)),
         )
 
+    def sign_out(self, id_token: str) -> None:
+        """Revoke the user's refresh tokens server-side (Firebase revokeRefreshTokens)."""
+        try:
+            httpx.post(
+                "https://identitytoolkit.googleapis.com/v1/accounts:update",
+                params={"key": self.api_key},
+                json={"idToken": id_token, "returnSecureToken": False},
+                timeout=10,
+            )
+        except Exception:
+            pass  # Best-effort; local state is cleared regardless
+
     # ── internals ─────────────────────────────────────────────────
 
     @staticmethod

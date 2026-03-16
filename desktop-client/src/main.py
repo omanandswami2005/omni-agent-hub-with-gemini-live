@@ -125,6 +125,38 @@ def connect(
     _client.set_t3_tools(registry.capabilities, registry.tool_defs)
 
     _client.set_gui(main_window) # Inject GUI to client
+
+    # ── Sign-out wiring ───────────────────────────────────────────
+    def _on_signout():
+        """Disconnect WS, revoke Firebase token, re-show login."""
+        _client._should_run = False
+        asyncio.ensure_future(_client.disconnect())
+
+        # Revoke token server-side (best-effort)
+        if cfg.firebase_api_key and auth_token:
+            from src.firebase_auth import FirebaseAuth as _FA
+            _FA(cfg.firebase_api_key).sign_out(auth_token)
+
+        main_window.hide()
+        main_window.append_chat("Signed out.")
+
+        # Re-show login dialog
+        from src.login_dialog import LoginDialog
+        dialog = LoginDialog(cfg.firebase_api_key)
+        if dialog.exec() == LoginDialog.DialogCode.Accepted and dialog.auth_result:
+            new_auth = dialog.auth_result
+            _client.token = new_auth.id_token
+            _client.set_auth_refresh(cfg.firebase_api_key, new_auth.refresh_token)
+            main_window.chat_display.clear()
+            main_window.append_chat(f"Signed in as {new_auth.email}")
+            main_window.show()
+            _client._should_run = True
+            _client.start()
+        else:
+            QApplication.instance().quit()
+
+    main_window.signout_signal.connect(_on_signout)
+
     main_window.show()
 
     with loop:

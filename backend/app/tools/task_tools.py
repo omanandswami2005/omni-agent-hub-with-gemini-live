@@ -237,6 +237,33 @@ async def cancel_planned_task(
     return {"cancelled": ok, "message": "Task cancelled." if ok else "Cannot cancel this task."}
 
 
+async def retry_failed_task(
+    task_id: str,
+    tool_context: ToolContext | None = None,
+) -> dict:
+    """Retry failed/skipped steps in a task that has failed.
+
+    Resets failed and skipped steps to pending and re-executes them.
+    Completed steps are kept as-is.
+
+    Args:
+        task_id: The task to retry.
+        tool_context: Injected by ADK.
+
+    Returns:
+        Updated task status.
+    """
+    user_id = (tool_context.user_id if tool_context else None) or "unknown"
+    task = await get_task_orchestrator().retry_failed_steps(user_id, task_id)
+    if not task:
+        return {"error": f"Task {task_id} not found or cannot be retried."}
+    return {
+        "task_id": task.id,
+        "status": task.status.value,
+        "message": f"Retrying failed steps in '{task.title}'.",
+    }
+
+
 # ── Human-in-the-Loop ─────────────────────────────────────────────────
 
 
@@ -409,6 +436,7 @@ def get_planned_task_tools() -> list[FunctionTool]:
             FunctionTool(pause_planned_task),
             FunctionTool(resume_planned_task),
             FunctionTool(cancel_planned_task),
+            FunctionTool(retry_failed_task),
         ]
     return _TASK_TOOLS
 

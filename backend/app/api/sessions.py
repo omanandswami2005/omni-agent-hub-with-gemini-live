@@ -132,7 +132,10 @@ async def _events_to_messages(events: list) -> list[ChatMessage]:
     - Text content with role=model → assistant text messages
     - Function calls → system action messages (with full metadata)
     - Function responses → system action messages (with result + status)
+    - state_delta → GenUI results and image results (from AgentTool personas)
     """
+    import json as _json
+
     from app.api.ws_live import _classify_tool
     from app.tools.image_gen import IMAGE_TOOL_NAMES as _IMAGE_TOOL_NAMES
 
@@ -329,6 +332,78 @@ async def _events_to_messages(events: list) -> list[ChatMessage]:
                             source_label=label,
                         )
                     )
+
+        # ── state_delta: GenUI + image results from AgentTool personas ──
+        # After the AgentTool migration, tool calls (images, GenUI) happen
+        # inside the persona's isolated session.  The persona writes results
+        # into session state which AgentTool forwards as state_delta on the
+        # root event.  We extract those here for history replay.
+        if event.actions and getattr(event.actions, "state_delta", None):
+            _delta = event.actions.state_delta
+
+            # GenUI results (accumulated list from render_genui_component)
+            _genui_raw = _delta.get("_genui_results")
+            if _genui_raw:
+                try:
+                    _genui_list = _json.loads(_genui_raw) if isinstance(_genui_raw, str) else _genui_raw
+                    if isinstance(_genui_list, list):
+                        for gi in _genui_list:
+                            messages.append(
+                                ChatMessage(
+                                    role="assistant",
+                                    content=gi.get("text", ""),
+                                    type="text",
+                                    content_type="genui",
+                                    genui_type=gi.get("type", ""),
+                                    genui_data=gi.get("data"),
+                                )
+                            )
+                except (_json.JSONDecodeError, TypeError):
+                    pass
+
+            # Image results (accumulated list from generate_image / generate_rich_image)
+            _img_raw = _delta.get("_image_results")
+            if _img_raw:
+                try:
+                    _img_list = _json.loads(_img_raw) if isinstance(_img_raw, str) else _img_raw
+                    if isinstance(_img_list, list):
+                        for ii in _img_list:
+                            tool_name = ii.get("tool_name", "generate_image")
+                            if tool_name == "generate_rich_image":
+                                # Interleaved text+image parts
+                                raw_parts = ii.get("parts", [])
+                                converted_parts = []
+                                for rp in raw_parts:
+                                    if rp.get("type") == "text":
+                                        converted_parts.append(rp)
+                                    elif rp.get("type") == "image":
+                                        url = await _gcs_uri_to_https(rp.get("image_url", ""))
+                                        converted_parts.append({"type": "image", "image_url": url, "mime_type": rp.get("mime_type", "image/png")})
+                                messages.append(
+                                    ChatMessage(
+                                        role="assistant",
+                                        content=ii.get("text", ""),
+                                        type="image",
+                                        tool_name=tool_name,
+                                        description=ii.get("text", ""),
+                                        parts=converted_parts,
+                                    )
+                                )
+                            else:
+                                # Single image (generate_image)
+                                url = await _gcs_uri_to_https(ii.get("image_url", ""))
+                                messages.append(
+                                    ChatMessage(
+                                        role="assistant",
+                                        content=ii.get("description", ""),
+                                        type="image",
+                                        tool_name=tool_name,
+                                        description=ii.get("description", ""),
+                                        image_url=url,
+                                    )
+                                )
+                except (_json.JSONDecodeError, TypeError):
+                    pass
 
     return messages
 

@@ -30,7 +30,7 @@ yarn-error.log*
 # --- Vite / React ---
 dashboard/dist/
 dashboard/.vite/
-
+start.txt
 # --- Environment ---
 .env
 .env.local

@@ -856,18 +856,22 @@ async def _downstream(
             if "not found" in exc_str.lower() and "tool" in exc_str.lower():
                 _tool_error_count += 1
                 logger.warning("ws_downstream_tool_not_found", user_id=user_id, error=exc_str, attempt=_tool_error_count)
-                # Keep the ADK session to preserve conversation context.
-                # Only invalidate the runner so the agent is rebuilt with
-                # fresh instructions on the retry — but session history
-                # (conversation context) is retained for recovery.
-                # _adk_session_id_cache.pop(user_id, None)  # DO NOT invalidate session
-                with contextlib.suppress(Exception):
-                    err = ErrorMessage(
-                        code="tool_error",
-                        description="I tried to use a tool directly instead of routing to the right specialist. Let me try again — please repeat your request.",
+                # Feed a graceful error back into the live queue so Gemini's
+                # voice continues naturally instead of going silent / crashing.
+                # The model will read this as user input and respond verbally.
+                from google.genai import types as _types
+                _recovery_text = (
+                    "[System]: That tool is not available on the root agent. "
+                    "Route to the correct specialist persona instead. "
+                    "Tell the user briefly what happened and offer to try again."
+                )
+                try:
+                    queue.send_content(
+                        _types.Content(role="user", parts=[_types.Part(text=_recovery_text)])
                     )
-                    await websocket.send_text(err.model_dump_json())
-                # Always send IDLE status so the frontend unblocks
+                except Exception:
+                    pass
+                # Also send IDLE status so frontend unblocks
                 with contextlib.suppress(Exception):
                     idle_msg = StatusMessage(state=AgentState.IDLE)
                     await websocket.send_text(idle_msg.model_dump_json())

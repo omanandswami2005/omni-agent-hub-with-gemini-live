@@ -107,7 +107,9 @@ function StepTimeline({ step, isLast }) {
                     <p className="text-xs text-muted-foreground mt-1 line-clamp-2 bg-muted/30 rounded px-2 py-1">{step.output}</p>
                 )}
                 {step.error && (
-                    <p className="text-xs text-red-400 mt-1 bg-red-500/10 rounded px-2 py-1">{step.error}</p>
+                    <div className="mt-1 bg-red-500/10 rounded px-2 py-1.5">
+                        <p className="text-xs text-red-400">{step.error}</p>
+                    </div>
                 )}
             </div>
         </div>
@@ -116,7 +118,7 @@ function StepTimeline({ step, isLast }) {
 
 // ── Review Plan Modal ────────────────────────────────────────────────
 
-function ReviewPlanModal({ task, onClose, onExecute, onEdit, onDelete }) {
+function ReviewPlanModal({ task, onClose, onExecute, onEdit, onDelete, onRetry }) {
     const [editMode, setEditMode] = useState(false);
     const [editText, setEditText] = useState(task.description);
     const [saving, setSaving] = useState(false);
@@ -212,6 +214,25 @@ function ReviewPlanModal({ task, onClose, onExecute, onEdit, onDelete }) {
                         {task.created_at && <span>Created: {new Date(task.created_at).toLocaleString()}</span>}
                         {task.updated_at && <span> · Updated: {new Date(task.updated_at).toLocaleString()}</span>}
                     </div>
+
+                    {/* Validation Warnings */}
+                    {task.context?.validation && (task.context.validation.warnings?.length > 0 || task.context.validation.blockers?.length > 0) && (
+                        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 space-y-1.5">
+                            <p className="text-xs font-semibold text-amber-400 flex items-center gap-1">
+                                <AlertCircle className="h-3.5 w-3.5" /> Pre-flight Resource Check
+                            </p>
+                            {(task.context.validation.blockers || []).map((b, i) => (
+                                <p key={`b-${i}`} className="text-xs text-red-400 flex items-start gap-1.5">
+                                    <X className="h-3 w-3 mt-0.5 shrink-0" /> {b}
+                                </p>
+                            ))}
+                            {(task.context.validation.warnings || []).map((w, i) => (
+                                <p key={`w-${i}`} className="text-xs text-amber-300 flex items-start gap-1.5">
+                                    <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" /> {w}
+                                </p>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {/* Footer actions */}
@@ -235,12 +256,20 @@ function ReviewPlanModal({ task, onClose, onExecute, onEdit, onDelete }) {
                             </button>
                         )}
                         {(task.status === 'failed' || task.status === 'cancelled') && (
-                            <button
-                                onClick={() => { setEditMode(true); }}
-                                className="flex items-center gap-1.5 text-xs px-4 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-                            >
-                                <RefreshCw className="h-3 w-3" /> Edit & Retry
-                            </button>
+                            <>
+                                <button
+                                    onClick={onRetry}
+                                    className="flex items-center gap-1.5 text-xs px-4 py-1.5 rounded-md bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+                                >
+                                    <RefreshCw className="h-3 w-3" /> Retry Failed
+                                </button>
+                                <button
+                                    onClick={() => { setEditMode(true); }}
+                                    className="flex items-center gap-1.5 text-xs px-4 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                                >
+                                    <Pencil className="h-3 w-3" /> Edit & Retry
+                                </button>
+                            </>
                         )}
                     </div>
                 </div>
@@ -378,6 +407,14 @@ function TaskDetail({ task, onOpenReview }) {
         }
     }, [task.id]);
 
+    const handleRetry = useCallback(async () => {
+        try {
+            await api.post(`/tasks/${task.id}/retry`);
+        } catch (err) {
+            console.error('Task retry failed:', err);
+        }
+    }, [task.id]);
+
     const config = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
     const Icon = config.icon;
 
@@ -407,6 +444,25 @@ function TaskDetail({ task, onOpenReview }) {
                     </div>
                 )}
             </div>
+
+            {/* Validation Warnings */}
+            {task.context?.validation && (task.context.validation.warnings?.length > 0 || task.context.validation.blockers?.length > 0) && (
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 space-y-1">
+                    <p className="text-xs font-medium text-amber-400 flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" /> Resource Check
+                    </p>
+                    {(task.context.validation.blockers || []).map((b, i) => (
+                        <p key={`b-${i}`} className="text-xs text-red-400 flex items-start gap-1.5">
+                            <X className="h-3 w-3 mt-0.5 shrink-0" /> {b}
+                        </p>
+                    ))}
+                    {(task.context.validation.warnings || []).map((w, i) => (
+                        <p key={`w-${i}`} className="text-xs text-amber-300 flex items-start gap-1.5">
+                            <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" /> {w}
+                        </p>
+                    ))}
+                </div>
+            )}
 
             {/* Actions */}
             <div className="flex gap-2 flex-wrap">
@@ -445,10 +501,16 @@ function TaskDetail({ task, onOpenReview }) {
                     </button>
                 )}
                 {(task.status === 'failed' || task.status === 'cancelled') && (
-                    <button onClick={onOpenReview}
-                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
-                        <RefreshCw className="h-3 w-3" /> Edit & Retry
-                    </button>
+                    <>
+                        <button onClick={() => handleRetry()}
+                            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-blue-500 text-white hover:bg-blue-600 transition-colors">
+                            <RefreshCw className="h-3 w-3" /> Retry Failed Steps
+                        </button>
+                        <button onClick={onOpenReview}
+                            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+                            <Pencil className="h-3 w-3" /> Edit & Retry
+                        </button>
+                    </>
                 )}
             </div>
 
@@ -480,12 +542,20 @@ function TaskDetail({ task, onOpenReview }) {
             )}
 
             {/* Result */}
-            {task.result_summary && (
+            {task.result_summary && task.status === 'completed' && (
                 <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-3">
                     <p className="text-xs font-medium text-green-400 mb-1 flex items-center gap-1">
                         <CheckCircle2 className="h-3 w-3" /> Result
                     </p>
                     <p className="text-sm whitespace-pre-wrap text-green-300">{task.result_summary}</p>
+                </div>
+            )}
+            {task.result_summary && task.status === 'failed' && (
+                <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-3">
+                    <p className="text-xs font-medium text-red-400 mb-1 flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" /> Error Summary
+                    </p>
+                    <p className="text-sm whitespace-pre-wrap text-red-300">{task.result_summary}</p>
                 </div>
             )}
         </div>
@@ -605,6 +675,15 @@ export default function TaskPanel() {
         }
     }, []);
 
+    const handleRetry = useCallback(async (taskId) => {
+        try {
+            await api.post(`/tasks/${taskId}/retry`);
+            setReviewTask(null);
+        } catch (err) {
+            console.error('Retry failed:', err);
+        }
+    }, []);
+
     if (tasks.length === 0 && !loading) return null;
 
     return (
@@ -689,6 +768,7 @@ export default function TaskPanel() {
                     onExecute={() => handleExecute(reviewTask.id)}
                     onEdit={(desc) => handleEdit(reviewTask.id, desc)}
                     onDelete={() => handleDelete(reviewTask.id)}
+                    onRetry={() => handleRetry(reviewTask.id)}
                 />
             )}
         </div>
