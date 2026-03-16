@@ -3,7 +3,7 @@
     "name": "Substack",
     "description": "Read, search and manage Substack newsletters and posts. Browse publications, fetch articles, search content by keyword, and interact with the Substack reader platform.",
     "kind": "mcp_stdio",
-    "category": "content",
+    "category": "creative",
     "command": "npx",
     "args": [
         "-y",

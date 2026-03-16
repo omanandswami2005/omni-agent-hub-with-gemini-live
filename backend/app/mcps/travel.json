@@ -3,7 +3,7 @@
     "name": "Travel Planner",
     "description": "Search flights, hotels, and destinations. Get travel recommendations, check visa requirements, find points of interest, and build complete trip itineraries using the Amadeus Travel API.",
     "kind": "mcp_stdio",
-    "category": "travel",
+    "category": "other",
     "command": "npx",
     "args": [
         "-y",

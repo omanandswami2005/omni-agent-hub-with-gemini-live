@@ -488,128 +488,133 @@ class ESP32UDPBridge:
 
     async def _receive(self, ws) -> None:
         """Handle all messages from the backend."""
-        async for raw in ws:
-            # ── Binary frame = agent voice audio ──────────────────────────────
-            if isinstance(raw, bytes):
-                self._spk_frames_received += 1
-                peak = self._audio_level(raw[:min(len(raw), 200)])
-                # If interrupted, drop incoming audio frames entirely
-                if self._interrupted.is_set():
-                    self._spk_frames_dropped += 1
-                    self._log("WS-RX", f"Binary {len(raw)}B peak={peak} DROPPED (interrupted) | recv={self._spk_frames_received} drop={self._spk_frames_dropped}")
+        try:
+            async for raw in ws:
+                # ── Binary frame = agent voice audio ──────────────────────────────
+                if isinstance(raw, bytes):
+                    self._spk_frames_received += 1
+                    peak = self._audio_level(raw[:min(len(raw), 200)])
+                    # If interrupted, drop incoming audio frames entirely
+                    if self._interrupted.is_set():
+                        self._spk_frames_dropped += 1
+                        self._log("WS-RX", f"Binary {len(raw)}B peak={peak} DROPPED (interrupted) | recv={self._spk_frames_received} drop={self._spk_frames_dropped}")
+                        continue
+                    self._spk_queue.put_nowait(raw)
+                    self._log("WS-RX", f"Binary {len(raw)}B peak={peak} → queue (depth={self._spk_queue.qsize()}) | recv={self._spk_frames_received} playing={self._playing} state={self._agent_state!r}")
                     continue
-                self._spk_queue.put_nowait(raw)
-                self._log("WS-RX", f"Binary {len(raw)}B peak={peak} → queue (depth={self._spk_queue.qsize()}) | recv={self._spk_frames_received} playing={self._playing} state={self._agent_state!r}")
-                continue
 
-            # ── JSON control frame ────────────────────────────────────────────
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
+                # ── JSON control frame ────────────────────────────────────────────
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
 
-            msg_type = msg.get("type", "")
+                msg_type = msg.get("type", "")
 
-            # Log every received control message for diagnostics
-            if msg_type not in ("auth_response", "client_status_update", "ping"):
-                self._log("RECV", f"← {msg_type} | {json.dumps({k: v for k, v in msg.items() if k != 'type'})}")
+                # Log every received control message for diagnostics
+                if msg_type not in ("auth_response", "client_status_update", "ping"):
+                    self._log("RECV", f"← {msg_type} | {json.dumps({k: v for k, v in msg.items() if k != 'type'})}")
 
-            if msg_type == "mic_floor":
-                event = msg.get("event", "")
-                holder = msg.get("holder", "?")
-                self._log("MIC", f"Floor event={event!r} holder={holder!r} granted_state={self._mic_granted.is_set()}")
-                if event == "granted":
-                    self._mic_granted.set()
-                    self._log("MIC", "Floor GRANTED ✔ — mic stream will begin")
-                elif event == "denied":
-                    self._mic_granted.clear()
-                    self._log("MIC", f"Floor DENIED — {holder} is currently streaming. Will retry when released.")
-                elif event == "acquired":
-                    # Broadcast: another device just started streaming
-                    if holder == "glasses":   # it's us — treat as a grant confirmation
+                if msg_type == "mic_floor":
+                    event = msg.get("event", "")
+                    holder = msg.get("holder", "?")
+                    self._log("MIC", f"Floor event={event!r} holder={holder!r} granted_state={self._mic_granted.is_set()}")
+                    if event == "granted":
                         self._mic_granted.set()
-                        self._log("MIC", "Floor acquired broadcast (us) — confirmed granted")
-                    else:
+                        self._log("MIC", "Floor GRANTED ✔ — mic stream will begin")
+                    elif event == "denied":
                         self._mic_granted.clear()
-                        self._log("MIC", f"Floor taken by {holder} — we must wait")
-                elif event in ("released", "busy"):
-                    # Another device released — re-request if we want the floor
-                    if event == "released":
-                        self._log("MIC", f"Floor released by {holder} — re-acquiring...")
-                        await ws.send(json.dumps({"type": "mic_acquire"}))
-                else:
-                    self._log("MIC", f"Unknown mic_floor event: {event!r} | full msg: {msg}")
-
-            elif msg_type == "transcription":
-                direction = msg.get("direction", "")
-                text = msg.get("text", "")
-                finished = msg.get("finished", False)
-                if text.strip():
-                    if direction == "input":
-                        tag = "YOU →" if finished else "YOU .."
+                        self._log("MIC", f"Floor DENIED — {holder} is currently streaming. Will retry when released.")
+                    elif event == "acquired":
+                        # Broadcast: another device just started streaming
+                        if holder == "glasses":   # it's us — treat as a grant confirmation
+                            self._mic_granted.set()
+                            self._log("MIC", "Floor acquired broadcast (us) — confirmed granted")
+                        else:
+                            self._mic_granted.clear()
+                            self._log("MIC", f"Floor taken by {holder} — we must wait")
+                    elif event in ("released", "busy"):
+                        # Another device released — re-request if we want the floor
+                        if event == "released":
+                            self._log("MIC", f"Floor released by {holder} — re-acquiring...")
+                            await ws.send(json.dumps({"type": "mic_acquire"}))
                     else:
-                        tag = "AGENT ←" if finished else "AGENT .."
-                    self._log(tag, text)
+                        self._log("MIC", f"Unknown mic_floor event: {event!r} | full msg: {msg}")
 
-            elif msg_type == "response":
-                text = msg.get("data", "")
-                if text:
-                    self._log("AGENT", text)
+                elif msg_type == "transcription":
+                    direction = msg.get("direction", "")
+                    text = msg.get("text", "")
+                    finished = msg.get("finished", False)
+                    if text.strip():
+                        if direction == "input":
+                            tag = "YOU →" if finished else "YOU .."
+                        else:
+                            tag = "AGENT ←" if finished else "AGENT .."
+                        self._log(tag, text)
 
-            elif msg_type == "status":
-                state = msg.get("state", "")
-                detail = msg.get("detail", "")
-                prev_state = self._agent_state
-                self._agent_state = state
+                elif msg_type == "response":
+                    text = msg.get("data", "")
+                    if text:
+                        self._log("AGENT", text)
 
-                # ── Mirrors React dashboard useAudioPlayback ──────────────
-                # Dashboard flushes audio on ANY transition to 'listening',
-                # not just when detail contains 'interrupt'.
-                if state == "listening" and prev_state != "listening":
-                    self._log("INTERRUPT", f"State → listening (was {prev_state!r}, detail={detail!r}) — flushing audio | playing={self._playing} queue={self._spk_queue.qsize()}")
-                    self._interrupted.set()
-                    self._flush_spk_queue()
-                    # Send silence to flush ESP32 I2S DMA buffer immediately
-                    silence = b"\x00" * SPK_CHUNK
-                    self._spk_sock.sendto(silence, (self.esp32_ip, self.speaker_port))
-                    self._log("INTERRUPT", f"Sent {SPK_CHUNK}B silence to ESP32 | _interrupted={self._interrupted.is_set()} _playing={self._playing}")
-                elif state == "processing":
-                    # Agent starts generating → clear interrupted flag so new audio plays
-                    self._interrupted.clear()
-                    self._log("...", "Thinking...")
-                elif state == "idle":
-                    # Turn complete — but only clear interrupt if queue is fully drained.
-                    # If we clear while chunks are still queued, mic opens mid-playback → echo.
-                    if self._spk_queue.empty() and not self._queue_has_audio:
+                elif msg_type == "status":
+                    state = msg.get("state", "")
+                    detail = msg.get("detail", "")
+                    prev_state = self._agent_state
+                    self._agent_state = state
+
+                    # ── Mirrors React dashboard useAudioPlayback ──────────────
+                    # Dashboard flushes audio on ANY transition to 'listening',
+                    # not just when detail contains 'interrupt'.
+                    if state == "listening" and prev_state != "listening":
+                        self._log("INTERRUPT", f"State → listening (was {prev_state!r}, detail={detail!r}) — flushing audio | playing={self._playing} queue={self._spk_queue.qsize()}")
+                        self._interrupted.set()
+                        self._flush_spk_queue()
+                        # Send silence to flush ESP32 I2S DMA buffer immediately
+                        silence = b"\x00" * SPK_CHUNK
+                        self._spk_sock.sendto(silence, (self.esp32_ip, self.speaker_port))
+                        self._log("INTERRUPT", f"Sent {SPK_CHUNK}B silence to ESP32 | _interrupted={self._interrupted.is_set()} _playing={self._playing}")
+                    elif state == "processing":
+                        # Agent starts generating → clear interrupted flag so new audio plays
                         self._interrupted.clear()
-                    else:
-                        self._log("...", f"Idle but queue={self._spk_queue.qsize()} has_audio={self._queue_has_audio} — deferring interrupt clear")
-                elif state == "listening":
-                    self._log("...", "Listening...")
+                        self._log("...", "Thinking...")
+                    elif state == "idle":
+                        # Turn complete — but only clear interrupt if queue is fully drained.
+                        # If we clear while chunks are still queued, mic opens mid-playback → echo.
+                        if self._spk_queue.empty() and not self._queue_has_audio:
+                            self._interrupted.clear()
+                        else:
+                            self._log("...", f"Idle but queue={self._spk_queue.qsize()} has_audio={self._queue_has_audio} — deferring interrupt clear")
+                    elif state == "listening":
+                        self._log("...", "Listening...")
 
-            elif msg_type == "tool_call":
-                if msg.get("status") == "started":
-                    self._log("TOOL", f"{msg.get('tool_name', '?')} started")
+                elif msg_type == "tool_call":
+                    if msg.get("status") == "started":
+                        self._log("TOOL", f"{msg.get('tool_name', '?')} started")
 
-            elif msg_type == "tool_response":
-                tool = msg.get("tool_name", "?")
-                success = msg.get("success", True)
-                self._log("TOOL", f"{tool} {'✓' if success else '✗'}")
+                elif msg_type == "tool_response":
+                    tool = msg.get("tool_name", "?")
+                    success = msg.get("success", True)
+                    self._log("TOOL", f"{tool} {'✓' if success else '✗'}")
 
-            elif msg_type == "image_response":
-                desc = msg.get("description", "(image)")
-                self._log("IMAGE", desc)
+                elif msg_type == "image_response":
+                    desc = msg.get("description", "(image)")
+                    self._log("IMAGE", desc)
 
-            elif msg_type == "error":
-                code = msg.get("code", "")
-                desc = msg.get("description", "")
-                self._log("ERROR", f"{code}: {desc}")
+                elif msg_type == "error":
+                    code = msg.get("code", "")
+                    desc = msg.get("description", "")
+                    self._log("ERROR", f"{code}: {desc}")
 
-            elif msg_type == "session_suggestion":
-                clients = msg.get("available_clients", [])
-                self._log("SESSION", f"Also online: {', '.join(clients)}")
+                elif msg_type == "session_suggestion":
+                    clients = msg.get("available_clients", [])
+                    self._log("SESSION", f"Also online: {', '.join(clients)}")
 
-            # auth_response, client_status_update, ping → silent
+                # auth_response, client_status_update, ping → silent
+        except websockets.exceptions.ConnectionClosed as e:
+            self._log("WS-RX", f"Connection closed: code={e.code} reason={e.reason}")
+        except Exception as e:
+            self._log("WS-RX", f"Receive error: {type(e).__name__}: {e}")
 
     # ── Main session ──────────────────────────────────────────────────────────
 
@@ -665,10 +670,10 @@ class ESP32UDPBridge:
                 announce_task.cancel()
                 await self._release_mic(ws)
 
-            for t in [*done, *pending]:
-                if not t.done():
-                    t.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+            for t in pending:
+                t.cancel()
+            # Retrieve exceptions from ALL tasks to suppress "never retrieved" warning
+            await asyncio.gather(*done, *pending, return_exceptions=True)
 
     # ── Reconnect loop ────────────────────────────────────────────────────────
 

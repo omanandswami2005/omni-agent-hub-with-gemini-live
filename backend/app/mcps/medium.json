@@ -3,7 +3,7 @@
     "name": "Medium",
     "description": "Read Medium stories and publications, search articles by topic or tag, retrieve author profiles, and fetch full post content via Medium's official API.",
     "kind": "mcp_stdio",
-    "category": "content",
+    "category": "creative",
     "command": "npx",
     "args": [
         "-y",

@@ -3,7 +3,7 @@
     "name": "Home Assistant (IoT)",
     "description": "Control smart home devices via Home Assistant. Turn lights on/off, adjust thermostats, check sensor readings, run automations, and query the state of any entity in your home network.",
     "kind": "mcp_stdio",
-    "category": "iot",
+    "category": "other",
     "command": "npx",
     "args": [
         "-y",

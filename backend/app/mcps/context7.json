@@ -3,7 +3,7 @@
     "name": "Context7",
     "description": "Fetch up-to-date, version-specific library documentation and code examples directly from Context7's indexed library database. Eliminates hallucinated API docs by pulling real docs for any library the LLM needs.",
     "kind": "mcp_stdio",
-    "category": "development",
+    "category": "dev",
     "command": "npx",
     "args": [
         "-y",

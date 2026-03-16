@@ -3,7 +3,7 @@
     "name": "ArXiv Research",
     "description": "Search and retrieve academic papers from ArXiv.org across Physics, Mathematics, Computer Science, Quantitative Biology, Statistics, and more. Completely free — no API key required.",
     "kind": "mcp_stdio",
-    "category": "research",
+    "category": "knowledge",
     "command": "npx",
     "args": [
         "-y",

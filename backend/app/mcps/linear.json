@@ -3,7 +3,7 @@
     "name": "Linear",
     "description": "Manage issues, projects, cycles, and teams in Linear — the modern software project management tool. Create, update, and triage engineering work directly from the agent.",
     "kind": "mcp_stdio",
-    "category": "development",
+    "category": "dev",
     "command": "npx",
     "args": [
         "-y",

@@ -379,7 +379,10 @@ def _build_run_config(voice: str = "Aoede", voice_enabled: bool = True):
     from google.adk.agents.run_config import RunConfig, StreamingMode
     from google.genai import types
 
-    modalities = ["AUDIO", "TEXT"] if voice_enabled else ["TEXT"]
+    # Native audio model (gemini-live-*-native-audio) only accepts ONE
+    # modality.  It natively supports text output alongside audio —
+    # setting ["AUDIO","TEXT"] causes 1007 "at most one modality" error.
+    modalities = ["AUDIO"] if voice_enabled else ["TEXT"]
 
     return RunConfig(
         streaming_mode=StreamingMode.BIDI,
