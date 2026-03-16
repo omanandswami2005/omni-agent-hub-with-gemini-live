@@ -177,13 +177,3 @@ def search_files(
         return {"error": f"Permission denied while searching: {root}"}
 
     return results
-
-        return {
-            "name": p.name,
-            "path": str(p),
-            "size": stat.st_size,
-            "is_dir": p.is_dir(),
-            "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-        }
-    except PermissionError:
-        return {"error": f"Permission denied: {p}"}
