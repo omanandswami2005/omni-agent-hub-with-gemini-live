@@ -367,26 +367,51 @@ After implementing, verify:
 
 ## Phase 3: Backend Advanced Features (Tasks 15–18)
 
-### Task 15: TaskArchitect — Dynamic Pipeline Orchestrator
+### Task 15: TaskArchitect — Dynamic Meta-Orchestrator
 
-- [ ] **15.1** — Implement `backend/app/agents/task_architect.py` as ADK `CustomAgent`:
-  - Analyzes complex multi-step tasks
-  - Decomposes into sub-tasks with dependency graph
-  - Selects execution pattern: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, or hybrid
-  - Builds and executes custom agent pipeline dynamically
-  - Sends live progress updates to dashboard via event channel (agent statuses, progress %)
-- [ ] **15.2** — Implement pipeline patterns:
-  - **Sequential**: Step-by-step workflows (research → synthesize → format)
-  - **Parallel**: Concurrent data gathering (4+ sources simultaneously)
-  - **Loop**: Iterative refinement until quality metric met
-  - **Hybrid**: Combination (parallel gather → sequential analyze → loop refine)
-- [ ] **15.3** — Wire progress events to `ws_events.py` — dashboard sees live DAG visualization data
-- [ ] **15.4** — Write test: `backend/tests/test_agents/test_task_architect.py` — test task decomposition and pattern selection for sample prompts
+> **Status**: Core backend implementation complete. Dashboard DAG visualization and quality scoring are stretch goals.
+
+- [x] **15.1** — Implement `backend/app/agents/task_architect.py` — `TaskArchitect` plain Python class (creates ADK agents dynamically, is not itself an ADK agent):
+  - `analyse_task(task: str) -> PipelineBlueprint` — calls `gemini-2.5-flash` with a structured JSON decomposition prompt; selects stage pattern per stage; falls back to single-stage plan on JSON parse failure
+  - `build_pipeline(blueprint) -> Agent` — maps each `TaskStage` to: `ParallelAgent` (parallel), `LoopAgent(max_iterations=N)` (loop), `SequentialAgent` (sequential), bare `LlmAgent` (single); wraps all stages in a top-level `SequentialAgent`
+  - `execute_pipeline(blueprint, pipeline) -> str` — runs via `Runner` + `InMemorySessionService`; publishes `pipeline_progress` stage events throughout; returns aggregated text summary
+  - `publish_blueprint(blueprint)` → EventBus `{"type": "pipeline_created", "pipeline": {...}}` so dashboard shows the plan before execution starts
+  - `publish_stage_update(pipeline_id, stage_name, status, progress)` → EventBus `{"type": "pipeline_progress", "status": "pending|running|completed|failed", "progress": 0.0–1.0}` on every transition
+  - `_create_sub_agent(task: SubTask)` — resolves T1 tools via `get_tools_for_capabilities(persona_caps)` + T2 plugin tools from `tools_by_persona` dict; builds focused `LlmAgent`
+  - `_build_tool_context()` — generates tool inventory string injected into decomposition prompt so Gemini chooses accurate personas
+  - `COMPLEXITY_THRESHOLD = 2` — tasks with fewer sub-tasks than threshold skip the architect
+- [x] **15.2** — Data models in `task_architect.py`:
+  - `StageType(StrEnum)` — `sequential | parallel | loop | single`
+  - `SubTask` dataclass — `id, description, persona_id, instruction`
+  - `TaskStage` dataclass — `name, stage_type, tasks: list[SubTask], max_iterations`
+  - `PipelineBlueprint` dataclass — `task_description, stages, pipeline_id (uuid hex[:12])`; `total_agents` property; `from_analysis(cls, analysis, task)` constructor; `to_dict()` for WebSocket broadcast
+- [x] **15.3** — Pipeline execution patterns all supported:
+  - **Sequential** — step-by-step workflows (research → analyse → format)
+  - **Parallel** — concurrent gathering with up to 4–6 simultaneous `LlmAgent` nodes
+  - **Loop** — iterative refinement with `LoopAgent(max_iterations=N)` (currently runs to max; quality scoring is stretch)
+  - **Hybrid** — stages of different types composed into one `SequentialAgent` wrapper
+- [x] **15.4** — `backend/app/agents/task_planner_tool.py` — FunctionTool bridge to root agent:
+  - `plan_task(task: str, tool_context: ToolContext) -> str` — full pipeline: `analyse_task` → `publish_blueprint` → `build_pipeline` → `execute_pipeline`; returns formatted plan + truncated execution summary (≤4 000 chars)
+  - `get_task_planner_tool() -> FunctionTool` — factory used in `root_agent.py`
+- [ ] **15.5** — Quality scoring for `LoopAgent` stages *(stretch goal)*:
+  - Add `quality_check_instruction` field to `TaskStage`
+  - After each loop iteration call Gemini to score output (`0.0–1.0`) and set `should_continue` flag
+  - Include `quality_score` and `iteration` in `pipeline_progress` event payload
+- [ ] **15.6** — Dashboard DAG visualization *(stretch goal)*:
+  - Frontend subscribes to `pipeline_created` + `pipeline_progress` via `useEventSocket`
+  - MVP: ordered step-list with status icons (🟡 pending → 🟢 running → ✅ done / 🔴 failed)
+  - Full: React Flow DAG with animated edges, parallel nodes laid out side-by-side, loop counter badge
+- [ ] **15.7** — Write tests `backend/tests/test_agents/test_task_architect.py`:
+  - `test_analyse_task_returns_blueprint` — mock Gemini response, assert `PipelineBlueprint` fields populated correctly
+  - `test_build_pipeline_parallel` — stage `type=parallel` → wrapped in `ParallelAgent`
+  - `test_build_pipeline_loop` — stage `type=loop, max_iterations=3` → `LoopAgent` with correct max
+  - `test_fallback_on_bad_json` — assert single-stage fallback when LLM returns non-JSON text
+  - `test_plan_task_tool_publishes_blueprint` — mock `EventBus`, assert `pipeline_created` event emitted with correct `type` field
 
 **Dependencies**: Task 6, Task 7, Task 8
-**Files**: `backend/app/agents/task_architect.py`, `backend/tests/test_agents/test_task_architect.py`
-**Research Refs**: R&P Section 9 (TaskArchitect Deep Dive — decomposition, patterns, examples), R&P Section 2 (ADK Agent Types — Sequential, Parallel, Loop)
-**Verify**: Complex task is decomposed correctly, agents execute in correct order, dashboard receives progress
+**Files**: `backend/app/agents/task_architect.py`, `backend/app/agents/task_planner_tool.py`, `backend/tests/test_agents/test_task_architect.py`
+**Research Refs**: R&P Section 9 (TaskArchitect — Dynamic Meta-Orchestrator: decomposition flow, 5 example pipelines, blueprint JSON schema, actual ADK implementation sketch, EventBus event formats), R&P Section 2 (ADK Agent Types — Sequential, Parallel, Loop), Architecture Plan Steps 7–8
+**Verify**: `plan_task` FunctionTool decomposes multi-step request correctly; `pipeline_created` event emitted before execution; `pipeline_progress` events fired per stage; single-step tasks bypass architect
 
 ---
 

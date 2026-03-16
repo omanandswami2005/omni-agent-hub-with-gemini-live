@@ -1958,88 +1958,190 @@ FinalPrepAgent             → cheat sheet, day-of checklist, confidence booster
 | **Resource Meter** | Tokens used, API calls, E2B sandbox time |
 | **Pipeline Blueprint** | The architecture the TaskArchitect chose (shown before execution begins) |
 
-#### ADK Implementation Sketch
+#### ADK Implementation — Actual Architecture
+
+> **Implementation status**: `task_architect.py` and `task_planner_tool.py` are **fully implemented**.
+> Dashboard DAG visualization and loop quality scoring are stretch goals.
 
 ```python
-class TaskArchitectAgent(CustomAgent):
-    """Meta-orchestrator that dynamically composes agent pipelines."""
-    
-    async def analyze_task(self, task: str) -> PipelineBlueprint:
-        # Use Gemini to analyze task complexity and decompose
-        analysis = await self.model.generate(f"""
-        Analyze this task and decompose it into sub-tasks:
-        Task: {task}
-        
-        Return JSON:
-        {{
-          "sub_tasks": [
-            {{"id": "t1", "description": "...", "tools_needed": [...]}}
-          ],
-          "dependencies": {{"t2": ["t1"], "t3": ["t1"]}},
-          "parallelizable_groups": [["t2", "t3"], ["t5", "t6"]],
-          "requires_iteration": ["t4"],
-          "pipeline_type": "hybrid"
-        }}
-        """)
-        return PipelineBlueprint.from_analysis(analysis)
-    
-    async def build_pipeline(self, blueprint: PipelineBlueprint) -> Agent:
-        # Dynamically construct agent graph from the blueprint
-        agents = []
+# ── backend/app/agents/task_architect.py ──────────────────────────────────
+
+class StageType(StrEnum):
+    SEQUENTIAL = "sequential"
+    PARALLEL   = "parallel"
+    LOOP       = "loop"
+    SINGLE     = "single"
+
+@dataclass
+class SubTask:
+    id: str
+    description: str
+    persona_id: str = "assistant"   # assistant | coder | researcher | analyst | creative
+    instruction: str = ""
+
+@dataclass
+class TaskStage:
+    name: str
+    stage_type: StageType
+    tasks: list[SubTask] = field(default_factory=list)
+    max_iterations: int = 3
+
+@dataclass
+class PipelineBlueprint:
+    task_description: str
+    stages: list[TaskStage] = field(default_factory=list)
+    pipeline_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+
+    @classmethod
+    def from_analysis(cls, analysis: dict, task_description: str) -> PipelineBlueprint:
+        """Construct blueprint from the structured LLM JSON response."""
+        ...
+
+    def to_dict(self) -> dict: ...
+
+
+COMPLEXITY_THRESHOLD = 2  # fewer sub-tasks → bypass architect, go direct to persona
+
+
+class TaskArchitect:
+    """Meta-orchestrator — plain Python class. Creates ADK agents dynamically.
+    Is NOT itself an ADK agent; it constructs them at runtime from a blueprint.
+    """
+    def __init__(self, user_id: str, tools_by_persona: dict[str, list] | None = None):
+        self.user_id = user_id
+        self._tools_by_persona = tools_by_persona or {}
+        self._event_bus = get_event_bus()
+
+    async def analyse_task(self, task: str) -> PipelineBlueprint:
+        """Call gemini-2.5-flash with a structured JSON decomposition prompt."""
+        from google.genai import Client
+        client = Client(vertexai=True)
+        response = client.models.generate_content(model=TEXT_MODEL, contents=[DECOMPOSE_PROMPT])
+        # Falls back to a single-stage sequential plan on JSON parse error
+        analysis = json.loads(response.text)
+        return PipelineBlueprint.from_analysis(analysis, task)
+
+    def build_pipeline(self, blueprint: PipelineBlueprint) -> Agent:
+        """Map each TaskStage → correct ADK agent type, wrap in SequentialAgent."""
+        stage_agents = []
         for stage in blueprint.stages:
-            if stage.type == "parallel":
-                agents.append(ParallelAgent(
-                    name=stage.name,
-                    sub_agents=[self._create_agent(t) for t in stage.tasks]
+            sub_agents = [self._create_sub_agent(t) for t in stage.tasks]
+            name = _sanitize_name(stage.name)   # valid ADK identifier
+            if stage.stage_type == StageType.PARALLEL and len(sub_agents) > 1:
+                stage_agents.append(ParallelAgent(name=name, sub_agents=sub_agents))
+            elif stage.stage_type == StageType.LOOP:
+                stage_agents.append(LoopAgent(
+                    name=name, sub_agents=sub_agents,
+                    max_iterations=stage.max_iterations,
                 ))
-            elif stage.type == "loop":
-                agents.append(LoopAgent(
-                    name=stage.name,
-                    sub_agents=[self._create_agent(t) for t in stage.tasks],
-                    max_iterations=stage.max_iter
-                ))
-            elif stage.type == "sequential":
-                agents.append(SequentialAgent(
-                    name=stage.name,
-                    sub_agents=[self._create_agent(t) for t in stage.tasks]
-                ))
+            elif stage.stage_type == StageType.SEQUENTIAL and len(sub_agents) > 1:
+                stage_agents.append(SequentialAgent(name=name, sub_agents=sub_agents))
             else:
-                agents.append(self._create_agent(stage.tasks[0]))
-        
-        return SequentialAgent(name="DynamicPipeline", sub_agents=agents)
-    
-    def _create_agent(self, task_spec) -> Agent:
-        # Create an LlmAgent tuned for a specific sub-task
-        return Agent(
-            name=task_spec.agent_name,
-            model="gemini-2.5-flash",
-            instruction=task_spec.instruction,
-            tools=self._resolve_tools(task_spec.tools_needed)
+                stage_agents.append(sub_agents[0])  # single — no wrapper needed
+        # Top-level pipeline is always a SequentialAgent tying stages together
+        return SequentialAgent(name=f"pipeline_{blueprint.pipeline_id}", sub_agents=stage_agents)
+
+    async def execute_pipeline(self, blueprint: PipelineBlueprint, pipeline: Agent) -> str:
+        """Run pipeline via ADK Runner; publish live stage progress to EventBus."""
+        runner = Runner(
+            app_name="omni-pipeline", agent=pipeline,
+            session_service=InMemorySessionService(),
         )
-    
-    async def execute(self, task: str):
-        blueprint = await self.analyze_task(task)
-        # Send blueprint to dashboard via WebSocket for visualization
-        await self.broadcast_to_dashboard("pipeline_created", blueprint.to_dict())
-        
-        pipeline = await self.build_pipeline(blueprint)
-        result = await pipeline.run(callbacks=[DashboardProgressCallback()])
-        return result
+        for stage in blueprint.stages:          # publish all stages as "pending" up-front
+            await self.publish_stage_update(blueprint.pipeline_id, stage.name, "pending")
+        async for event in runner.run_async(...):
+            # Detect stage transitions → publish "running" / "completed" events
+            ...
+        return aggregated_text_summary
+
+    async def publish_blueprint(self, blueprint: PipelineBlueprint) -> None:
+        """Event sent to dashboard when plan is ready — before execution starts."""
+        await self._event_bus.publish(self.user_id, json.dumps({
+            "type": "pipeline_created",
+            "pipeline": blueprint.to_dict(),    # stages, tasks, pipeline_id
+            "timestamp": time.time(),
+        }))
+
+    async def publish_stage_update(
+        self, pipeline_id: str, stage_name: str,
+        status: str, progress: float = 0.0,
+    ) -> None:
+        """Event: pipeline_progress — fired on every stage status transition."""
+        await self._event_bus.publish(self.user_id, json.dumps({
+            "type": "pipeline_progress",
+            "pipeline_id": pipeline_id,
+            "stage": stage_name,
+            "status": status,           # pending | running | completed | failed
+            "progress": round(progress, 2),
+            "timestamp": time.time(),
+        }))
+
+    def _create_sub_agent(self, task: SubTask) -> Agent:
+        """Resolve T1 + T2 tools by persona capabilities; build focused LlmAgent."""
+        caps = _PERSONA_CAPS[task.persona_id]           # ToolCapability tag list
+        tools = get_tools_for_capabilities(caps)         # T1 tools
+        tools += self._tools_by_persona.get(task.persona_id, [])  # T2 plugins
+        return Agent(name=task.id, model=TEXT_MODEL,
+                     instruction=task.instruction, tools=tools)
+
+
+# ── backend/app/agents/task_planner_tool.py  (FunctionTool bridge) ─────────
+
+async def plan_task(task: str, tool_context: ToolContext | None = None) -> str:
+    """Root agent calls this to decompose + execute a complex multi-step task.
+
+    Full pipeline:
+      analyse_task() → publish_blueprint() → build_pipeline() → execute_pipeline()
+    Returns a formatted plan + execution summary that the root can relay.
+    """
+    user_id = (tool_context.user_id if tool_context else None) or "unknown"
+    tools_by_persona = await _build_tools_for_architect(user_id)
+    architect = TaskArchitect(user_id=user_id, tools_by_persona=tools_by_persona)
+    blueprint  = await architect.analyse_task(task)
+    await architect.publish_blueprint(blueprint)           # → dashboard sees blueprint
+    pipeline   = architect.build_pipeline(blueprint)
+    summary    = await architect.execute_pipeline(blueprint, pipeline)
+    return _format_plan_result(blueprint, summary[:4000])  # ≤4 000 chars for context
+
+def get_task_planner_tool() -> FunctionTool:
+    return FunctionTool(plan_task)
 ```
 
-#### Implementation Complexity Assessment
+**Decomposition prompt — JSON schema Gemini must return:**
+```json
+{
+  "stages": [
+    {
+      "name": "Research",
+      "type": "parallel | sequential | loop | single",
+      "max_iterations": 3,
+      "tasks": [
+        {
+          "id": "t1",
+          "description": "what this agent does",
+          "persona_id": "researcher",
+          "instruction": "detailed instruction for the LlmAgent"
+        }
+      ]
+    }
+  ]
+}
+```
+Prompt constraints: ≤5 stages, ≤12 total sub-tasks, loop stages have exactly one sub-task, `max_iterations` 2–5.
 
-| Component | Complexity | Effort | Notes |
+#### Implementation Status & Complexity
+
+| Component | Complexity | Status | Notes |
 |---|---|---|---|
-| **Task analysis prompt engineering** | Medium | 1 day | Gemini analyzes tasks well — main work is prompt tuning for reliable JSON output |
-| **PipelineBlueprint data model** | Low | 0.5 day | Dataclass with stages, tasks, dependencies — straightforward |
-| **Dynamic agent construction** | Medium-High | 1.5 days | Map blueprint stages → ADK agent types, resolve tools per agent, handle edge cases |
-| **Dashboard DAG visualization** | High | 2 days | React Flow or D3.js DAG rendering, WebSocket updates for live status, animations |
-| **Progress callbacks** | Medium | 1 day | ADK callbacks (before/after_agent_call) → WebSocket events → dashboard updates |
-| **Loop exit condition evaluation** | Medium | 1 day | LLM-based quality scoring + threshold checking per LoopAgent |
-| **Error handling & fallbacks** | Medium | 1 day | What if a sub-agent fails? Retry? Skip? Replan? Need graceful degradation |
-| **Pipeline history & replay** | Low-Medium | 0.5 day | Store completed blueprints in Firestore, show history on dashboard |
-| **TOTAL** | | **~8 days** | Can be reduced to **~4 days** by simplifying dashboard viz (no fancy DAG, just a step list) |
+| **Task analysis prompt engineering** | Medium | ✅ Done | `_DECOMPOSE_PROMPT` in `task_architect.py`; JSON parse fallback to single-stage plan |
+| **PipelineBlueprint data model** | Low | ✅ Done | `PipelineBlueprint`, `TaskStage`, `SubTask`, `StageType` dataclasses |
+| **Dynamic agent construction** | Medium-High | ✅ Done | `build_pipeline()` maps stages → `SequentialAgent`/`ParallelAgent`/`LoopAgent` |
+| **Pipeline execution + EventBus progress** | Medium | ✅ Done | `execute_pipeline()` via `Runner`; `publish_stage_update()` per stage transition |
+| **FunctionTool bridge for root agent** | Low | ✅ Done | `task_planner_tool.py` — `plan_task()` + `get_task_planner_tool()` |
+| **Error handling & fallbacks** | Medium | ✅ Done | JSON fallback pipeline; per-stage `failed` status on exception |
+| **Loop exit quality scoring** | Medium | ⬜ Stretch | LLM-based `quality_score` 0–1 per iteration; `should_continue` in progress event |
+| **Dashboard DAG visualization** | High | ⬜ Stretch | React Flow DAG or step-list rendering `pipeline_created`/`pipeline_progress` events |
+| **Pipeline history in Firestore** | Low | ⬜ Stretch | Store `blueprint.to_dict()` per session; show replay in dashboard history view |
 
 #### Risk & Mitigation
 
