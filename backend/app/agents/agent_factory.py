@@ -67,7 +67,7 @@ _CODE_EXEC_PERSONA_IDS: frozenset[str] = frozenset({"coder", "analyst"})
 # and these overrides are ignored.  For REST / text sessions, the agent
 # uses the override model for better specialization.
 _MODEL_OVERRIDES: dict[str, str] = {
-    "genui": "gemini-3.1-flash-lite-preview",
+    "genui": "gemini-2.5-flash-lite",
 }
 
 _PERSONA_CAPABILITIES: dict[str, list[str]] = {
@@ -158,49 +158,34 @@ def create_agent(
             if getattr(t, "name", str(t)) not in existing:
                 tools.append(t)
 
-    # Use persona-specific model override ONLY for non-live (text) sessions.
-    # In live mode, all sub-agents MUST use a live-capable model because ADK
-    # opens a new live WebSocket connection using the sub-agent's `.model`.
+    # Use persona-specific model override when available.
+    # With AgentTool, sub-agents always run via Runner.run_async() (not run_live),
+    # so they don't need a live-capable model and can use specialized models.
     effective_model = model or LIVE_MODEL
-    is_live_session = effective_model == LIVE_MODEL
-    if persona.id in _MODEL_OVERRIDES and not is_live_session:
+    # Live-only models (gemini-live-*) only work with the Live API, not
+    # generateContent.  AgentTool always uses run_async → generateContent,
+    # so we must fall back to the text model.
+    if "live" in effective_model.lower():
+        effective_model = TEXT_MODEL
+    if persona.id in _MODEL_OVERRIDES:
         effective_model = _MODEL_OVERRIDES[persona.id]
 
     # Build a strict tool list addendum so the persona never hallucinates tool names
     tool_names = sorted({getattr(t, "name", str(t)) for t in tools})
     # Escape curly braces so ADK's template engine doesn't treat them as variables
     safe_tool_names = [n.replace("{", "{{").replace("}", "}}") for n in tool_names]
-    # Always include transfer_to_agent — ADK auto-injects it for parent/peer transfer
-    if "transfer_to_agent" not in safe_tool_names:
-        safe_tool_names.append("transfer_to_agent")
-        safe_tool_names.sort()
     tool_guard = (
         "\n\nSTRICT TOOL REGISTRY: You can ONLY call these tools: "
         + ", ".join(safe_tool_names)
-        + ". Do NOT call any tool name not in this list — if a user request needs a tool "
-        "you don't have, transfer to omni_root with context of what the user wants."
+        + ". Do NOT call any tool name not in this list."
     ) if tool_names else ""
 
-    # Add escalation instruction so personas hand off out-of-scope requests
-    # with full context of what the user asked — the receiving agent sees
-    # the text emitted before the transfer_to_agent call in conversation history.
-    escalation_instruction = (
-        "\n\n## TRANSFER PROTOCOL — Out-of-Scope Requests\n"
-        "If the user asks for something you CANNOT do (missing tool, different specialty, "
-        "device control, image generation, desktop streaming, search, etc.):\n\n"
-        "1. **Say what the user needs** — emit a short text message summarizing the request, e.g.:\n"
-        '   "The user wants to generate an image of a sunset. Transferring to the right specialist."\n'
-        "2. **Transfer immediately** — call transfer_to_agent with the target:\n"
-        "   - `transfer_to_agent(agent_name='omni_root')` — when unsure who should handle it.\n"
-        "   - Or transfer directly to a sibling if obvious: 'coder', 'researcher', 'creative', "
-        "'analyst', 'genui', 'device_agent'.\n\n"
-        "**RULES:**\n"
-        "- NEVER attempt a task you lack tools for — always transfer.\n"
-        "- NEVER say 'I can't do that' or 'tool not found' — just transfer with context.\n"
-        "- NEVER say 'no devices connected' for desktop/streaming requests — transfer to root.\n"
-        "- The text you emit BEFORE the transfer becomes context for the next agent.\n"
-        "- After your task is complete and there's nothing more to do, "
-        "transfer back: transfer_to_agent(agent_name='omni_root')."
+    # AgentTool runs personas in isolation — no transfer_to_agent available.
+    # Instruct persona to do its best or report inability clearly.
+    scope_instruction = (
+        "\n\n## SCOPE\n"
+        "You run as an isolated specialist. Complete the user's request using your tools.\n"
+        "If you lack a required tool, say what's needed so the coordinator can re-route."
     )
 
     base_instruction = persona.system_instruction or f"You are {persona.name}."
@@ -209,7 +194,7 @@ def create_agent(
         name=persona.id,
         model=effective_model,
         description=f"{persona.name} — {', '.join(persona.capabilities or [])} specialist",
-        instruction=base_instruction + escalation_instruction + tool_guard,
+        instruction=base_instruction + scope_instruction + tool_guard,
         tools=tools,
         before_model_callback=context_injection_callback,
         after_model_callback=cost_estimation_callback,

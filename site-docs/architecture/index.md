@@ -54,17 +54,21 @@ Omni uses a three-tier tool system:
 
 ## Agent System
 
-Agents are built dynamically based on **persona** configuration:
+Omni uses the **AgentTool pattern** — the root agent wraps each persona as an `AgentTool` (a function call that internally runs `Runner.run_async()`). This preserves the root's bidi Live API audio stream while allowing persona agents to use the standard `generateContent` API.
 
 ```mermaid
 flowchart TD
     PERSONA[Persona Config] --> FACTORY[Agent Factory]
     FACTORY --> T1[T1 Built-in Tools]
     FACTORY --> T2[T2 MCP Tools]
-    FACTORY --> T3[T3 Client Tools]
     FACTORY --> AGENT[LlmAgent]
-    AGENT --> LIVE[Gemini Live API<br/>Bidi Streaming]
+    AGENT --> AT[AgentTool Wrapper]
+    AT --> ROOT["Root Agent<br/>gemini-live-2.5-flash-native-audio<br/>tools=[...AgentTools]"]
+    ROOT --> LIVE[Gemini Live API<br/>Bidi Streaming]
+    AT -->|"Runner.run_async()"| TEXT["Gemini 2.5 Flash<br/>generateContent API"]
 ```
+
+**Key:** Root uses Live model for bidi audio. Persona agents use Text model via `Runner.run_async()` inside `AgentTool`. Cross-client tools (T3) live directly on the root agent.
 
 ## Component Details
 

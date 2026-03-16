@@ -1,16 +1,17 @@
 # Agent Personas
 
-Omni supports multiple AI personas — each with a unique system instruction, voice, model, and tool set.
+Omni supports multiple AI personas — each with a unique system instruction, voice, model, and tool set. Each persona is wrapped as an **AgentTool** on the root agent, running via `Runner.run_async()` with the `generateContent` API (not the Live API).
 
 ## Built-in Personas
 
-| Persona | Description | Capabilities |
-|---|---|---|
-| **Omni** (default) | General-purpose assistant | Search, tasks, image gen |
-| **Coder** | Software development expert | Code execution, desktop, search |
-| **Analyst** | Data analysis specialist | Code execution, search |
-| **Researcher** | Deep research assistant | Search, tasks |
-| **Pixel** (GenUI) | Visual data renderer | Code execution, GenUI schema |
+| Persona | Description | Capabilities | Model |
+|---|---|---|---|
+| **Claire** (assistant) | General-purpose assistant | Search, tasks, image gen | `gemini-2.5-flash` |
+| **Dev** (coder) | Software development expert | Code execution, desktop, search | `gemini-2.5-flash` |
+| **Nova** (analyst) | Data analysis specialist | Code execution, search | `gemini-2.5-flash` |
+| **Sage** (researcher) | Deep research assistant | Search, tasks | `gemini-2.5-flash` |
+| **Muse** (creative) | Creative collaborator | Image generation, media | `gemini-2.5-flash` |
+| **Pixel** (genui) | Visual data renderer | Code execution, GenUI schema | `gemini-2.5-flash-lite` |
 
 ## Creating a Custom Persona
 

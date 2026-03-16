@@ -735,14 +735,18 @@ The unified architecture combines five design patterns into one coherent system:
 4. **Reverse-RPC** — Client-local tools are first-class agent tools, no client-specific backend code
 5. **Capability-based tool matching** — Plugins declare `tags`, personas declare `capabilities`. The ToolRegistry distributes T2 tools per-persona using set intersection (`tags ∩ caps`). T3 tools go to a dedicated `device_agent`. No more flat tool lists.
 
-**3-Layer Agent Architecture:**
+**Agent Architecture — AgentTool Pattern:**
 
-| Layer | Agent(s) | Role |
-|---|---|---|
-| **Layer 0** | `omni_root` (Router) | Classifies intent, routes via `transfer_to_agent`, has `plan_task` tool |
-| **Layer 1** | Persona Pool (assistant, coder, researcher, analyst, creative) | Capability-matched T1+T2 tools per persona |
-| **Layer 2** | TaskArchitect (`plan_task` tool) | Decomposes complex tasks into multi-step plans |
-| **Layer 3** | `device_agent` (Cross-Client Orchestrator) | Cross-client actions + T3 proxy tools |
+Omni uses the **AgentTool pattern** instead of `sub_agents` + `transfer_to_agent`. The root agent wraps each persona as an `AgentTool` — a function call that internally runs `Runner.run_async()` with the `generateContent` API. This preserves the root's bidi Live API stream (no generator exhaustion on agent transfers).
+
+| Layer | Agent(s) | Role | Model |
+|---|---|---|---|
+| **Root** | `omni_root` (Voice-First Router) | Classifies intent, calls persona AgentTools or utility tools directly | `gemini-live-2.5-flash-native-audio` (bidi audio) |
+| **Persona Tools** | assistant, coder, researcher, analyst, creative, genui | Capability-matched T1+T2 tools per persona, wrapped as `AgentTool` | `gemini-2.5-flash` (via `Runner.run_async()`) |
+| **Task Planning** | `create_planned_task()` | Decomposes complex tasks into multi-step plans | (root tool, not a separate agent) |
+| **Device Control** | Cross-client tools on root | `send_to_desktop`, `send_to_chrome`, T3 proxy tools | (root tools) |
+
+**Key difference from old architecture:** Personas are `tools` on the root, not `sub_agents`. Root calls `creative(request="draw a tree")` as a function call. No `transfer_to_agent` is used. Cross-client and device tools live directly on the root agent (not in a separate `device_agent` sub-agent).
 
 The result: **one backend, unlimited client types, unlimited plugins, one conversation**. A new client just connects and advertises capabilities. A new plugin just drops a manifest file with `tags`. The agent immediately knows how to use everything — and each persona only gets tools relevant to its expertise.
 

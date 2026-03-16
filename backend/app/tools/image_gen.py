@@ -166,6 +166,9 @@ async def generate_image(
                 "description": full_prompt,
             },
         )
+        # Signal via state_delta so AgentTool parent can detect pending images
+        if tool_context:
+            tool_context.state["_image_pending"] = True
     else:
         logger.warning("image_generated_no_user_id", prompt=prompt[:80])
 
@@ -277,6 +280,9 @@ async def generate_rich_image(
                 "parts": ordered_parts,
             },
         )
+        # Signal via state_delta so AgentTool parent can detect pending images
+        if tool_context:
+            tool_context.state["_image_pending"] = True
     else:
         logger.warning("rich_image_generated_no_user_id", prompt=prompt[:80])
 

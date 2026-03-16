@@ -15,9 +15,14 @@ Omni is a multi-client, single-server AI agent hub for the Gemini Live Agent Cha
                 │                                         │
                 │   ┌───────────────────────────┐         │
                 │   │      ADK Root Agent       │         │
-                │   │   (Persona Dispatcher)    │         │
+                │   │   (Voice-First Router)    │         │
+                │   │   Live: gemini-live-2.5   │         │
+                │   │   -flash-native-audio     │         │
                 │   │                           │         │
-                │   │  Nova  Atlas  Sage  Spark │         │
+                │   │  Persona AgentTools:      │         │
+                │   │  Claire Muse Sage Dev Nova│         │
+                │   │  (each runs gemini-2.5-   │         │
+                │   │   flash via AgentTool)    │         │
                 │   └─────────────┬─────────────┘         │
                 │                 │                        │
                 │   ┌─────────────┼─────────────┐         │
@@ -45,6 +50,33 @@ Omni is a multi-client, single-server AI agent hub for the Gemini Live Agent Cha
                │ Terminal │  │ Ext.    │
                └──────────┘  └─────────┘
 ```
+
+---
+
+## Agent Architecture: AgentTool Pattern
+
+Omni uses the **AgentTool pattern** — NOT `sub_agents` + `transfer_to_agent`:
+
+| Aspect | Old Pattern (sub_agents) | Current Pattern (AgentTool) |
+|--------|--------------------------|-----------------------------|
+| Delegation | `transfer_to_agent("creative")` | `creative(request="draw a tree")` |
+| Root config | `Agent(sub_agents=[...])` | `Agent(tools=[...AgentTools])` |
+| Bidi stream | **Breaks** — generator exhausts on transfer | **Preserved** — persona runs as tool call |
+| Model | All agents share Live model | Root: Live model, Personas: Text model |
+| Execution | `run_live()` | AgentTool uses `Runner.run_async()` internally |
+
+**Why?** The Gemini Live API bidi stream (`run_live()`) yields a final event when `transfer_to_agent` fires, exhausting the generator. AgentTool avoids this by running persona agents as isolated tool calls via `generateContent` API.
+
+**Model split:**
+- Root: `gemini-live-2.5-flash-native-audio` (bidi audio streaming)
+- Personas: `gemini-2.5-flash` (text-based, via `Runner.run_async()` inside AgentTool)
+- GenUI persona: `gemini-2.5-flash-lite` (faster for UI generation)
+
+**Image/GenUI delivery:**
+1. Root calls `creative(request)` → AgentTool runs creative persona
+2. Creative calls `generate_image()` → image queued in `_pending_images[user_id]`
+3. AgentTool finishes → `function_response` event emitted
+4. `_process_event()` detects persona function_response → drains pending images/GenUI → sends to WebSocket
 
 ---
 

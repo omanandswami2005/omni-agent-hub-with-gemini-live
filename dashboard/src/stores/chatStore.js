@@ -18,9 +18,19 @@ export const useChatStore = create((set, get) => ({
   setLoadingHistory: (v) => set({ _isLoadingHistory: v }),
 
   addMessage: (msg) =>
-    set((s) => ({
-      messages: [...s.messages, { id: nextId(), timestamp: new Date().toISOString(), ...msg }],
-    })),
+    set((s) => {
+      // Deduplicate image messages by image_url to prevent double-render
+      // when multiple backend drain paths or relay events deliver the same image.
+      if (msg.type === 'image' && msg.image_url) {
+        const dup = s.messages.find(
+          (m) => m.type === 'image' && m.image_url === msg.image_url,
+        );
+        if (dup) return s; // already rendered
+      }
+      return {
+        messages: [...s.messages, { id: nextId(), timestamp: new Date().toISOString(), ...msg }],
+      };
+    }),
   clearMessages: () => set({ messages: [] }),
 
   /**

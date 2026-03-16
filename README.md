@@ -117,7 +117,7 @@ AI assistants today live in text boxes on single screens. You can't speak to you
 |---|---|---|
 | Audio Transport | Binary WebSocket frames | 33% smaller than base64-in-JSON, lower latency |
 | Audio Pipeline | AudioWorklet (not ScriptProcessor) | Runs on separate thread, zero main-thread jank |
-| Agent Framework | Google ADK with `run_live()` | Native bidi streaming, multi-agent orchestration |
+| Agent Framework | Google ADK with `AgentTool` pattern | Root uses `run_live()` for bidi audio; personas wrapped as `AgentTool` (runs `Runner.run_async()` + `generateContent` API internally) |
 | Plugin System | MCP (Model Context Protocol) | Open standard, 10,000+ community tools |
 | GenUI | Agent returns structured JSON → React renders | Audio + visual output simultaneously |
 | Session Persistence | Vertex AI Agent Engine Sessions | Survives Cloud Run restarts, Google-managed |
@@ -133,7 +133,9 @@ AI assistants today live in text boxes on single screens. You can't speak to you
 | Package Manager | uv |
 | API Server | FastAPI + Uvicorn |
 | Agent Framework | Google ADK v0.5+ |
-| Audio Model | `gemini-live-2.5-flash-native-audio` |
+| Audio Model | `gemini-live-2.5-flash-native-audio` (root only) |
+| Text Model | `gemini-2.5-flash` (persona agents via AgentTool) |
+| GenUI Model | `gemini-2.5-flash-lite` (genui persona override) |
 | Code Execution | E2B Sandbox + Agent Engine Code Execution |
 
 ### Frontend

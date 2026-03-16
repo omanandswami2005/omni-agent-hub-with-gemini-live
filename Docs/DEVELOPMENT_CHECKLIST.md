@@ -189,12 +189,12 @@ After implementing, verify:
 - [ ] **6.4** — Implement `backend/app/services/tool_registry.py` — `build_for_session(user_id, personas)` returns `dict[str, list]` (per-persona tools + `__device__` key) using capability matching
 - [ ] **6.5** — Implement `backend/app/services/persona_service.py` with Firestore-backed persona CRUD: `list_personas(user_id)`, `create_persona()`, `update_persona()`, `delete_persona()`, `get_default_personas()`
 - [ ] **6.6** — Implement `backend/app/api/personas.py` with REST endpoints: `GET /personas`, `POST /personas`, `PUT /personas/{id}`, `DELETE /personas/{id}`
-- [ ] **6.7** — Write test: `backend/tests/test_agents/test_root_agent.py` — test that root agent builds with 6 sub-agents (5 personas + device_agent) and `plan_task` tool
+- [ ] **6.7** — Write test: `backend/tests/test_agents/test_root_agent.py` — test that root agent builds with persona AgentTools (6 personas as tools) and utility tools (plan_task, cross-client, capabilities)
 
 **Dependencies**: Task 1, Task 2, Task 3
 **Files**: `backend/app/agents/root_agent.py`, `backend/app/agents/personas.py`, `backend/app/agents/agent_factory.py`, `backend/app/agents/cross_client_agent.py`, `backend/app/agents/task_planner_tool.py`, `backend/app/services/tool_registry.py`, `backend/app/services/persona_service.py`, `backend/app/api/personas.py`, `backend/tests/test_agents/test_root_agent.py`
 **Research Refs**: R&P Section 2 (ADK Agent Types), R&P Section 3 (Voice Config — 8 voices), R&P Section 9 (Multi-Agent Architecture), GCP Tier 1 (ADK)
-**Verify**: Root agent correctly builds with 3-layer architecture — persona pool with capability-matched tools, plan_task tool, and device_agent
+**Verify**: Root agent correctly builds with AgentTool pattern — persona AgentTools with capability-matched tools, plan_task tool, and cross-client tools on root directly
 
 ---
 

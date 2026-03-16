@@ -23,8 +23,8 @@ graph TB
 
     subgraph AgentLayer["Agent Engine — ADK"]
         RUNNER["ADK Runner\nrun_live()"]
-        ROOT["omni_root\nRouter Agent"]
-        subgraph Personas["Persona Sub-Agents"]
+        ROOT["omni_root\nVoice-First Router\n(gemini-live-2.5-flash-native-audio)"]
+        subgraph PersonaTools["Persona AgentTools (each runs gemini-2.5-flash via Runner.run_async)"]
             CLAIRE["Claire\nAssistant · Aoede"]
             DEV["Dev\nCoder · Charon"]
             SAGE["Sage\nResearcher · Kore"]
@@ -85,7 +85,7 @@ graph TB
 
     %% ADK
     RUNNER --> ROOT
-    ROOT --> CLAIRE & DEV & SAGE & NOVA & MUSE
+    ROOT -->|"AgentTool calls"| CLAIRE & DEV & SAGE & NOVA & MUSE
     ROOT --> TASK_ARCH
 
     %% Tools → Vertex AI
@@ -145,32 +145,32 @@ graph TD
         SESSION["Session State\nVertexAiSessionService\n↳ InMemory fallback"]
     end
 
-    subgraph Root["omni_root — Router Agent"]
+    subgraph Root["omni_root — Voice-First Router"]
         ROUTER_LLM["Gemini Live\ngemini-live-2.5-flash\n-native-audio"]
-        PERSONA_DISPATCH{"Route to\nPersona?"}
+        PERSONA_DISPATCH{"Call Persona\nAgentTool?"}
         COMPLEX_DISPATCH{"Complex\nMulti-Step Task?"}
     end
 
-    subgraph PersonaAgents["Persona Sub-Agents  (each has own Gemini Live stream)"]
+    subgraph PersonaAgents["Persona AgentTools  (each runs gemini-2.5-flash via Runner.run_async)"]
         direction LR
         subgraph CLAIRE_BOX["Claire — Assistant"]
-            CLAIRE_LLM["Gemini Live"]
+            CLAIRE_LLM["gemini-2.5-flash"]
             CLAIRE_TOOLS["🔍 Search\n🎨 Image Gen\n↔️ Cross-Client"]
         end
         subgraph DEV_BOX["Dev — Coder"]
-            DEV_LLM["Gemini Live"]
+            DEV_LLM["gemini-2.5-flash"]
             DEV_TOOLS["⚙️ Code Exec\n🔌 MCP GitHub\n↔️ Cross-Client"]
         end
         subgraph SAGE_BOX["Sage — Researcher"]
-            SAGE_LLM["Gemini Live"]
+            SAGE_LLM["gemini-2.5-flash"]
             SAGE_TOOLS["🔍 Search\n📚 RAG\n↔️ Cross-Client"]
         end
         subgraph NOVA_BOX["Nova — Analyst"]
-            NOVA_LLM["Gemini Live"]
+            NOVA_LLM["gemini-2.5-flash"]
             NOVA_TOOLS["⚙️ Code Exec\n🔍 Search\n📚 RAG\n↔️ Cross-Client"]
         end
         subgraph MUSE_BOX["Muse — Creative"]
-            MUSE_LLM["Gemini Live"]
+            MUSE_LLM["gemini-2.5-flash"]
             MUSE_TOOLS["🎨 Image Gen\n↔️ Cross-Client"]
         end
     end
@@ -220,12 +220,12 @@ graph TD
     ROUTER_LLM --> PERSONA_DISPATCH
     ROUTER_LLM --> COMPLEX_DISPATCH
 
-    %% Routing
-    PERSONA_DISPATCH -->|"assistant"| CLAIRE_BOX
-    PERSONA_DISPATCH -->|"coder"| DEV_BOX
-    PERSONA_DISPATCH -->|"researcher"| SAGE_BOX
-    PERSONA_DISPATCH -->|"analyst"| NOVA_BOX
-    PERSONA_DISPATCH -->|"creative"| MUSE_BOX
+    %% Routing (AgentTool calls, NOT transfer_to_agent)
+    PERSONA_DISPATCH -->|"assistant(request)"| CLAIRE_BOX
+    PERSONA_DISPATCH -->|"coder(request)"| DEV_BOX
+    PERSONA_DISPATCH -->|"researcher(request)"| SAGE_BOX
+    PERSONA_DISPATCH -->|"analyst(request)"| NOVA_BOX
+    PERSONA_DISPATCH -->|"creative(request)"| MUSE_BOX
     COMPLEX_DISPATCH -->|"≥ 2 sub-tasks"| TaskArchitect
 
     %% Tool wiring

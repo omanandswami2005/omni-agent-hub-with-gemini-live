@@ -962,6 +962,12 @@ async def _downstream(
 
 # ── Tool classification ──────────────────────────────────────────────
 
+# Persona AgentTool names — persona agents wrapped via AgentTool.
+# Used to emit transfer-like messages and drain pending results.
+_PERSONA_AGENT_NAMES = frozenset(
+    {"coder", "researcher", "analyst", "creative", "genui", "assistant"}
+)
+
 # Cross-device T3 tool names (from app.tools.cross_client)
 _CROSS_DEVICE_TOOLS = frozenset(
     {
@@ -1210,12 +1216,23 @@ async def _process_event(
         await _publish(bus, user_id, processing_json)
 
     for fc in func_calls:
-        # Agent transfer → emit dedicated message instead of generic tool_call
+        # Agent transfer (legacy) → emit dedicated message
         if fc.name == "transfer_to_agent":
             target = (fc.args or {}).get("agent_name", "")
             transfer_msg = AgentTransferMessage(
                 to_agent=target,
                 message=(fc.args or {}).get("message", ""),
+            )
+            json_str = transfer_msg.model_dump_json()
+            await websocket.send_text(json_str)
+            await _publish(bus, user_id, json_str)
+            continue
+
+        # Persona AgentTool call → emit transfer message for dashboard UX
+        if fc.name in _PERSONA_AGENT_NAMES:
+            transfer_msg = AgentTransferMessage(
+                to_agent=fc.name,
+                message=(fc.args or {}).get("request", ""),
             )
             json_str = transfer_msg.model_dump_json()
             await websocket.send_text(json_str)
@@ -1246,14 +1263,58 @@ async def _process_event(
     #
     from app.tools.desktop_tools import SCREENSHOT_TOOL_NAMES, drain_pending_screenshots
     from app.tools.image_gen import IMAGE_TOOL_NAMES, drain_pending_images
-    from app.tools.genui_schema import RENDER_GENUI_TOOL_NAME
+    from app.tools.genui_schema import RENDER_GENUI_TOOL_NAME, drain_pending_genui
+
+    # Track whether we already drained images in this event to prevent double delivery.
+    _images_drained_this_event = False
 
     for fr in event.get_function_responses():
         # Skip transfer_to_agent responses (already handled above)
         if fr.name == "transfer_to_agent":
             continue
 
-        # ── GenUI render tool → emit GenUI message ──────────────────
+        # ── Persona AgentTool response — drain pending genui/images ──
+        if fr.name in _PERSONA_AGENT_NAMES:
+            logger.info("persona_tool_response", agent=fr.name, user_id=user_id, response_preview=str(fr.response)[:200] if fr.response else "None")
+            # Drain pending GenUI components queued by the sub-agent
+            if user_id:
+                for genui_data in drain_pending_genui(user_id):
+                    genui_msg = AgentResponse(
+                        content_type=ContentType.GENUI,
+                        data="",
+                        genui=genui_data,
+                    )
+                    gj = genui_msg.model_dump_json()
+                    await websocket.send_text(gj)
+                    await _publish(bus, user_id, gj)
+                    logger.info("genui_via_agent_tool", agent=fr.name, conn=conn_tag)
+
+                # Drain pending images queued by the sub-agent
+                _img_items = drain_pending_images(user_id)
+                if _img_items:
+                    _images_drained_this_event = True
+                    logger.info("image_drain_persona", agent=fr.name, count=len(_img_items), conn=conn_tag)
+                for img_data in _img_items:
+                    img_msg = ImageResponseMessage(**img_data)
+                    ij = img_msg.model_dump_json()
+                    await websocket.send_text(ij)
+                    await _publish(bus, user_id, ij)
+
+                # Drain pending screenshots
+                for sc_data in drain_pending_screenshots(user_id):
+                    sc_msg = ImageResponseMessage(**sc_data)
+                    sj = sc_msg.model_dump_json()
+                    await websocket.send_text(sj)
+                    await _publish(bus, user_id, sj)
+
+            # Signal transfer back to root for dashboard UX
+            transfer_back = AgentTransferMessage(to_agent="omni_root", message="")
+            tj = transfer_back.model_dump_json()
+            await websocket.send_text(tj)
+            await _publish(bus, user_id, tj)
+            continue  # Skip regular ToolResponseMessage for persona tools
+
+        # ── GenUI render tool (direct call path — fallback) ──────────
         if fr.name == RENDER_GENUI_TOOL_NAME and isinstance(fr.response, dict):
             component = fr.response.get("component")
             if component and fr.response.get("rendered"):
@@ -1272,8 +1333,13 @@ async def _process_event(
                 logger.info("genui_rendered_via_tool", genui_type=genui_type, conn=conn_tag)
 
         # Drain pending images queued by the tool for this user
-        if fr.name in IMAGE_TOOL_NAMES and user_id:
-            for img_data in drain_pending_images(user_id):
+        # (only if not already drained by persona AgentTool path above)
+        if fr.name in IMAGE_TOOL_NAMES and user_id and not _images_drained_this_event:
+            _img_items = drain_pending_images(user_id)
+            if _img_items:
+                _images_drained_this_event = True
+                logger.info("image_drain_direct_tool", tool=fr.name, count=len(_img_items), conn=conn_tag)
+            for img_data in _img_items:
                 img_msg = ImageResponseMessage(**img_data)
                 json_str = img_msg.model_dump_json()
                 await websocket.send_text(json_str)
@@ -1312,6 +1378,30 @@ async def _process_event(
         json_str = msg.model_dump_json()
         await websocket.send_text(json_str)
         await _publish(bus, user_id, json_str)
+
+    # ── state_delta detection (AgentTool forwards sub-agent state) ──
+    # NOTE: Image drain is NOT done here — it's handled exclusively in the
+    # persona AgentTool function_response path above (Path 1) to avoid
+    # duplicate delivery.  The state_delta `_image_pending` flag that
+    # AgentTool forwards is intentionally ignored for drain purposes.
+    if user_id and event.actions and getattr(event.actions, "state_delta", None):
+        _delta = event.actions.state_delta
+        # GenUI result from sub-agent
+        _genui_json = _delta.get("_genui_result")
+        if _genui_json:
+            try:
+                genui_payload = json.loads(_genui_json) if isinstance(_genui_json, str) else _genui_json
+                genui_msg = AgentResponse(
+                    content_type=ContentType.GENUI,
+                    data="",
+                    genui=genui_payload,
+                )
+                gj = genui_msg.model_dump_json()
+                await websocket.send_text(gj)
+                await _publish(bus, user_id, gj)
+                logger.info("genui_via_state_delta", conn=conn_tag)
+            except (json.JSONDecodeError, TypeError):
+                pass
 
     # ── Turn complete / interrupted ───────────────────────────────
     if event.turn_complete:

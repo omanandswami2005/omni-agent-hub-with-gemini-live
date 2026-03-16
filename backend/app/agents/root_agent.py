@@ -1,10 +1,16 @@
-"""Root router agent — 3-layer ADK Agent that routes to persona pool,
-device controller, and task planner.
+"""Root router agent — ADK Agent that delegates to persona AgentTools.
 
-Layer 0 — Root (this agent): classify & route via transfer_to_agent
-Layer 1 — Persona pool: each persona receives capability-matched T1+T2 tools
-Layer 2 — TaskArchitect: plan_task tool for complex multi-step requests
-Layer 3 — Device controller: cross-client + T3 proxy tools
+The root agent uses AgentTool-wrapped persona agents instead of sub_agents
+with transfer_to_agent.  This preserves the Gemini Live bidi stream (no
+generator exhaustion on agent hand-offs) and provides clean state_delta
+forwarding for GenUI/image results.
+
+Architecture
+------------
+- Root agent: classifies requests, calls persona tools or built-in tools
+- Persona AgentTools: each wraps an isolated Agent+Runner via AgentTool
+- Device tools: cross-client + T3 proxy tools live on root directly
+- Task planner: create_planned_task() also on root directly
 
 Usage
 -----
@@ -18,9 +24,9 @@ Usage
 from __future__ import annotations
 
 from google.adk.agents import Agent
+from google.adk.tools.agent_tool import AgentTool
 
 from app.agents.agent_factory import LIVE_MODEL, create_agent
-from app.agents.cross_client_agent import build_cross_client_agent
 from app.agents.personas import get_default_personas
 from app.tools.cross_client import get_cross_client_tools
 from app.middleware.agent_callbacks import (
@@ -43,47 +49,57 @@ def _build_root_instruction(
     persona_names: list[tuple[str, str]],
     root_tool_names: list[str],
 ) -> str:
-    """Build a lightweight root instruction — capabilities discovered on demand."""
+    """Build a lightweight root instruction — delegates via AgentTool calls."""
 
-    persona_text = "\n".join(f"- **{pid}** — {pname}" for pid, pname in persona_names)
-    tool_list = ", ".join(["transfer_to_agent", *sorted(root_tool_names)])
+    persona_text = "\n".join(
+        f"- **{pid}(request)** — {pname}" for pid, pname in persona_names
+    )
+    non_persona_ids = {pid for pid, _ in persona_names}
+    other_tools = sorted(t for t in root_tool_names if t not in non_persona_ids)
+    other_list = ", ".join(other_tools) if other_tools else "(none)"
 
     return (
         "You are Omni, a friendly voice-first AI assistant hub.\n"
-        "You are the ROUTER — classify requests and either answer directly or transfer to the right specialist.\n\n"
-        "## Capability Discovery\n"
-        "Call **get_capabilities()** to see all available tools (core, plugins, device-local).\n"
-        "Call **get_capabilities_of(name)** for full parameter schemas of a specific plugin or tier.\n"
-        "Use these BEFORE acting when you're unsure what's available.\n\n"
-        "## Specialist Personas (transfer_to_agent)\n"
+        "You are the ROUTER — classify requests and either answer directly "
+        "or call the right specialist tool.\n\n"
+        "## VOICE FEEDBACK (CRITICAL)\n"
+        "You are voice-first. BEFORE calling ANY specialist tool, you MUST first speak a "
+        "brief sentence telling the user what you're about to do. Examples:\n"
+        "- 'Let me create that image for you.' → then call creative(request)\n"
+        "- 'I'll generate that table now.' → then call genui(request)\n"
+        "- 'Let me look that up.' → then call researcher(request)\n"
+        "- 'I'll run that code for you.' → then call coder(request)\n"
+        "Always acknowledge first, THEN call the tool in the same turn.\n\n"
+        "## Specialist Tools (call with a natural-language request string)\n"
         f"{persona_text}\n\n"
         "## Routing Rules\n"
         "1. Greetings, casual chat, factual questions → answer DIRECTLY.\n"
         "2. 'What can you do?' → call **get_capabilities()**.\n"
-        "3. User names a persona → transfer to that persona.\n"
-        "4. Code, execution, E2B sandbox → transfer to **coder**.\n"
-        "5. Research, web search → transfer to **researcher**.\n"
-        "6. Image generation, creative → transfer to **creative**.\n"
-        "7. Data analysis, charts → transfer to **analyst**.\n"
-        "8. Scheduling, reminders → transfer to **assistant**.\n"
-        "9. UI generation, widgets, charts, tables, interactive visuals, rendering data → transfer to **genui**.\n"
-        "10. Complex multi-step work → call **create_planned_task()**, show plan, execute after confirmation.\n"
-        "11. Device control (desktop tray, Chrome, dashboard) → call **list_connected_clients()** first, "
-        "then call send_to_desktop / send_to_chrome / notify_client DIRECTLY (NO transfer).\n"
-        "12. Desktop-local tasks (files, apps, commands, screen) → call the T3 tool DIRECTLY (NO transfer). "
-        "These are reverse-RPC tools on your tools list.\n"
-        "13. Plugin/integration tasks → transfer to persona that has the plugin tools.\n"
-        "14. If unsure which tool or persona → call **get_capabilities()** first, then route.\n\n"
+        "3. Code, execution, E2B sandbox → **coder(request)**.\n"
+        "4. Research, web search → **researcher(request)**.\n"
+        "5. Image generation, creative → **creative(request)**.\n"
+        "6. Data analysis → **analyst(request)**.\n"
+        "7. Scheduling, reminders → **assistant(request)**.\n"
+        "8. UI components, charts, tables, interactive visuals → **genui(request)**.\n"
+        "9. Complex multi-step work → call **create_planned_task()** first.\n"
+        "10. Device control (desktop, Chrome, dashboard) → call **list_connected_clients()** "
+        "then use send_to_desktop / send_to_chrome / notify_client DIRECTLY.\n"
+        "11. Desktop-local tasks (files, apps, screen) → call the T3 tool DIRECTLY.\n"
+        "12. If unsure → call **get_capabilities()** first, then route.\n\n"
         "## Two Desktop Systems — DO NOT CONFUSE\n"
-        "1. **E2B Cloud Sandbox** (coder/analyst personas) — virtual Linux machine, always available.\n"
-        "2. **User's Real Devices** (your direct tools) — requires device online, call list_connected_clients first.\n"
-        "'Run Python' → coder. 'Open Chrome on my laptop' → your send_to_desktop tool.\n\n"
+        "1. **E2B Cloud Sandbox** (coder/analyst tools) — virtual Linux, always available.\n"
+        "2. **User's Real Devices** (your direct tools) — call list_connected_clients first.\n"
+        "'Run Python' → coder. 'Open Chrome on my laptop' → send_to_desktop.\n\n"
         "## YOUR TOOL REGISTRY\n"
-        f"You can ONLY call these tools: {tool_list}.\n"
-        "You CANNOT call render_genui_component, get_genui_schema, execute_code, generate_image, "
-        "google_search, or ANY tool not in your list above.\n"
-        "To use those, TRANSFER to the persona that has them (e.g., genui for charts/tables, "
-        "coder for code, researcher for search, creative for images).\n"
+        f"Specialist tools: {', '.join(pid for pid, _ in persona_names)}.\n"
+        f"Utility tools: {other_list}.\n"
+        "You CANNOT call render_genui_component, get_genui_schema, execute_code, "
+        "generate_image, google_search — these belong to specialist agents.\n\n"
+        "## IMPORTANT DELIVERY RULES\n"
+        "- When you call a specialist like genui(), it AUTOMATICALLY delivers results to the dashboard.\n"
+        "- NEVER use send_to_dashboard to re-send GenUI, charts, tables, images, or code.\n"
+        "- send_to_desktop / send_to_chrome / send_to_dashboard are ONLY for device actions.\n"
+        "- After a specialist returns, just tell the user what was shown — do NOT re-deliver.\n"
     )
 
 
@@ -95,17 +111,17 @@ def build_root_agent(
     mcp_tools: list | None = None,
     plugin_summaries: list[dict] | None = None,
 ) -> Agent:
-    """Construct the root ADK agent with 3-layer routing.
+    """Construct the root ADK agent with AgentTool-wrapped persona delegation.
 
     Parameters
     ----------
     personas:
-        Persona configs to register as sub-agents.  Falls back to
-        defaults when *None*.
+        Persona configs to wrap as AgentTools.  Falls back to defaults
+        when *None*.
     tools_by_persona:
         Dict from ``ToolRegistry.build_for_session()``.
         Keys are persona_ids → list of T2 tools.
-        ``__device__`` key → T3 proxy tools for the device agent.
+        ``__device__`` key → T3 proxy tools placed on root directly.
     model:
         Override the default model.  Defaults to ``LIVE_MODEL``.
     mcp_tools:
@@ -121,8 +137,8 @@ def build_root_agent(
 
     tools_map = tools_by_persona or {}
 
-    # ── Layer 1: Persona sub-agents with capability-matched T2 tools ──
-    sub_agents: list[Agent] = []
+    # ── Persona AgentTools — each persona wrapped in AgentTool ────────
+    persona_agent_tools: list[AgentTool] = []
     persona_names: list[tuple[str, str]] = []
 
     for p in personas:
@@ -130,30 +146,25 @@ def build_root_agent(
         extra = tools_map.get(p.id, []) if tools_by_persona is not None else mcp_tools
 
         agent = create_agent(p, extra_tools=extra, model=effective_model)
-        sub_agents.append(agent)
+        persona_agent_tools.append(
+            AgentTool(agent=agent, skip_summarization=True)
+        )
         persona_names.append((p.id, p.name))
 
-    # ── Layer 3: Device controller (cross-client + T3) ────────────────
+    # ── Device tools: cross-client + T3 on root directly ─────────────
     device_tools = tools_map.get("__device__")
-    device_agent = build_cross_client_agent(
-        device_tools=device_tools,
-        model=effective_model,
-    )
-    sub_agents.append(device_agent)
 
-    # ── Layer 2: Task planner + capability + cross-client + T3 tools on root ─
-    # Cross-client AND T3 (device-local) tools live on root directly because
-    # agent transfers break the Gemini Live bidi stream (run_live restarts
-    # on transfer).  Same fix applied for cross-client tools earlier.
+    # ── Root tools: planning + capabilities + cross-client + T3 + AgentTools ─
     root_tools = [
         *get_planned_task_tools(),
         *get_human_input_tools(),
         *get_capability_tools(),
         *get_cross_client_tools(),
         *(device_tools or []),
+        *persona_agent_tools,
     ]
 
-    # ── Layer 0: Root router ──────────────────────────────────────────
+    # ── Root agent ────────────────────────────────────────────────────
     root_tool_names = sorted({getattr(t, "name", str(t)) for t in root_tools})
     instruction = _build_root_instruction(persona_names, root_tool_names)
 
@@ -161,7 +172,6 @@ def build_root_agent(
         name="omni_root",
         model=effective_model,
         instruction=instruction,
-        sub_agents=sub_agents,
         tools=root_tools,
         before_model_callback=context_injection_callback,
         after_model_callback=cost_estimation_callback,
@@ -171,11 +181,11 @@ def build_root_agent(
         after_agent_callback=after_agent_callback,
     )
 
-    agent_names = [a.name for a in sub_agents]
+    agent_names = [getattr(t, "name", "?") for t in persona_agent_tools]
     t2_total = sum(len(tools_map.get(p.id, [])) for p in personas)
     logger.info(
         "root_agent_built",
-        sub_agents=agent_names,
+        persona_tools=agent_names,
         t2_tool_distribution={p.id: len(tools_map.get(p.id, [])) for p in personas},
         t3_tool_count=len(device_tools or []),
         total_t2=t2_total,

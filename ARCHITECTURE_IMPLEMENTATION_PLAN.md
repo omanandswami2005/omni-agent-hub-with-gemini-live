@@ -270,65 +270,72 @@ async def plan_complex_task(task_description: str) -> dict:
 
 ---
 
-### Step 8: Rewrite `build_root_agent()` with 3-Layer Routing
+### Step 8: Rewrite `build_root_agent()` with AgentTool Pattern
 **File:** `backend/app/agents/root_agent.py`
-**What:** Root agent now has 3 routing paths via sub_agents: persona pool, task_architect, device_agent.
+**What:** Root agent uses **AgentTool-wrapped persona agents** instead of `sub_agents` + `transfer_to_agent`. This preserves the Gemini Live bidi stream (no generator exhaustion on agent hand-offs) and provides clean state_delta forwarding for GenUI/image results.
+
+**Why AgentTool instead of sub_agents?**
+- `transfer_to_agent` causes `run_live()` to yield a final event and exhaust the generator, requiring a restart loop
+- AgentTool wraps each persona in an isolated `Runner.run_async()` call using `generateContent` API (not Live API)
+- The root's bidi audio stream stays alive — personas are called as tools, not sub-agent transfers
+- State changes (GenUI results, image pending signals) flow back via `state_delta`
+
+**Model split:**
+- Root agent: `gemini-live-2.5-flash-native-audio` (bidi streaming via Live API)
+- Persona agents: `gemini-2.5-flash` (via `generateContent` inside AgentTool — live models don't work with generateContent)
+- GenUI persona: `gemini-2.5-flash-lite` (model override for speed)
 
 ```python
-ROOT_INSTRUCTION = (
-    "You are Omni, a multi-persona AI hub...\n\n"
-    "You classify every request into one of three paths:\n\n"
-    "1. **Simple Task** → transfer to the best persona agent:\n"
-    "   {persona_list}\n\n"
-    "2. **Complex Task** (multi-step, requires coordination) → transfer to task_planner\n"
-    "   Examples: 'Build a dashboard', 'Research X then write a blog post'\n\n"
-    "3. **Device Action** (involves connected client/device) → transfer to device_agent\n"
-    "   Examples: 'Take a screenshot on desktop', 'Open a tab in Chrome'\n\n"
-    "Rules:\n"
-    "- NEVER answer directly. Always transfer.\n"
-    "- If the user names a persona, transfer to that persona.\n"
-    "- For multi-step tasks that need coordination, use task_planner.\n"
-    "- For device/client actions, use device_agent."
-)
-```
+from google.adk.tools.agent_tool import AgentTool
 
-```python
 def build_root_agent(
     personas: list[PersonaResponse] | None = None,
     tools_by_persona: dict[str, list] | None = None,
     model: str | None = None,
 ) -> Agent:
-    effective_model = model or LIVE_MODEL
+    effective_model = model or LIVE_MODEL  # gemini-live-2.5-flash-native-audio
 
-    # Layer 1: Persona agents with capability-matched tools
-    persona_agents = []
+    # Persona AgentTools — each persona wrapped in AgentTool
+    persona_agent_tools: list[AgentTool] = []
     for p in personas:
-        persona_tools = tools_by_persona.get(p.id, []) if tools_by_persona else []
-        persona_agents.append(create_agent(p, persona_tools, model=effective_model))
+        extra = tools_by_persona.get(p.id, [])
+        agent = create_agent(p, extra_tools=extra, model=effective_model)
+        # create_agent() auto-falls back to TEXT_MODEL when effective_model contains "live"
+        persona_agent_tools.append(
+            AgentTool(agent=agent, skip_summarization=True)
+        )
 
-    # Layer 2: Task planner (no direct tools — uses TaskArchitect)
-    task_planner = build_task_planner_agent(model=effective_model)
+    # Device tools: cross-client + T3 on root directly (not via sub-agent)
+    device_tools = tools_by_persona.get("__device__", [])
 
-    # Layer 3: Cross-client orchestrator
-    t3_tools = tools_by_persona.get("__device__", []) if tools_by_persona else []
-    device_agent = build_cross_client_agent(t3_tools, model=effective_model)
+    # Root tools: planning + capabilities + cross-client + T3 + AgentTools
+    root_tools = [
+        *get_planned_task_tools(),
+        *get_human_input_tools(),
+        *get_capability_tools(),
+        *get_cross_client_tools(),
+        *(device_tools or []),
+        *persona_agent_tools,   # <-- personas are TOOLS, not sub_agents
+    ]
 
-    sub_agents = persona_agents + [task_planner, device_agent]
-
-    # Build dynamic persona list for instruction
-    persona_list = "\n".join(
-        f"   - {p.id} — {p.name}: {p.system_instruction[:60]}..."
-        for p in personas
-    )
+    instruction = _build_root_instruction(persona_names, root_tool_names)
 
     root = Agent(
         name="omni_root",
-        model=effective_model,
-        instruction=ROOT_INSTRUCTION.format(persona_list=persona_list),
-        sub_agents=sub_agents,
+        model=effective_model,   # Live model for bidi audio
+        instruction=instruction,
+        tools=root_tools,        # NOT sub_agents
     )
     return root
 ```
+
+**Image/GenUI delivery flow (AgentTool pattern):**
+1. Root calls `creative(request="draw a tree")` → AgentTool
+2. AgentTool creates isolated InMemorySession, runs `Runner.run_async()`
+3. Creative persona calls `generate_image()` → image queued in `_pending_images[user_id]`
+4. AgentTool finishes → ADK emits `function_response` event for "creative"
+5. `_process_event()` in ws_live.py detects persona function_response → drains pending images → sends to WebSocket
+6. Frontend receives `image_response` message and renders it
 
 - [x] Rewrite `build_root_agent()` to accept `tools_by_persona` dict
 - [x] Build persona agents with per-persona tool lists
@@ -423,16 +430,28 @@ root = build_root_agent(personas, tools_by_persona=tools_by_persona)
 
 ## ADK Reference Patterns Used
 
-### Transfer Between Sub-Agents (ADK built-in)
+### AgentTool — Primary Delegation Pattern (used by Omni)
 ```python
-root = Agent(name="root", sub_agents=[agent_a, agent_b])
-# Root uses transfer_to_agent("agent_a") automatically
+from google.adk.tools.agent_tool import AgentTool
+
+# Each persona is wrapped as an AgentTool on the root agent
+persona_agent_tools = [
+    AgentTool(agent=creative_agent, skip_summarization=True),
+    AgentTool(agent=coder_agent, skip_summarization=True),
+    # ...
+]
+root = Agent(name="omni_root", tools=[*root_tools, *persona_agent_tools])
+# Root calls creative(request="...") as a function call — no transfer needed
+# AgentTool runs Runner.run_async() internally with generateContent API
+# Root's bidi Live API stream stays alive throughout
 ```
 
-### AgentTool (ADK — Agent as a Tool)
+### Transfer Between Sub-Agents (ADK built-in — NOT used by Omni)
 ```python
-from google.adk.tools import AgentTool
-tools = [AgentTool(agent=helper_agent, skip_summarization=True)]
+# WARNING: transfer_to_agent causes run_live() generator exhaustion.
+# Omni uses AgentTool instead. Kept here for reference only.
+root = Agent(name="root", sub_agents=[agent_a, agent_b])
+# Root uses transfer_to_agent("agent_a") automatically
 ```
 
 ### Workflow Agents (ADK)

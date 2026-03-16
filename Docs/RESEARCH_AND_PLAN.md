@@ -2558,9 +2558,9 @@ Most entries will be voice chatbots on a single web page. To score 5, judges nee
 
 | Rubric Phrase | Our Answer | Evidence | Risk |
 |---|---|---|---|
-| **"Effective use of ADK"** | `run_live()` for bidi streaming, `McpToolset` for plugin system, multi-agent with `sub_agents` (persona delegation), `RunConfig` with streaming_mode=BIDI + speech_config + proactivity + affective_dialog, `SessionService` for persistence, Callbacks for guardrails, Context Compression for unlimited sessions | Code shows: root_agent → persona sub-agents via `transfer_to_agent`, live_request_queue sending audio/text/images, McpToolset wrapping 10+ MCP servers | **LOW** — we use nearly every ADK feature |
+| **"Effective use of ADK"** | `run_live()` for bidi streaming, `AgentTool` for persona delegation (each persona wrapped as a tool on root), `McpToolset` for plugin system, `RunConfig` with streaming_mode=BIDI + speech_config + proactivity + affective_dialog, `SessionService` for persistence, Callbacks for guardrails, Context Compression for unlimited sessions | Code shows: root_agent → persona AgentTools via `creative(request=...)` function calls, live_request_queue sending audio/text/images, McpToolset wrapping 10+ MCP servers. Root uses Live model for bidi audio; personas use Text model via `Runner.run_async()` inside AgentTool | **LOW** — we use nearly every ADK feature |
 | **"Robust hosting"** | Cloud Run (min_instances=1, WebSocket support, autoscaling), Firestore (sessions + personas + MCP configs + chat history), Firebase Auth (Google sign-in), GCS (generated images/files) | Cloud Run console showing service, Firestore collections in Firebase console, `gcloud run deploy` in Terraform/scripts | **LOW** — standard GCP stack |
-| **"Sound agent logic"** | Root LlmAgent routes to persona sub-agents (each has unique instruction + tools + voice). TaskArchitect (CustomAgent) decomposes complex tasks into sub-agent pipelines. Cross-client tools call device-specific APIs. E2B sandbox isolates code execution | Architecture diagram showing agent hierarchy. Code showing `sub_agents=[nova, atlas, sage, spark, claire]` with tool delegation | **LOW** — ADK multi-agent pattern is well-documented |
+| **"Sound agent logic"** | Root LlmAgent delegates to persona AgentTools (each has unique instruction + tools + voice, runs via `Runner.run_async()` inside `AgentTool`). TaskArchitect decomposes complex tasks. Cross-client tools live on root directly. E2B sandbox isolates code execution. Root's bidi audio stream is preserved throughout (no generator exhaustion) | Architecture diagram showing agent hierarchy. Code showing `Agent(tools=[...AgentTools])` with persona delegation via function calls | **LOW** — AgentTool pattern is cleaner than sub_agents for live streaming |
 | **"Handles errors, timeouts, edge cases"** | ADK Callbacks: `before_model_callback` (prompt injection guard), `after_model_callback` (hallucination check), `on_tool_error_callback` (MCP failure fallback). WebSocket reconnection with exponential backoff. E2B sandbox timeout handler. Rate limiting. Circuit breaker for MCP connections | Error handling code in callbacks. Demo: disable an MCP mid-conversation → agent says "That tool is unavailable, let me try another approach" | **MEDIUM** — needs explicit implementation and testing |
 | **"Avoids hallucinations / grounding"** | Multi-layer grounding: (1) `google_search` tool (built-in), (2) Brave Search MCP (web), (3) Wikipedia MCP (facts), (4) Context7 MCP (code docs), (5) E2B execution verifies code. Anti-hallucination system instructions in every persona. `after_model_callback` checks for confidence markers | Ask agent a factual question → see it call google_search → cite the source. Ask for code → E2B runs it → confirms output before presenting | **MEDIUM** — grounding only works if agent actually uses tools; depends on prompt engineering |
 
@@ -2570,11 +2570,12 @@ Judges evaluating "effective ADK usage" will mentally check off features. Here's
 
 | ADK Feature | Used? | How |
 |---|---|---|
-| `LlmAgent` | ✅ | Root agent + 5 persona sub-agents |
+| `LlmAgent` | ✅ | Root agent + 6 persona agents (wrapped as AgentTool) |
+| `AgentTool` | ✅ | Persona delegation — each persona wrapped as `AgentTool(agent=..., skip_summarization=True)` on root. Runs `Runner.run_async()` + `generateContent` internally, preserving root's bidi stream |
 | `CustomAgent` (BaseAgent) | ✅ | TaskArchitect meta-orchestrator |
 | `SequentialAgent` | ✅ | TaskArchitect sub-pipelines |
 | `ParallelAgent` | ✅ | TaskArchitect concurrent tool calls |
-| `run_live()` | ✅ | Bidi audio streaming — core of the product |
+| `run_live()` | ✅ | Bidi audio streaming — core of the product (root agent only) |
 | `LiveRequestQueue` | ✅ | Audio/text/image ingestion to agent |
 | `RunConfig` | ✅ | streaming_mode, speech_config, response_modalities, proactivity, affective_dialog |
 | `McpToolset` | ✅ | Dynamic MCP plugin system |
@@ -2583,10 +2584,9 @@ Judges evaluating "effective ADK usage" will mentally check off features. Here's
 | `Artifacts` | ✅ | Save generated code, images, documents to GCS |
 | `Context Compression` | ✅ | Unlimited session length |
 | `google_search` tool | ✅ | Built-in grounding |
-| `transfer_to_agent` | ✅ | Persona switching via sub-agent delegation |
 | `SessionResumptionConfig` | ✅ | Reconnection without losing context |
 
-**14 out of 15 major ADK features used.** Only A2A Protocol skipped (overkill for hackathon).
+**15 out of 16 major ADK features used.** `AgentTool` replaces `transfer_to_agent` for persona delegation (cleaner for Live API streaming). Only A2A Protocol skipped (overkill for hackathon).
 
 #### Google Cloud Services Used
 
@@ -2990,8 +2990,8 @@ Failing ANY item here means automatic disqualification regardless of quality.
 
 *"If I reviewed the code, would I give this a 5/5?"*
 
-- [ ] **ADK usage is deep, not superficial** — `run_live()`, `McpToolset`, `sub_agents`, `RunConfig`, `SessionService`, Callbacks all present in code
-- [ ] **Multi-agent hierarchy exists** — root_agent.py shows sub_agents, persona delegation via `transfer_to_agent`
+- [ ] **ADK usage is deep, not superficial** — `run_live()`, `AgentTool`, `McpToolset`, `RunConfig`, `SessionService`, Callbacks all present in code
+- [ ] **AgentTool delegation works** — root_agent.py shows `Agent(tools=[...AgentTools])`, persona delegation via `creative(request=...)` function calls (NOT `sub_agents` / `transfer_to_agent`)
 - [ ] **Session persists across restart** — deploy to Cloud Run → chat → redeploy → resume previous session
 - [ ] **Error handling is implemented** — `before_model_callback`, `after_model_callback`, `on_tool_error_callback` present and functional
 - [ ] **Grounding is verifiable** — ask a factual question → agent uses search tool → cites source in response

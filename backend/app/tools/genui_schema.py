@@ -8,7 +8,13 @@ every turn where GenUI isn't being produced.
 
 from __future__ import annotations
 
+import json as _json
+
 from google.adk.tools import FunctionTool
+from google.adk.tools.tool_context import ToolContext
+from app.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 _SCHEMAS: dict[str, dict] = {
     "chart": {
@@ -115,6 +121,24 @@ _ALL_TYPES = ", ".join(sorted(_SCHEMAS))
 # Tool name constant — used in ws_live.py to detect GenUI tool responses.
 RENDER_GENUI_TOOL_NAME = "render_genui_component"
 
+# ---------------------------------------------------------------------------
+# Pending GenUI queue (drained by ws_live._process_event after AgentTool runs)
+# ---------------------------------------------------------------------------
+# { user_id: [genui_payload_dict, ...] }
+_pending_genui: dict[str, list[dict]] = {}
+
+
+def _queue_genui(user_id: str, payload: dict) -> None:
+    """Enqueue a GenUI component for WebSocket delivery to *user_id*."""
+    _pending_genui.setdefault(user_id, []).append(payload)
+
+
+def drain_pending_genui(user_id: str) -> list[dict]:
+    """Pop and return all pending GenUI payloads for *user_id*."""
+    items = _pending_genui.pop(user_id, [])
+    logger.info("drain_pending_genui", user_id=user_id, count=len(items), pending_keys=list(_pending_genui.keys()))
+    return items
+
 
 def get_genui_schema(component_type: str) -> dict:
     """Return the JSON schema and example for a GenUI component type.
@@ -135,7 +159,11 @@ def get_genui_schema(component_type: str) -> dict:
     return schema
 
 
-def render_genui_component(component_type: str, spec_json: str) -> dict:
+def render_genui_component(
+    component_type: str,
+    spec_json: str,
+    tool_context: ToolContext | None = None,
+) -> dict:
     """Render a GenUI component that the dashboard will display.
 
     In live audio mode the model cannot emit text, so this tool is the
@@ -154,8 +182,6 @@ def render_genui_component(component_type: str, spec_json: str) -> dict:
         A dict with ``genui_type`` set — the server intercepts this and
         sends it as a GenUI message to the dashboard.
     """
-    import json as _json
-
     schema = _SCHEMAS.get(component_type)
     if schema is None:
         return {"error": f"Unknown component type '{component_type}'. Available: {_ALL_TYPES}"}
@@ -179,7 +205,24 @@ def render_genui_component(component_type: str, spec_json: str) -> dict:
 
     # Build the GenUI payload — genui_type is injected automatically
     spec["genui_type"] = component_type
-    return {"genui_type": component_type, "rendered": True, "component": spec}
+
+    # Queue for WebSocket delivery (drained by ws_live after AgentTool completes)
+    genui_payload = {
+        "type": component_type,
+        "data": {k: v for k, v in spec.items() if k != "genui_type"},
+        "text": "",
+    }
+    user_id = tool_context.user_id if tool_context else ""
+    logger.info("render_genui_called", component_type=component_type, user_id=user_id, has_tool_context=tool_context is not None)
+    if user_id:
+        _queue_genui(user_id, genui_payload)
+        logger.info("genui_queued", user_id=user_id, queue_size=len(_pending_genui.get(user_id, [])))
+
+    # Write state_delta so parent session (via AgentTool) receives the signal
+    if tool_context:
+        tool_context.state["_genui_result"] = _json.dumps(genui_payload)
+
+    return {"genui_type": component_type, "rendered": True, "delivered": True, "message": f"{component_type} component has been automatically delivered to the dashboard. Do NOT re-send it."}
 
 
 def get_genui_schema_tools() -> list[FunctionTool]:

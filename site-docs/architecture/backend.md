@@ -6,9 +6,9 @@
 |---|---|
 | Framework | FastAPI |
 | Agent Runtime | Google ADK 0.5+ |
-| AI Model (Live) | `gemini-live-2.5-flash-native-audio` |
-| AI Model (Text) | `gemini-2.5-flash` |
-| AI Model (GenUI) | `gemini-3.1-pro-preview-customtools` |
+| AI Model (Live) | `gemini-live-2.5-flash-native-audio` (root agent only) |
+| AI Model (Text) | `gemini-2.5-flash` (persona agents via AgentTool) |
+| AI Model (GenUI) | `gemini-2.5-flash-lite` (genui persona override) |
 | Auth | Firebase Auth (JWT) |
 | Database | Firestore |
 | Sandbox (Code) | E2B Code Interpreter |
@@ -23,10 +23,11 @@ backend/
 │   ├── main.py              # FastAPI app, lifespan, middleware
 │   ├── config.py             # Pydantic settings
 │   ├── agents/               # ADK agent definitions
+│   │   ├── root_agent.py     # Root router with AgentTool-wrapped personas
 │   │   ├── personas.py       # Default persona configs
-│   │   └── agent_factory.py  # Dynamic agent creation
+│   │   └── agent_factory.py  # Dynamic agent creation + model fallback
 │   ├── api/                  # HTTP + WebSocket routes
-│   │   ├── ws_live.py        # Bidi streaming WebSocket
+│   │   ├── ws_live.py        # Bidi streaming WebSocket + image/GenUI drain
 │   │   ├── personas.py       # Persona CRUD
 │   │   ├── plugins.py        # Plugin management
 │   │   ├── sessions.py       # Session history
