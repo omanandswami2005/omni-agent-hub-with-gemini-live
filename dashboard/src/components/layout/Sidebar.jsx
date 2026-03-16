@@ -11,6 +11,7 @@ import {
   Clock,
   Monitor,
   Image as ImageIcon,
+  ListTodo,
   Settings,
   PanelLeftClose,
   PanelLeft,
@@ -94,7 +95,8 @@ const NAV_ITEMS = [
   { id: 'sessions', to: '/sessions', label: 'Sessions', icon: Clock, shortcut: ['4'], hasSublist: true },
   { to: '/clients', label: 'Clients', icon: Monitor, shortcut: ['5'] },
   { to: '/gallery', label: 'Gallery', icon: ImageIcon, shortcut: ['6'] },
-  { to: '/settings', label: 'Settings', icon: Settings, shortcut: ['7'] },
+  { to: '/tasks', label: 'Tasks', icon: ListTodo, shortcut: ['7'] },
+  { to: '/settings', label: 'Settings', icon: Settings, shortcut: ['8'] },
 ];
 
 function SidebarSessionList() {

@@ -81,7 +81,45 @@ async def get_scheduled_task(
     task = await svc.get_task(user.uid, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Scheduled task not found")
-    return task.to_dict()
+    return task.to_summary()
+
+
+@router.get("/{task_id}/history")
+async def get_execution_history(
+    task_id: str,
+    limit: int = 20,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Return recent execution records for a scheduled task."""
+    from google.cloud import firestore as gc_firestore
+
+    from app.services.scheduler_service import get_scheduler_service
+
+    svc = get_scheduler_service()
+    # Ensure user owns this task
+    task = await svc.get_task(user.uid, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+
+    # Read from executions subcollection
+    coll_ref = (
+        svc.db.collection("scheduled_tasks")
+        .document(task_id)
+        .collection("executions")
+    )
+    docs = coll_ref.order_by("executed_at", direction=gc_firestore.Query.DESCENDING).limit(limit).stream()
+    executions = []
+    for doc in docs:
+        d = doc.to_dict()
+        executions.append({
+            "id": doc.id,
+            "status": "success" if d.get("success") else "failed",
+            "result": d.get("output", ""),
+            "error": d.get("output", "") if not d.get("success") else None,
+            "started_at": d["executed_at"].isoformat() if d.get("executed_at") else None,
+            "run_count": d.get("run_count"),
+        })
+    return {"executions": executions}
 
 
 @router.post("/{task_id}/action")
@@ -118,42 +156,3 @@ async def delete_scheduled_task(
     if not ok:
         raise HTTPException(status_code=404, detail="Scheduled task not found")
     return {"success": True}
-
-
-@router.get("/{task_id}/history")
-async def get_execution_history(
-    task_id: str,
-    limit: int = 20,
-    user: AuthenticatedUser = Depends(get_current_user),
-):
-    """Get execution history for a scheduled task."""
-    from google.cloud import firestore as fs
-
-    from app.services.scheduler_service import get_scheduler_service
-
-    svc = get_scheduler_service()
-    task = await svc.get_task(user.uid, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Scheduled task not found")
-
-    # Read from the executions subcollection
-    docs = (
-        svc.db.collection("scheduled_tasks")
-        .document(task_id)
-        .collection("executions")
-        .order_by("started_at", direction=fs.Query.DESCENDING)
-        .limit(limit)
-        .stream()
-    )
-    history = []
-    for doc in docs:
-        data = doc.to_dict()
-        history.append({
-            "id": doc.id,
-            "started_at": data.get("started_at").isoformat() if data.get("started_at") else None,
-            "completed_at": data.get("completed_at").isoformat() if data.get("completed_at") else None,
-            "status": data.get("status", "unknown"),
-            "result": (data.get("result") or "")[:500],
-            "error": data.get("error", ""),
-        })
-    return {"task_id": task_id, "executions": history}

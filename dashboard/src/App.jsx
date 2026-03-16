@@ -13,6 +13,7 @@ const MCPStorePage = lazy(() => import('@/pages/MCPStorePage'));
 const SessionsPage = lazy(() => import('@/pages/SessionsPage'));
 const ClientsPage = lazy(() => import('@/pages/ClientsPage'));
 const GalleryPage = lazy(() => import('@/pages/GalleryPage'));
+const TasksPage = lazy(() => import('@/pages/TasksPage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 
@@ -41,6 +42,7 @@ export default function App() {
               <Route path="/sessions" element={<SessionsPage />} />
               <Route path="/clients" element={<ClientsPage />} />
               <Route path="/gallery" element={<GalleryPage />} />
+              <Route path="/tasks" element={<TasksPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>
           </Route>
