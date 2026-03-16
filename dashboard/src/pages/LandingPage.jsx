@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router';
 import {
-  Smartphone, Monitor, Globe, Box, Settings, Cpu, Share2,
+  Smartphone, Monitor, Globe, Box, Settings, Share2,
   Play, ArrowRight, Layers, BrainCircuit, ChevronRight,
-  Github, Youtube, FileText, ExternalLink
+  Github, Youtube, FileText, ExternalLink, Menu, X
 } from 'lucide-react';
 
 const LandingPage = () => {
   const [activeFeature, setActiveFeature] = useState(0);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const canvasRef = useRef(null);
 
   /* ── Animated background: connected dots & lines ── */
@@ -143,22 +144,36 @@ const LandingPage = () => {
       {/* Navbar */}
       <nav className="fixed top-0 w-full z-50 border-b border-white/10 bg-black/40 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-500/25">
-              <Cpu className="w-5 h-5 text-white" />
+              <BrainCircuit className="w-5 h-5 text-white" />
             </div>
-            <span className="text-xl font-bold tracking-tight">OMNI</span>
+            {/* Voice wave bars as logo */}
+            <div className="flex items-center gap-[3px]">
+              {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+                <div
+                  key={i}
+                  className="w-[3px] rounded-full bg-gradient-to-t from-purple-500 to-blue-400"
+                  style={{
+                    animation: `voice-wave 1.2s ease-in-out ${i * 0.1}s infinite`,
+                    height: '6px',
+                  }}
+                />
+              ))}
+            </div>
           </div>
-          <div className="flex items-center gap-5">
+
+          {/* Desktop nav */}
+          <div className="hidden md:flex items-center gap-5">
             <a href="#features" className="text-sm font-medium text-zinc-400 hover:text-white transition-colors">Features</a>
             <a href="#how-it-works" className="text-sm font-medium text-zinc-400 hover:text-white transition-colors">How it Works</a>
             <a href="https://github.com/omanandswami2005/omni-agent-hub-with-gemini-live" target="_blank" rel="noopener noreferrer" className="text-zinc-400 hover:text-white transition-colors" title="GitHub">
               <Github className="w-5 h-5" />
             </a>
-            <a href="https://youtube.com/@omanandswami" target="_blank" rel="noopener noreferrer" className="text-zinc-400 hover:text-white transition-colors" title="YouTube">
+            <a href="https://www.youtube.com/@omanandswami" target="_blank" rel="noopener noreferrer" className="text-zinc-400 hover:text-white transition-colors" title="YouTube">
               <Youtube className="w-5 h-5" />
             </a>
-            <a href="/docs" className="text-zinc-400 hover:text-white transition-colors" title="Documentation">
+            <a href="https://omanandswami2005.github.io/omni-agent-hub-with-gemini-live/" target="_blank" rel="noopener noreferrer" className="text-zinc-400 hover:text-white transition-colors" title="Documentation">
               <FileText className="w-5 h-5" />
             </a>
             <Link to="/login" className="text-sm font-medium text-zinc-400 hover:text-white transition-colors">Sign In</Link>
@@ -166,7 +181,38 @@ const LandingPage = () => {
               Get Started
             </Link>
           </div>
+
+          {/* Hamburger button - mobile only */}
+          <button
+            className="md:hidden text-zinc-400 hover:text-white transition-colors"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            aria-label="Toggle menu"
+          >
+            {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
         </div>
+
+        {/* Mobile dropdown menu */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-white/10 bg-black/95 backdrop-blur-xl px-6 py-6 flex flex-col gap-4">
+            <a href="#features" onClick={() => setMobileMenuOpen(false)} className="text-sm font-medium text-zinc-400 hover:text-white transition-colors">Features</a>
+            <a href="#how-it-works" onClick={() => setMobileMenuOpen(false)} className="text-sm font-medium text-zinc-400 hover:text-white transition-colors">How it Works</a>
+            <a href="https://github.com/omanandswami2005/omni-agent-hub-with-gemini-live" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm font-medium text-zinc-400 hover:text-white transition-colors">
+              <Github className="w-4 h-4" /> GitHub
+            </a>
+            <a href="https://www.youtube.com/@omanandswami" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm font-medium text-zinc-400 hover:text-white transition-colors">
+              <Youtube className="w-4 h-4" /> YouTube
+            </a>
+            <a href="https://omanandswami2005.github.io/omni-agent-hub-with-gemini-live/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm font-medium text-zinc-400 hover:text-white transition-colors">
+              <FileText className="w-4 h-4" /> Docs
+            </a>
+            <hr className="border-white/10" />
+            <Link to="/login" onClick={() => setMobileMenuOpen(false)} className="text-sm font-medium text-zinc-400 hover:text-white transition-colors">Sign In</Link>
+            <Link to="/register" onClick={() => setMobileMenuOpen(false)} className="text-sm font-medium bg-white text-black px-4 py-2 rounded-full hover:bg-zinc-200 transition-colors text-center">
+              Get Started
+            </Link>
+          </div>
+        )}
       </nav>
 
       {/* Hero Section */}
@@ -199,17 +245,23 @@ const LandingPage = () => {
               One AI brain. Every device. Infinite capabilities. Connect your entire digital life with a single, intelligent agent that spans across web, mobile, desktop, and smart glasses.
             </p>
 
-            {/* Voice wave visualizer */}
-            <div className="flex items-center gap-1 mb-8" style={{ animation: 'fade-in-up 0.9s ease-out 0.6s both' }}>
-              {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-                <div
+            {/* OMNI colorful voice wave text */}
+            <div className="flex items-center justify-center gap-1 md:gap-2 mb-8" style={{ animation: 'fade-in-up 0.9s ease-out 0.6s both' }}>
+              {'OMNI'.split('').map((letter, i) => (
+                <span
                   key={i}
-                  className="w-1 rounded-full bg-gradient-to-t from-purple-500 to-blue-400"
+                  className="text-5xl md:text-7xl font-black inline-block"
                   style={{
-                    animation: `voice-wave 1.2s ease-in-out ${i * 0.1}s infinite`,
-                    height: '8px',
+                    animation: `omni-color-wave 3s ease-in-out ${i * 0.4}s infinite, omni-bounce 2s ease-in-out ${i * 0.2}s infinite`,
+                    background: 'linear-gradient(90deg, #a855f7, #3b82f6, #06b6d4, #22c55e, #eab308, #a855f7)',
+                    backgroundSize: '300% 100%',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                    backgroundClip: 'text',
                   }}
-                />
+                >
+                  {letter}
+                </span>
               ))}
             </div>
 
@@ -239,12 +291,12 @@ const LandingPage = () => {
                 GitHub
                 <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
               </a>
-              <a href="https://youtube.com/@omanandswami" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm text-zinc-500 hover:text-white transition-colors group">
+              <a href="https://www.youtube.com/@omanandswami" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm text-zinc-500 hover:text-white transition-colors group">
                 <Youtube className="w-4 h-4" />
                 YouTube
                 <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
               </a>
-              <a href="/docs" className="flex items-center gap-2 text-sm text-zinc-500 hover:text-white transition-colors group">
+              <a href="https://omanandswami2005.github.io/omni-agent-hub-with-gemini-live/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm text-zinc-500 hover:text-white transition-colors group">
                 <FileText className="w-4 h-4" />
                 Docs
                 <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -424,7 +476,7 @@ const LandingPage = () => {
       <footer className="border-t border-white/10 py-12 bg-black/80 backdrop-blur-sm relative z-10">
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-3">
-            <Cpu className="w-6 h-6 text-purple-500" />
+            <BrainCircuit className="w-6 h-6 text-purple-500" />
             <span className="text-lg font-bold tracking-tight">OMNI</span>
             <span className="text-xs text-zinc-600 ml-2">|</span>
             <div className="flex items-center gap-1.5 ml-1">
@@ -440,11 +492,11 @@ const LandingPage = () => {
               <Github className="w-4 h-4" />
               GitHub
             </a>
-            <a href="/docs" className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-white transition-colors">
+            <a href="https://omanandswami2005.github.io/omni-agent-hub-with-gemini-live/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-white transition-colors">
               <FileText className="w-4 h-4" />
               Docs
             </a>
-            <a href="https://youtube.com/@omanandswami" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-white transition-colors">
+            <a href="https://www.youtube.com/@omanandswami" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-white transition-colors">
               <Youtube className="w-4 h-4" />
               YouTube
             </a>

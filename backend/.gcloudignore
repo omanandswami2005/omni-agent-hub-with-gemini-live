@@ -11,7 +11,6 @@ __pycache__/
 tests/
 scripts/
 test_output/
-firebase-sa.json
 cloud-run-env.yaml
 dev.py
 run_tests.py
