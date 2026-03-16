@@ -379,7 +379,7 @@ def _build_run_config(voice: str = "Aoede", voice_enabled: bool = True):
     from google.adk.agents.run_config import RunConfig, StreamingMode
     from google.genai import types
 
-    modalities = ["AUDIO"] if voice_enabled else ["TEXT"]
+    modalities = ["AUDIO", "TEXT"] if voice_enabled else ["TEXT"]
 
     return RunConfig(
         streaming_mode=StreamingMode.BIDI,
@@ -894,6 +894,25 @@ async def _downstream(
                     await websocket.send_text(StatusMessage(state=AgentState.IDLE).model_dump_json())
                 return  # Let the client reconnect cleanly
 
+            # Model not found / sub-agent live connection failed (e.g. 1008)
+            # This is recoverable — restart run_live and the root agent will
+            # handle the request instead of the failed sub-agent.
+            if "1008" in exc_str or ("model" in exc_str_lower and "not found" in exc_str_lower):
+                _tool_error_count += 1
+                logger.warning("ws_downstream_model_error", user_id=user_id, error=exc_str[:200], attempt=_tool_error_count)
+                with contextlib.suppress(Exception):
+                    err = ErrorMessage(
+                        code="model_error",
+                        description="A specialist agent failed to connect. Retrying with the main agent…",
+                    )
+                    await websocket.send_text(err.model_dump_json())
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(StatusMessage(state=AgentState.IDLE).model_dump_json())
+                if _tool_error_count >= _MAX_TOOL_RETRIES:
+                    logger.error("ws_downstream_model_error_max_retries", user_id=user_id)
+                    break
+                continue  # Restart run_live — session context preserved
+
             normal_closure = (
                 # Graceful cancel from Gemini side
                 ("1000" in exc_str and "cancelled" in exc_str_lower)
@@ -1039,7 +1058,11 @@ def _try_parse_genui(text: str) -> dict | None:
     try:
         obj = json.loads(stripped)
         if isinstance(obj, dict) and obj.get("genui_type"):
-            return {"type": obj["genui_type"], "data": obj.get("data", obj), "text": obj.get("text", "")}
+            # Pass the FULL object as data so component-specific fields
+            # (chartType, config, columns, language, etc.) are preserved.
+            genui_type = obj.pop("genui_type")
+            text = obj.pop("text", "")
+            return {"type": genui_type, "data": obj, "text": text}
     except (json.JSONDecodeError, ValueError):
         pass
     # Try extracting from markdown code fences
@@ -1048,7 +1071,9 @@ def _try_parse_genui(text: str) -> dict | None:
         try:
             obj = json.loads(match.group(1))
             if isinstance(obj, dict) and obj.get("genui_type"):
-                return {"type": obj["genui_type"], "data": obj.get("data", obj), "text": obj.get("text", "")}
+                genui_type = obj.pop("genui_type")
+                text = obj.pop("text", "")
+                return {"type": genui_type, "data": obj, "text": text}
         except (json.JSONDecodeError, ValueError):
             pass
     return None

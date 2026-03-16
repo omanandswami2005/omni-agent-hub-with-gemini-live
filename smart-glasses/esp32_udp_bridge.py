@@ -111,7 +111,7 @@ def _get_firebase_token(email: str, password: str, api_key: str) -> str:
 BACKEND_WS   = "wss://omni-backend-fcapusldtq-uc.a.run.app"
 
 # ESP32 network config — update these to match your setup
-ESP32_IP     = "192.168.1.100"   # ← change to your ESP32's IP address
+ESP32_IP     = "192.168.0.101"   # ← change to your ESP32's IP address
 MIC_PORT     = 4444              # UDP port: ESP32 sends mic audio here
 SPEAKER_PORT = 5555              # UDP port: ESP32 listens for speaker audio here
 
@@ -123,7 +123,7 @@ SAMPLE_WIDTH = 2       # bytes — 16-bit audio
 
 # UDP chunk sizes
 MIC_CHUNK    = 1024    # bytes to read per UDP recv call
-SPK_CHUNK    = 1024    # bytes per UDP send to speaker
+SPK_CHUNK    = 2048    # bytes per UDP send to speaker
 
 # Reconnect settings
 RECONNECT_MIN_S = 3
@@ -275,6 +275,7 @@ class ESP32UDPBridge:
             "type": "auth",
             "token": self.token,
             "client_type": "glasses",
+            "user_agent": "ESP32-UDPBridge/1.0 (Smart Glasses)",
             "capabilities": ["microphone", "speaker"],
         }
         await ws.send(json.dumps(auth_msg))
@@ -630,11 +631,10 @@ class ESP32UDPBridge:
             if not ok:
                 return
 
-            # Stop connecting loop and announce success
+            # Stop connecting loop — cancel TTS announcement immediately
             if conn_task and not conn_task.done():
                 conn_task.cancel()
                 await asyncio.gather(conn_task, return_exceptions=True)
-            await self._speak("Connected successfully")
 
             # NOTE: _acquire_mic is now called from inside _send_mic_audio
             # so _receive is already running when the request is sent.
@@ -645,8 +645,13 @@ class ESP32UDPBridge:
             print("  Press Ctrl+C to stop")
             print("=" * 48 + "\n")
 
-            # Phase 3: run mic sender + message receiver + speaker worker concurrently
+            # Phase 3: run mic sender + message receiver + speaker worker concurrently.
+            # Schedule TTS announcement as a background task AFTER receiver is running
+            # so the backend never sees an idle WebSocket during audio generation.
             spk_task = asyncio.create_task(self._speaker_worker(), name="spk")
+            announce_task = asyncio.create_task(
+                self._speak("Connected successfully"), name="announce"
+            )
             try:
                 done, pending = await asyncio.wait(
                     [
@@ -657,6 +662,7 @@ class ESP32UDPBridge:
                 )
             finally:
                 spk_task.cancel()
+                announce_task.cancel()
                 await self._release_mic(ws)
 
             for t in [*done, *pending]:

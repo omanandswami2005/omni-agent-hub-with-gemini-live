@@ -67,7 +67,7 @@ _CODE_EXEC_PERSONA_IDS: frozenset[str] = frozenset({"coder", "analyst"})
 # and these overrides are ignored.  For REST / text sessions, the agent
 # uses the override model for better specialization.
 _MODEL_OVERRIDES: dict[str, str] = {
-    "genui": "gemini-3.1-pro-preview-customtools",
+    "genui": "gemini-3.1-flash-lite-preview",
 }
 
 _PERSONA_CAPABILITIES: dict[str, list[str]] = {
@@ -152,11 +152,12 @@ def create_agent(
     if extra_tools:
         tools.extend(extra_tools)
 
-    # Use persona-specific model override when no explicit model is passed,
-    # or when the passed model is the LIVE_MODEL (streaming sessions will
-    # override this anyway at the runner level).
+    # Use persona-specific model override ONLY for non-live (text) sessions.
+    # In live mode, all sub-agents MUST use a live-capable model because ADK
+    # opens a new live WebSocket connection using the sub-agent's `.model`.
     effective_model = model or LIVE_MODEL
-    if persona.id in _MODEL_OVERRIDES:
+    is_live_session = effective_model == LIVE_MODEL
+    if persona.id in _MODEL_OVERRIDES and not is_live_session:
         effective_model = _MODEL_OVERRIDES[persona.id]
 
     # Build a strict tool list addendum so the persona never hallucinates tool names
@@ -170,19 +171,30 @@ def create_agent(
     tool_guard = (
         "\n\nSTRICT TOOL REGISTRY: You can ONLY call these tools: "
         + ", ".join(safe_tool_names)
-        + ". Do NOT call any tool name not in this list — if a tool is missing, "
-        "tell the user to enable the relevant plugin."
+        + ". Do NOT call any tool name not in this list — if a user request needs a tool "
+        "you don't have, transfer to omni_root with context of what the user wants."
     ) if tool_names else ""
 
     # Add escalation instruction so personas hand off out-of-scope requests
+    # with full context of what the user asked — the receiving agent sees
+    # the text emitted before the transfer_to_agent call in conversation history.
     escalation_instruction = (
-        "\n\n## Out-of-Scope Requests\n"
-        "If the user asks for something OUTSIDE your capabilities (e.g. a tool you don't have, "
-        "a different persona's specialty, device control, etc.), do NOT attempt it yourself. "
-        "Instead, use transfer_to_agent to hand the request to the right agent:\n"
-        "- transfer_to_agent(agent_name='omni_root') — route back to the coordinator to re-classify the request.\n"
-        "- Or transfer directly to a sibling if you know the right one (e.g. 'coder', 'researcher', 'creative', 'device_agent').\n"
-        "NEVER say 'no devices connected' or 'tool not found' for things outside your scope — just transfer."
+        "\n\n## TRANSFER PROTOCOL — Out-of-Scope Requests\n"
+        "If the user asks for something you CANNOT do (missing tool, different specialty, "
+        "device control, image generation, desktop streaming, search, etc.):\n\n"
+        "1. **Say what the user needs** — emit a short text message summarizing the request, e.g.:\n"
+        '   "The user wants to generate an image of a sunset. Transferring to the right specialist."\n'
+        "2. **Transfer immediately** — call transfer_to_agent with the target:\n"
+        "   - `transfer_to_agent(agent_name='omni_root')` — when unsure who should handle it.\n"
+        "   - Or transfer directly to a sibling if obvious: 'coder', 'researcher', 'creative', "
+        "'analyst', 'genui', 'device_agent'.\n\n"
+        "**RULES:**\n"
+        "- NEVER attempt a task you lack tools for — always transfer.\n"
+        "- NEVER say 'I can't do that' or 'tool not found' — just transfer with context.\n"
+        "- NEVER say 'no devices connected' for desktop/streaming requests — transfer to root.\n"
+        "- The text you emit BEFORE the transfer becomes context for the next agent.\n"
+        "- After your task is complete and there's nothing more to do, "
+        "transfer back: transfer_to_agent(agent_name='omni_root')."
     )
 
     base_instruction = persona.system_instruction or f"You are {persona.name}."
