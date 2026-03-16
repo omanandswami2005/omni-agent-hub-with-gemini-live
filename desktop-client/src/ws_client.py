@@ -41,6 +41,7 @@ class DesktopWSClient:
 
         self.gui = None
         self.audio_streamer = AudioStreamer(self)
+        self._mic_granted = False  # Mic floor state
 
         # Handlers map: action_name -> async func
         self._handlers: dict[str, Callable[..., Coroutine[Any, Any, Any]]] = {}
@@ -77,11 +78,17 @@ class DesktopWSClient:
             asyncio.create_task(self.send_json({"type": "text", "content": text}))
 
     def _on_gui_toggle_mic(self, checked: bool):
-        """Handle mic toggle from GUI."""
+        """Handle mic toggle from GUI with mic floor protocol."""
         if checked:
+            # Request mic floor from server before recording
+            self._mic_granted = False
+            asyncio.create_task(self.send_json({"type": "mic_acquire"}))
+            # Start recording immediately — frames are gated by _mic_granted
             self.audio_streamer.start_recording()
         else:
             self.audio_streamer.stop_recording()
+            self._mic_granted = False
+            asyncio.create_task(self.send_json({"type": "mic_release"}))
 
     def _on_gui_send_screen(self, b64_img: str):
         """Handle periodic screen sharing from GUI."""
@@ -198,8 +205,8 @@ class DesktopWSClient:
                 backoff = min(backoff * _BACKOFF_FACTOR, _MAX_BACKOFF)
 
     async def send_audio(self, pcm_data: bytes) -> None:
-        """Send raw PCM16 audio as a binary frame."""
-        if self.ws and self.connected:
+        """Send raw PCM16 audio as a binary frame (gated by mic floor)."""
+        if self.ws and self.connected and self._mic_granted:
             await self.ws.send(pcm_data)
 
     async def send_json(self, message: dict) -> None:
@@ -322,6 +329,7 @@ class DesktopWSClient:
             call_id = msg.get("call_id", "")
             tool_name = msg.get("tool", "")
             args = msg.get("args", {})
+            logger.info("T3 invocation received: tool=%s, call_id=%s, raw_args=%r", tool_name, call_id, args)
             # Launch as a tracked Task so it can be cancelled mid-flight
             task = asyncio.create_task(
                 self._run_tool(call_id, tool_name, args),
@@ -343,14 +351,33 @@ class DesktopWSClient:
         elif msg_type == "status":
             state = msg.get("state", "")
             detail = msg.get("detail", "")
-            if state == "listening" and detail == "Interrupted by user":
-                logger.info("Interrupted by user — cancelling all in-flight calls")
+            if self.gui:
+                self.gui.set_agent_state(state, detail)
+            # On any interruption, stop audio playback immediately + cancel tasks
+            if detail and "interrupt" in detail.lower():
+                logger.info("Interrupted — stopping audio and cancelling tasks")
+                self.audio_streamer.stop_playback()
+                self.audio_streamer.flush_queue()
                 await self.cancel_all()
+            elif state == "listening":
+                # Agent switched to listening (user started talking) — stop playback
+                self.audio_streamer.stop_playback()
+                self.audio_streamer.flush_queue()
 
         # Handle cross_client messages (matching backend protocol)
         elif msg_type == "cross_client":
             action = msg.get("action", "")
             payload = msg.get("data", {})
+
+            # Built-in notification handler — show OS toast
+            if action == "notification":
+                message = payload.get("message", "") if isinstance(payload, dict) else str(payload)
+                if self.gui:
+                    self.gui.show_notification("Omni Agent", message)
+                    self.gui.append_chat(f"[Notification] {message}")
+                await self.send_response(action, {"received": True})
+                return
+
             handler = self._handlers.get(action)
             if handler:
                 try:
@@ -395,18 +422,41 @@ class DesktopWSClient:
             else:
                 logger.error("Auth failed: %s", msg.get("error"))
 
-        # Simple text display in GUI
-        elif msg_type == "transcript" or msg_type == "agent_response":
+        # Agent text responses (type: "response", data: "...")
+        elif msg_type == "response":
             if self.gui:
-                text = msg.get("text", "")
+                text = msg.get("data", "")
                 if text:
                     self.gui.append_chat(f"Omni: {text}")
+
+        # Transcriptions (type: "transcription", text: "...", direction, finished)
+        elif msg_type == "transcription":
+            if self.gui:
+                text = msg.get("text", "")
+                finished = msg.get("finished", False)
+                direction = msg.get("direction", "")
+                if text and finished:
+                    tag = "You" if direction == "input" else "Omni"
+                    self.gui.append_chat(f"{tag}: {text}")
+
+        # Mic floor control
+        elif msg_type == "mic_floor":
+            event = msg.get("event", "")
+            if event == "granted":
+                self._mic_granted = True
+                logger.info("Mic floor granted")
+            elif event in ("denied", "busy"):
+                self._mic_granted = False
+                logger.info("Mic floor %s (holder: %s)", event, msg.get("holder", "?"))
+            elif event == "released":
+                self._mic_granted = False
 
         else:
             logger.debug("Unhandled message type: %s", msg_type)
 
     async def _run_tool(self, call_id: str, tool_name: str, args: dict) -> None:
         """Execute a tool handler and send the result (cancellable)."""
+        logger.info("T3 _run_tool: tool=%s, args=%s, args_keys=%s", tool_name, args, list(args.keys()) if args else [])
         handler = self._handlers.get(tool_name)
         if not handler:
             logger.warning("No handler for T3 tool: %s", tool_name)

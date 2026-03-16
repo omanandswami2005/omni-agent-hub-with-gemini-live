@@ -840,7 +840,12 @@ async def _downstream(
                     first_event = False
                 _tool_error_count = 0  # Reset on successful event
                 await _process_event(websocket, event, bus, user_id, conn_tag=str(id(websocket)), client_type=client_type)
-            break  # Generator exhausted normally
+            # Generator exhausted — may be an agent transfer or graceful end.
+            # Restart the loop so the new active agent can continue processing.
+            # The ADK session state (including the transferred agent) is preserved.
+            logger.info("ws_downstream_generator_exhausted", user_id=user_id,
+                        note="restarting run_live (likely agent transfer)")
+            continue
         except (WebSocketDisconnect, RuntimeError):
             logger.info("ws_downstream_disconnected", user_id=user_id)
             break
@@ -1113,6 +1118,30 @@ async def _process_event(
     # Stamp context vars so _publish() can embed the origin tag + client type.
     _conn_tag_var.set(conn_tag)
     _client_type_var.set(client_type)
+
+    # ── Debug: log every event type for diagnostics ───────────────
+    _parts_summary = []
+    if event.content and event.content.parts:
+        for _p in event.content.parts:
+            if _p.inline_data and _p.inline_data.data:
+                _parts_summary.append(f"audio({len(_p.inline_data.data)}B)")
+            elif _p.text:
+                _parts_summary.append(f"text({len(_p.text)}ch)")
+    _fc_names = [fc.name for fc in event.get_function_calls()] if event.get_function_calls() else []
+    _fr_names = [fr.name for fr in event.get_function_responses()] if event.get_function_responses() else []
+    _in_t = event.input_transcription.text[:80] if event.input_transcription and event.input_transcription.text else ""
+    _out_t = event.output_transcription.text[:80] if event.output_transcription and event.output_transcription.text else ""
+    if _parts_summary or _fc_names or _fr_names or _in_t or _out_t:
+        logger.debug(
+            "process_event_detail",
+            parts=_parts_summary,
+            func_calls=_fc_names,
+            func_responses=_fr_names,
+            in_transcription=_in_t,
+            out_transcription=_out_t,
+            author=getattr(event, "author", ""),
+        )
+
     # ── Audio output ──────────────────────────────────────────────
     if event.content and event.content.parts:
         for part in event.content.parts:
@@ -1217,11 +1246,30 @@ async def _process_event(
     #
     from app.tools.desktop_tools import SCREENSHOT_TOOL_NAMES, drain_pending_screenshots
     from app.tools.image_gen import IMAGE_TOOL_NAMES, drain_pending_images
+    from app.tools.genui_schema import RENDER_GENUI_TOOL_NAME
 
     for fr in event.get_function_responses():
         # Skip transfer_to_agent responses (already handled above)
         if fr.name == "transfer_to_agent":
             continue
+
+        # ── GenUI render tool → emit GenUI message ──────────────────
+        if fr.name == RENDER_GENUI_TOOL_NAME and isinstance(fr.response, dict):
+            component = fr.response.get("component")
+            if component and fr.response.get("rendered"):
+                genui_type = component.get("genui_type", "")
+                # Strip genui_type from the data payload (frontend expects it separate)
+                data = {k: v for k, v in component.items() if k != "genui_type"}
+                genui_payload = {"type": genui_type, "data": data, "text": ""}
+                msg = AgentResponse(
+                    content_type=ContentType.GENUI,
+                    data="",
+                    genui=genui_payload,
+                )
+                json_str = msg.model_dump_json()
+                await websocket.send_text(json_str)
+                await _publish(bus, user_id, json_str)
+                logger.info("genui_rendered_via_tool", genui_type=genui_type, conn=conn_tag)
 
         # Drain pending images queued by the tool for this user
         if fr.name in IMAGE_TOOL_NAMES and user_id:
@@ -1231,9 +1279,15 @@ async def _process_event(
                 await websocket.send_text(json_str)
                 await _publish(bus, user_id, json_str)
 
-        # Drain pending E2B desktop screenshots queued by the tool
-        if fr.name in SCREENSHOT_TOOL_NAMES and user_id:
-            for sc_data in drain_pending_screenshots(user_id):
+        # Drain pending E2B desktop screenshots queued by the tool.
+        # Desktop tools use user_id="default" (plain param), so drain
+        # both the Firebase uid and the "default" fallback key.
+        if fr.name in SCREENSHOT_TOOL_NAMES:
+            _sc_items = []
+            if user_id:
+                _sc_items.extend(drain_pending_screenshots(user_id))
+            _sc_items.extend(drain_pending_screenshots("default"))
+            for sc_data in _sc_items:
                 sc_msg = ImageResponseMessage(**sc_data)
                 json_str = sc_msg.model_dump_json()
                 await websocket.send_text(json_str)

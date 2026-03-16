@@ -127,6 +127,19 @@ class AudioStreamer:
             self.playback_task.cancel()
             self.playback_task = None
 
+    def flush_queue(self):
+        """Clear all pending audio from the playback queue (used on interruption)."""
+        dropped = 0
+        while not self.playback_queue.empty():
+            try:
+                self.playback_queue.get_nowait()
+                self.playback_queue.task_done()
+                dropped += 1
+            except asyncio.QueueEmpty:
+                break
+        if dropped:
+            logger.info("Flushed %d audio chunks from playback queue", dropped)
+
     async def queue_audio(self, audio_bytes: bytes):
         """Queue received binary audio from websocket for playback"""
         if not self.playback_task or self.playback_task.done():

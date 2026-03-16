@@ -14,6 +14,7 @@ cross-client orchestrator agent can consume them.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from uuid import uuid4
 
@@ -72,10 +73,13 @@ def _create_proxy_tool(tool_def: dict, user_id: str, client_type: ClientType) ->
     tool_desc = tool_def.get("description", "")
     tool_params = tool_def.get("parameters", {})
 
-    async def proxy_fn(**kwargs) -> dict | str:
+    async def proxy_fn(**kwargs) -> dict:
         cm = get_connection_manager()
         if not cm.is_online(user_id, client_type):
-            return f"Error: {client_type} client is not connected."
+            return {"error": f"{client_type} client is not connected."}
+
+        # Strip ADK-injected tool_context — not serializable / not for the client
+        clean_args = {k: v for k, v in kwargs.items() if k != "tool_context"}
 
         call_id = uuid4().hex
         invocation = json.dumps(
@@ -83,7 +87,7 @@ def _create_proxy_tool(tool_def: dict, user_id: str, client_type: ClientType) ->
                 "type": "tool_invocation",
                 "call_id": call_id,
                 "tool": tool_name,
-                "args": kwargs,
+                "args": clean_args,
             }
         )
 
@@ -97,12 +101,16 @@ def _create_proxy_tool(tool_def: dict, user_id: str, client_type: ClientType) ->
         )
 
         result = await _await_tool_result(call_id)
+        if isinstance(result, str):
+            return {"result": result}
         return result
 
     # Set function metadata for ADK introspection
     proxy_fn.__name__ = tool_name
     proxy_fn.__doc__ = tool_desc
     # Attach parameter hints as annotations for ADK to discover
+    # AND set __signature__ so ADK's arg-filtering in run_async passes them through
+    sig_params: list[inspect.Parameter] = []
     if tool_params:
         annotations = {}
         # Unwrap JSON Schema: parameters may be {"type": "object", "properties": {...}}
@@ -120,8 +128,16 @@ def _create_proxy_tool(tool_def: dict, user_id: str, client_type: ClientType) ->
                 "object": dict,
             }
             annotations[param_name] = type_map.get(ptype, str)
-        annotations["return"] = dict | str
+            sig_params.append(
+                inspect.Parameter(param_name, inspect.Parameter.KEYWORD_ONLY, annotation=annotations[param_name])
+            )
+        annotations["return"] = dict
         proxy_fn.__annotations__ = annotations
+
+    # ADK FunctionTool.run_async filters args to valid_params from inspect.signature.
+    # Without an explicit __signature__, **kwargs only shows 'kwargs' and all real
+    # args get dropped.  Setting __signature__ fixes this.
+    proxy_fn.__signature__ = inspect.Signature(sig_params)
 
     return FunctionTool(proxy_fn)
 

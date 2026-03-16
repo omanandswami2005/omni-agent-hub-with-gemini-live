@@ -2,9 +2,11 @@ import asyncio
 import base64
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QTextEdit, QLineEdit, QPushButton, QLabel, QMessageBox
+    QTextEdit, QLineEdit, QPushButton, QLabel, QMessageBox,
+    QSystemTrayIcon
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtGui import QIcon
 
 from src.screen import capture_screen
 
@@ -87,6 +89,20 @@ class MainWindow(QMainWindow):
         # Capture screen every 3 seconds when active
         self.screen_interval_ms = 3000
 
+        # System tray icon for notifications
+        self._tray = QSystemTrayIcon(self)
+        icon = self.windowIcon()
+        if icon.isNull():
+            icon = QIcon()  # fallback empty icon
+        self._tray.setIcon(icon)
+        self._tray.setToolTip("Omni Desktop Agent")
+        self._tray.show()
+
+        # Agent state label
+        self.agent_state_label = QLabel("")
+        self.agent_state_label.setStyleSheet("color: gray; font-size: 11px;")
+        self.layout.addWidget(self.agent_state_label)
+
     def _on_connect_toggled(self, checked):
         if checked:
             self.connect_button.setText("Disconnect")
@@ -158,6 +174,24 @@ class MainWindow(QMainWindow):
 
     def append_chat(self, text: str):
         self.chat_display.append(text)
+
+    def set_agent_state(self, state: str, detail: str = ""):
+        """Update the agent state indicator label."""
+        label = state.capitalize()
+        if detail:
+            label += f" — {detail}"
+        self.agent_state_label.setText(label)
+        colors = {"idle": "gray", "processing": "orange", "listening": "green"}
+        self.agent_state_label.setStyleSheet(
+            f"color: {colors.get(state, 'gray')}; font-size: 11px;"
+        )
+
+    def show_notification(self, title: str, message: str):
+        """Show an OS-level notification via the system tray icon."""
+        if self._tray.supportsMessages():
+            self._tray.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 5000)
+        else:
+            self.append_chat(f"[Notification] {title}: {message}")
 
     def _handle_security_prompt(self, title: str, message: str, future):
         """Show message box safely on the main thread and set the future result."""

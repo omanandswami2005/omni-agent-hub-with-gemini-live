@@ -112,6 +112,9 @@ _SCHEMAS: dict[str, dict] = {
 
 _ALL_TYPES = ", ".join(sorted(_SCHEMAS))
 
+# Tool name constant — used in ws_live.py to detect GenUI tool responses.
+RENDER_GENUI_TOOL_NAME = "render_genui_component"
+
 
 def get_genui_schema(component_type: str) -> dict:
     """Return the JSON schema and example for a GenUI component type.
@@ -132,6 +135,56 @@ def get_genui_schema(component_type: str) -> dict:
     return schema
 
 
+def render_genui_component(component_type: str, spec_json: str) -> dict:
+    """Render a GenUI component that the dashboard will display.
+
+    In live audio mode the model cannot emit text, so this tool is the
+    ONLY way to produce GenUI.  Call it with the component type and a
+    JSON string containing all required fields for that component type.
+
+    Args:
+        component_type: One of: chart, table, card, code, image, timeline,
+                        markdown, diff, weather, map.
+        spec_json: A JSON string with the component fields. Must include
+                   all required fields for the chosen type (see
+                   get_genui_schema for what's required).
+                   Example for chart: '{"chartType":"bar","data":[{"x":"A","y":1}],"config":{"title":"My Chart"}}'
+
+    Returns:
+        A dict with ``genui_type`` set — the server intercepts this and
+        sends it as a GenUI message to the dashboard.
+    """
+    import json as _json
+
+    schema = _SCHEMAS.get(component_type)
+    if schema is None:
+        return {"error": f"Unknown component type '{component_type}'. Available: {_ALL_TYPES}"}
+
+    try:
+        spec = _json.loads(spec_json)
+    except (_json.JSONDecodeError, TypeError):
+        return {"error": f"Invalid JSON in spec_json: {spec_json[:200]}"}
+
+    if not isinstance(spec, dict):
+        return {"error": "spec_json must be a JSON object (dict)"}
+
+    # Validate required fields
+    missing = [f for f in schema.get("required", []) if f not in spec]
+    if missing:
+        return {
+            "error": f"Missing required fields for '{component_type}': {missing}",
+            "required": schema["required"],
+            "example": schema.get("example"),
+        }
+
+    # Build the GenUI payload — genui_type is injected automatically
+    spec["genui_type"] = component_type
+    return {"genui_type": component_type, "rendered": True, "component": spec}
+
+
 def get_genui_schema_tools() -> list[FunctionTool]:
     """Return the GenUI schema tool list."""
-    return [FunctionTool(get_genui_schema)]
+    return [
+        FunctionTool(get_genui_schema),
+        FunctionTool(render_genui_component),
+    ]

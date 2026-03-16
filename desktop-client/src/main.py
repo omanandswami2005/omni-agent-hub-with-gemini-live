@@ -128,6 +128,9 @@ def connect(
     main_window.show()
 
     with loop:
+        # Auto-connect: schedule start after loop begins running
+        loop.call_soon(_auto_connect, _client, main_window)
+
         task = loop.create_task(_run_app_watcher(_client, main_window))
         try:
             loop.run_forever()
@@ -136,6 +139,13 @@ def connect(
         finally:
             task.cancel()
             _client._should_run = False
+
+
+def _auto_connect(client: DesktopWSClient, window: MainWindow) -> None:
+    """Auto-connect the client once the event loop is running."""
+    client.start()
+    window.connect_button.setChecked(True)
+    window.connect_button.setText("Disconnect")
 
 
 async def _run_app_watcher(client: DesktopWSClient, window: MainWindow) -> None:
